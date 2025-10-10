@@ -1,0 +1,22 @@
+{
+	"name": "mapillary-explorer",
+	"label": "Mapillary Explorer",
+	"type": "widget",
+	"version": "1.0.0",
+	"exbVersion": "1.18.0",
+	"author": "Sukru Burak Cetin",
+	"description": "Mapillary Explorer is a custom ArcGIS Experience Builder widget that brings street-level Mapillary imagery directly into your web maps.",
+	"copyright": "",
+	"license": "http://www.apache.org/licenses/LICENSE-2.0",
+	"dependency": ["jimu-arcgis"],
+	"properties": {
+		"useMapWidget": true,
+		"mapillaryAccessToken": "MLY|..."
+	},
+	
+	"translatedLocales": ["en"],
+	"defaultSize": {
+		"width": 600,
+		"height": 400
+	}
+}
