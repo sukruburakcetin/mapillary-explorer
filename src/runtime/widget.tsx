@@ -2,6 +2,7 @@
 import {React, AllWidgetProps, jsx} from "jimu-core";
 import {JimuMapViewComponent, JimuMapView} from "jimu-arcgis";
 import ReactDOM from "react-dom";
+import { debounce } from "lodash-es";
 
 const {loadArcGISJSAPIModules} = require("jimu-arcgis");
 
@@ -485,7 +486,7 @@ export default class Widget extends React.PureComponent<
     }
 
 
-    private drawCone(lon: number, lat: number, heading: number, radiusMeters = 30, spreadDeg = 60) {
+    private drawCone(lon: number, lat: number, heading: number, radiusMeters = 10, spreadDeg = 60) {
         const {jimuMapView} = this.state;
         if (!jimuMapView || !this.ArcGISModules) return null;
 
@@ -597,10 +598,30 @@ export default class Widget extends React.PureComponent<
         }
 
         if (this.viewerContainer.current) {
+
             this.mapillaryViewer = new Viewer({
                 container: this.viewerContainer.current,
                 accessToken: this.accessToken,
                 imageId,
+            });
+
+            // Bearing listener (once, outside image handler)
+            this.mapillaryViewer.on("bearing", (event: any) => {
+                const newBearing = event.bearing;
+                // console.log("Bearing changed: ", newBearing);
+
+                const currentId = this.state.imageId;
+                if (!currentId) return;
+
+                const img = this.state.sequenceImages.find(s => s.id === currentId);
+                if (!img) return;
+
+                const view = this.state.jimuMapView?.view;
+                if (!view || !this.currentConeGraphic) return;
+
+                // Remove and redraw cone with new bearing
+                view.graphics.remove(this.currentConeGraphic);
+                this.currentConeGraphic = this.drawCone(img.lon, img.lat, newBearing);
             });
 
             this.mapillaryViewer.on("image", async (event: any) => {
@@ -636,11 +657,12 @@ export default class Widget extends React.PureComponent<
 				// Fetch address for current image location
                 this.fetchReverseGeocode(img.lat, img.lon);
 
-                // Fetch heading and draw cone (but skip if image changed meantime)
-                const heading = await this.getImageHeading(newId, this.accessToken);
-                if (heading !== null && this.state.imageId === newId) {
-                    // Only draw cone if still viewing SAME image that triggered this event
-                    this.currentConeGraphic = this.drawCone(img.lon, img.lat, heading);
+                // Get current bearing (post-override or default) for cone
+                const currentBearing = await this.mapillaryViewer.getBearing();
+                // console.log("Current bearing for cone: ", currentBearing);
+
+                if (currentBearing !== null) {
+                    this.currentConeGraphic = this.drawCone(img.lon, img.lat, currentBearing);
                 }
             });
         }
@@ -872,6 +894,12 @@ export default class Widget extends React.PureComponent<
                         <button
                             onClick={() => {
                                 localStorage.removeItem("mapillary_sequence_cache");
+                                // Clear all bearings (scan keys or use a prefixed clear)
+                                Object.keys(localStorage).forEach(key => {
+                                    if (key.startsWith("mapillary_bearing_")) {
+                                        localStorage.removeItem(key);
+                                    }
+                                });
                                 window.location.reload();
                             }}
                             style={{
