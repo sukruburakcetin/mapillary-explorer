@@ -2,7 +2,6 @@
 import {React, AllWidgetProps, jsx} from "jimu-core";
 import {JimuMapViewComponent, JimuMapView} from "jimu-arcgis";
 import ReactDOM from "react-dom";
-import { debounce } from "lodash-es";
 
 const {loadArcGISJSAPIModules} = require("jimu-arcgis");
 
@@ -24,6 +23,7 @@ interface State {
 	address: string | null;
 	state?: string; // e.g. 'OPENED' | 'CLOSED'
     visible?: boolean; // directly indicates visibility
+    isLoading: boolean;
 }
 
 export default class Widget extends React.PureComponent<
@@ -45,7 +45,8 @@ export default class Widget extends React.PureComponent<
         lon: null,
         lat: null,
         isFullscreen: false,
-		address: null;
+		address: null,
+        isLoading: false
     };
 	private accessToken: string = "";
     constructor(props: AllWidgetProps<any>) {
@@ -430,29 +431,92 @@ export default class Widget extends React.PureComponent<
         jimuMapView.view.graphics.add(graphic);
     }
 
-    private drawPoint(lon: number, lat: number) {
-        const {jimuMapView} = this.state;
+    private drawClickRipple(lon: number, lat: number) {
+        const { jimuMapView } = this.state;
         if (!jimuMapView || !this.ArcGISModules) return;
 
-        const {Graphic} = this.ArcGISModules;
+        const { Graphic } = this.ArcGISModules;
+
+        let size = 0; // Start small
+        let alpha = 0.4;
+
+        const rippleGraphic = new Graphic({
+            geometry: {
+            type: "point",
+            longitude: lon,
+            latitude: lat,
+            spatialReference: { wkid: 4326 }
+            },
+            symbol: {
+            type: "simple-marker",
+            style: "circle",
+            color: [255, 0, 0, alpha], // red with opacity
+            size: size,
+            outline: { color: [255, 0, 0, alpha], width: 1 }
+            }
+        });
+
+        jimuMapView.view.graphics.add(rippleGraphic);
+
+        const rippleInterval = setInterval(() => {
+            size += 2; // grow
+            alpha -= 0.03; // fade out
+
+            rippleGraphic.symbol = {
+            type: "simple-marker",
+            style: "circle",
+            color: [255, 0, 0, Math.max(alpha, 0)],
+            size: size,
+            outline: { color: [255, 0, 0, Math.max(alpha, 0)], width: 1 }
+            };
+
+            // When invisible, cleanup
+            if (alpha <= 0) {
+            clearInterval(rippleInterval);
+            jimuMapView.view.graphics.remove(rippleGraphic);
+            }
+        }, 30);
+    }
+
+    private drawPoint(lon: number, lat: number) {
+        const { jimuMapView } = this.state;
+        if (!jimuMapView || !this.ArcGISModules) return;
+
+        const { Graphic } = this.ArcGISModules;
 
         const graphic = new Graphic({
             geometry: {
-                type: "point",
-                longitude: lon,
-                latitude: lat,
-                spatialReference: {wkid: 4326},
+            type: "point",
+            longitude: lon,
+            latitude: lat,
+            spatialReference: { wkid: 4326 },
             },
             symbol: {
-                type: "simple-marker",
-                style: "circle",
-                color: "red",
-                size: 10,
-                outline: {color: "white", width: 2},
+            type: "simple-marker",
+            style: "circle",
+            color: "red",
+            size: 14, // start bigger for pop effect
+            outline: { color: "white", width: 2 },
             },
         });
 
         jimuMapView.view.graphics.add(graphic);
+
+        // Animate shrink to normal size
+        let size = 14;
+        const shrink = setInterval(() => {
+            size -= 1;
+            graphic.symbol = {
+            type: "simple-marker",
+            style: "circle",
+            color: "red",
+            size,
+            outline: { color: "white", width: 2 }
+            };
+            if (size <= 10) {
+            clearInterval(shrink);
+            }
+        }, 30);
     }
 
     // Utility for geo distance (Haversine)
@@ -531,175 +595,152 @@ export default class Widget extends React.PureComponent<
     }
 
     private async handleMapClick(event: __esri.ViewClickEvent) {
-        const {jimuMapView, sequenceImages} = this.state;
+        const { jimuMapView, sequenceImages } = this.state;
         if (!jimuMapView) return;
 
         const point = jimuMapView.view.toMap(event) as __esri.Point;
         let lon = point.longitude;
         let lat = point.latitude;
 
-        let imageId: string | null = null;
+        // Instant feedback: ripple animation
+        this.drawClickRipple(lon, lat);
 
-        // Check if clicked near an existing blue sequence image in the current sequence
-        if (sequenceImages.length > 0) {
-            const clickedImg = sequenceImages.reduce((closest, img) => {
-                const dist = this.distanceMeters(img.lat, img.lon, lat, lon);
-                return (!closest || dist < closest.dist) ? {...img, dist} : closest;
-            }, null as ({ id: string, lat: number, lon: number, dist: number } | null));
+        // Show loading spinner
+        this.setState({ isLoading: true });
 
-            if (clickedImg && clickedImg.dist < 20) { // 20 m tolerance
-                // Snap click location to this image's exact coordinates
-                imageId = clickedImg.id;
-                lon = clickedImg.lon;
-                lat = clickedImg.lat;
-                console.log("Matched local sequence image:", imageId, "distance:", clickedImg.dist);
-            }
-        }
+        try {
+            let imageId: string | null = null;
 
-        // If not found locally, use API for nearest image
-        if (!imageId) {
-            imageId = await this.getNearestImage(lon, lat, this.accessToken);
-            if (!imageId) {
-                this.showNoImageMessage();
-                return;
-            }
-            console.log("Found new image from API:", imageId);
-        }
+            // --- Check if clicked near existing blue sequence image ---
+            if (sequenceImages.length > 0) {
+                const clickedImg = sequenceImages.reduce((closest, img) => {
+                    const dist = this.distanceMeters(img.lat, img.lon, lat, lon);
+                    return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
+                }, null as ({ id: string, lat: number, lon: number, dist: number } | null));
 
-        // This is now the final clicked location (snapped if from sequence)
-        this.setState({lon, lat, imageId});
-        this.clearNoImageMessage();
-
-
-        // Get sequence
-        const sequenceId = await this.getSequenceIdFromImage(imageId, this.accessToken);
-        if (!sequenceId) return;
-        this.setState({sequenceId});
-
-        const updatedSequence = await this.getSequenceWithCoords(sequenceId, this.accessToken);
-        this.setState({sequenceImages: updatedSequence});
-        // Save sequence in localStorage so we have it next time
-        this.saveSequenceCache(sequenceId, updatedSequence);
-
-        // Setup Mapillary viewer
-        const {Viewer} = window.mapillary;
-        if (!Viewer) {
-            console.error("Viewer missing from window.mapillary");
-            return;
-        }
-
-        if (this.mapillaryViewer) {
-            try {
-                this.mapillaryViewer.remove();
-            } catch (err) {
-                console.warn("Error removing previous viewer:", err);
-            }
-            this.mapillaryViewer = null;
-        }
-
-        if (this.viewerContainer.current) {
-
-            this.mapillaryViewer = new Viewer({
-                container: this.viewerContainer.current,
-                accessToken: this.accessToken,
-                imageId,
-            });
-
-            // Bearing listener (once, outside image handler)
-            this.mapillaryViewer.on("bearing", (event: any) => {
-                const newBearing = event.bearing;
-                // console.log("Bearing changed: ", newBearing);
-
-                const currentId = this.state.imageId;
-                if (!currentId) return;
-
-                const img = this.state.sequenceImages.find(s => s.id === currentId);
-                if (!img) return;
-
-                const view = this.state.jimuMapView?.view;
-                if (!view || !this.currentConeGraphic) return;
-
-                // Remove and redraw cone with new bearing
-                view.graphics.remove(this.currentConeGraphic);
-                this.currentConeGraphic = this.drawCone(img.lon, img.lat, newBearing);
-            });
-
-            this.mapillaryViewer.on("image", async (event: any) => {
-                const newId = event.image.id;
-                const img = this.state.sequenceImages.find(s => s.id === newId);
-                if (!img) return;
-                const view = this.state.jimuMapView?.view;
-                if (!view) return;
-
-                // Update active image in state immediately
-                this.setState({imageId: newId});
-
-                // Remove old green pulse
-                if (this.currentGreenGraphic) {
-                    if ((this.currentGreenGraphic as any)._pulseInterval) {
-                        clearInterval((this.currentGreenGraphic as any)._pulseInterval);
-                    }
-                    view.graphics.remove(this.currentGreenGraphic);
-                    this.currentGreenGraphic = null;
+                if (clickedImg && clickedImg.dist < 20) {
+                    imageId = clickedImg.id;
+                    lon = clickedImg.lon;
+                    lat = clickedImg.lat;
                 }
+            }
 
-                // Remove ALL cones before drawing new one
-                view.graphics.forEach(g => {
-                    if ((g as any).__isCone) {
-                        view.graphics.remove(g);
+            // --- If not found locally, fetch from Mapillary ---
+            if (!imageId) {
+                imageId = await this.getNearestImage(lon, lat, this.accessToken);
+                if (!imageId) {
+                    this.showNoImageMessage();
+                    return;
+                }
+            }
+
+            // Set coords + image ID
+            this.setState({ lon, lat, imageId });
+            this.clearNoImageMessage();
+
+            // --- Get sequence ---
+            const sequenceId = await this.getSequenceIdFromImage(imageId, this.accessToken);
+            if (!sequenceId) return;
+            this.setState({ sequenceId });
+
+            const updatedSequence = await this.getSequenceWithCoords(sequenceId, this.accessToken);
+            this.setState({ sequenceImages: updatedSequence });
+            this.saveSequenceCache(sequenceId, updatedSequence);
+
+            // --- Setup Mapillary viewer ---
+            const { Viewer } = window.mapillary;
+            if (this.mapillaryViewer) {
+                try { this.mapillaryViewer.remove(); } catch {}
+                this.mapillaryViewer = null;
+            }
+
+            if (this.viewerContainer.current) {
+                this.mapillaryViewer = new Viewer({
+                    container: this.viewerContainer.current,
+                    accessToken: this.accessToken,
+                    imageId
+                });
+
+                this.mapillaryViewer.on("bearing", (event: any) => {
+                    const newBearing = event.bearing;
+                    const currentId = this.state.imageId;
+                    if (!currentId) return;
+                    const img = this.state.sequenceImages.find(s => s.id === currentId);
+                    if (!img || !this.currentConeGraphic) return;
+                    const view = this.state.jimuMapView?.view;
+                    if (!view) return;
+                    view.graphics.remove(this.currentConeGraphic);
+                    this.currentConeGraphic = this.drawCone(img.lon, img.lat, newBearing);
+                });
+
+                this.mapillaryViewer.on("image", async (event: any) => {
+                    const newId = event.image.id;
+                    const img = this.state.sequenceImages.find(s => s.id === newId);
+                    if (!img) return;
+                    const view = this.state.jimuMapView?.view;
+                    if (!view) return;
+
+                    this.setState({ imageId: newId });
+
+                    if (this.currentGreenGraphic) {
+                        if ((this.currentGreenGraphic as any)._pulseInterval) {
+                            clearInterval((this.currentGreenGraphic as any)._pulseInterval);
+                        }
+                        view.graphics.remove(this.currentGreenGraphic);
+                    }
+
+                    // Remove all cones
+                    view.graphics.forEach(g => {
+                        if ((g as any).__isCone) {
+                            view.graphics.remove(g);
+                        }
+                    });
+
+                    this.currentGreenGraphic = this.drawPulsingPoint(img.lon, img.lat, [0, 255, 0, 1]);
+
+                    // Fetch address for display
+                    this.fetchReverseGeocode(img.lat, img.lon);
+
+                    const currentBearing = await this.mapillaryViewer.getBearing();
+                    if (currentBearing !== null) {
+                        this.currentConeGraphic = this.drawCone(img.lon, img.lat, currentBearing);
                     }
                 });
-                this.currentConeGraphic = null;
+            }
 
-                // Draw new pulsing green point
-                this.currentGreenGraphic = this.drawPulsingPoint(img.lon, img.lat, [0, 255, 0, 1]);
-				
-				// Fetch address for current image location
-                this.fetchReverseGeocode(img.lat, img.lon);
+            // --- Clear graphics ---
+            if (this.currentGreenGraphic) {
+                if ((this.currentGreenGraphic as any)._pulseInterval) {
+                    clearInterval((this.currentGreenGraphic as any)._pulseInterval);
+                }
+                try { jimuMapView.view.graphics.remove(this.currentGreenGraphic); } catch {}
+                this.currentGreenGraphic = null;
+            }
 
-                // Get current bearing (post-override or default) for cone
-                const currentBearing = await this.mapillaryViewer.getBearing();
-                // console.log("Current bearing for cone: ", currentBearing);
+            jimuMapView.view.graphics.removeAll();
 
-                if (currentBearing !== null) {
-                    this.currentConeGraphic = this.drawCone(img.lon, img.lat, currentBearing);
+            // Draw markers
+            this.drawPoint(lon, lat); // red snap marker
+            updatedSequence.forEach(img => {
+                if (img.id !== imageId) {
+                    this.drawPointWithoutRemoving(img.lon, img.lat, [0, 0, 255, 1]);
                 }
             });
-        }
-
-        // Clean graphics
-        if (this.currentGreenGraphic) {
-            if ((this.currentGreenGraphic as any)._pulseInterval) {
-                clearInterval((this.currentGreenGraphic as any)._pulseInterval);
+            const currentImg = updatedSequence.find(img => img.id === imageId);
+            if (currentImg) {
+                this.currentGreenGraphic = this.drawPulsingPoint(currentImg.lon, currentImg.lat, [0, 255, 0, 1]);
             }
-            try {
-                jimuMapView.view.graphics.remove(this.currentGreenGraphic);
-            } catch {
-            }
-            this.currentGreenGraphic = null;
-        }
 
-        jimuMapView.view.graphics.removeAll();
-
-        // Draw snapped red dot
-        this.drawPoint(lon, lat);
-
-        // Draw blue sequence points
-        updatedSequence.forEach(img => {
-            if (img.id !== imageId) {
-                this.drawPointWithoutRemoving(img.lon, img.lat, [0, 0, 255, 1]);
-            }
-        });
-
-        // Draw green pulsing active point
-        const currentImg = updatedSequence.find(img => img.id === imageId);
-        if (currentImg) {
-            this.currentGreenGraphic = this.drawPulsingPoint(currentImg.lon, currentImg.lat, [0, 255, 0, 1]);
+        } catch (err) {
+            console.error("Map click error:", err);
+        } finally {
+            // Hide spinner
+            this.setState({ isLoading: false });
         }
     }
 
     private async getNearestImage(lon: number, lat: number, accessToken: string) {
-        const bboxSize = 0.0005; // ~55 meters
+        const bboxSize = 0.0001; // ~55 meters
         const url = `https://graph.mapillary.com/images?fields=id,geometry&bbox=${
             lon - bboxSize
         },${lat - bboxSize},${lon + bboxSize},${lat + bboxSize}&limit=50`;
@@ -780,6 +821,7 @@ export default class Widget extends React.PureComponent<
 
         // This is the viewer container. It will be placed either in normal widget or fullscreen portal.
         const viewerArea = (
+            
             <div
                 style={{
                     flex: 1,
@@ -794,6 +836,48 @@ export default class Widget extends React.PureComponent<
                     ref={this.viewerContainer}
                     style={{width: "100%", height: "100%"}}
                 />
+
+                {this.state.isLoading && (
+                    <div style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        height: "100%",
+                        background: "rgba(0,0,0,0.4)",
+                        display: "flex",
+                        flexDirection: "column", // Stack spinner + text
+                        justifyContent: "center",
+                        alignItems: "center",
+                        zIndex: 9999
+                    }}>
+                        {/* Spinner Circle */}
+                        <div style={{
+                            border: "4px solid #f3f3f3",
+                            borderTop: "4px solid #0275d8",
+                            borderRadius: "50%",
+                            width: "36px",
+                            height: "36px",
+                            animation: "spin 1s linear infinite",
+                            marginBottom: "10px" // Space before text
+                        }} />
+                        {/* Loading Text */}
+                        <div style={{
+                            color: "white",
+                            fontSize: "14px",
+                            fontWeight: "500",
+                            textAlign: "center"
+                        }}>
+                        Loading street imagery...
+                        </div>
+                        <style>{`
+                            @keyframes spin {
+                            0% { transform: rotate(0deg); }
+                            100% { transform: rotate(360deg); }
+                            }
+                        `}</style>
+                    </div>
+                    )}
 
                 {!this.state.imageId && (
                     <div
@@ -858,11 +942,11 @@ export default class Widget extends React.PureComponent<
                             position: "absolute",
                             bottom: "12px",
                             left: "12px",
-                            background: "rgba(255,255,255,0.9)",
+                            background: "rgba(255,255,255,0.3)",
                             padding: "6px 10px",
                             borderRadius: "4px",
                             boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
-                            fontSize: "13px",
+                            fontSize: "10px",
                         }}
                     >
                         <div style={{display: "flex", alignItems: "center", marginBottom: "4px"}}>
@@ -903,11 +987,8 @@ export default class Widget extends React.PureComponent<
                                 window.location.reload();
                             }}
                             style={{
-                                fontSize: "12px",
-                                padding: "4px 8px",
                                 background: "#d9534f",
                                 color: "#fff",
-                                border: "none",
                                 borderRadius: "3px",
                                 cursor: "pointer"
                             }}
@@ -925,10 +1006,9 @@ export default class Widget extends React.PureComponent<
                         top: '10px',
                         left: '10px',
                         zIndex: 10000,
-                        background: '#0275d8',
+                        background: 'rgba(2, 117, 216, 0.7)',
                         color: 'white',
-                        border: 'none',
-                        padding: '6px 10px',
+                        padding: '2px 6px',
                         borderRadius: '3px',
                         cursor: 'pointer',
                         fontSize: '12px'
@@ -940,13 +1020,13 @@ export default class Widget extends React.PureComponent<
                 {/* Info box */}
                 <div
                     style={{
-                        padding: "10px",
-                        fontSize: "12px",
+                        padding: "4px",
+                        fontSize: "9px",
                         color: "white",
                         position: "absolute",
                         top: "10px",
                         right: "10px",
-                        background: "rgba(2, 117, 216, 0.8)",
+                        background: "rgba(2, 117, 216, 0.7)",
                         borderRadius: "4px",
 						maxWidth: "200px" 
                     }}
@@ -985,8 +1065,7 @@ export default class Widget extends React.PureComponent<
                         zIndex: 10000,
                         background: '#d9534f',
                         color: 'white',
-                        border: 'none',
-                        padding: '6px 10px',
+                        padding: '2px 6px',
                         borderRadius: '3px',
                         cursor: 'pointer',
                         fontSize: '12px'
