@@ -1,3 +1,7 @@
+<h1 align="center">
+  <img src="https://images2.imgbox.com/88/fe/WenwtUOl_o.jpg"><br/>Mapillary Explorer
+</h1>
+
 # Mapillary Esri Experience Builder Widget
 
 This is a custom **ArcGIS Experience Builder widget** written in **TypeScript + React** that integrates **Mapillary street-level imagery** with an **ArcGIS web map**.
@@ -18,7 +22,7 @@ It allows users to click a point on the map and instantly load the corresponding
 8. [Architecture](#architecture)
 9. [Security Notes](#security-notes)
 10. [How to Contribute](#how-to-contribute)
-11. [Download Release](#-download-built-widget-v100)
+11. [Download Release](#-download-built-widget-v140)
 12. [License](#license)
 
 ---
@@ -175,10 +179,17 @@ Once registered:
 
 1. Open **ArcGIS Experience Builder**.
 2. Create a new app or edit an existing one.
-3. In the widget list, expand the **Custom Widgets** section.
-4. You’ll see **Mapillary Explorer** (or your custom title).
-5. Drag and drop it into your app layout.
-6. **Connect it to a Map widget** for full functionality.
+3. First, add the map widget and expand it to fit the screen.
+4. Then add a widget controller from the menu and toolbars section.
+5. In the widget list, expand the **Custom Widgets** section.
+6. You’ll see **Mapillary Explorer** (or your custom title).
+7. Drag and drop it into your widget controller that is located on map widget.
+8. **Connect it to a Map widget** for full functionality.
+```text
+NOTE: After dropping it into your widget controller, run the widget once in edit mode before saving and publishing. 
+This will allow you to see the map widget and make it ready for publishing. 
+If you publish it without running it once, you may receive a warning that the map widget cannot be found.
+```
 
 ## Configuration
 
@@ -382,7 +393,7 @@ To save the dist version of your widget, go and apply this section:
 [Register the Widget in ArcGIS Portal](#3-register-the-widget-in-arcgis-portal)
 
 ---
-### 📦 [Download Built Widget (v1.0.0)](https://github.com/sukruburakcetin/mapillary-esri-exb-widget/releases/latest)
+### 📦 [Download Built Widget (v1.4.0)](https://github.com/sukruburakcetin/mapillary-esri-exb-widget/releases/latest)
 ---
 ### License
 
