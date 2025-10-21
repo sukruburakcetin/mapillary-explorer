@@ -2,6 +2,8 @@
 import {React, AllWidgetProps, jsx} from "jimu-core";
 import {JimuMapViewComponent, JimuMapView} from "jimu-arcgis";
 import ReactDOM from "react-dom";
+import { Subscription } from "rxjs"; // if not already imported
+
 
 
 const {loadArcGISJSAPIModules} = require("jimu-arcgis");
@@ -45,6 +47,9 @@ export default class Widget extends React.PureComponent<
     private resizeObserver: ResizeObserver | null = null;
     private currentConeGraphic: __esri.Graphic | null = null;
 	private accessToken: string = "";
+    private coneSpreads = [60, 40, 30, 20]; // width in degrees
+    private coneLengths = [10, 15, 20, 30];  // length in meters, tuned to 5m spacing
+    private zoomStepIndex = 0;              // start zoomed out
 
     state: State = {
         jimuMapView: null,
@@ -225,6 +230,8 @@ export default class Widget extends React.PureComponent<
     // updates the viewer, re-draws map markers,
     // and attaches Mapillary event listeners for bearing/image changes.
     private async loadSequenceById(sequenceId: string, startImageId: string) {
+        this.clearGreenPulse();
+        
         const { jimuMapView } = this.state;
         if (!jimuMapView) return;
 
@@ -257,12 +264,109 @@ export default class Widget extends React.PureComponent<
                 this.mapillaryViewer = new Viewer({
                     container: this.viewerContainer.current,
                     accessToken: this.accessToken,
-                    imageId: startImageId
+                    imageId: startImageId,
+                    components: [
+                        'zoom', // zoom control in UI
+                    ]
                 });
+                
+                // Helper: redraws cone safely based on current zoomStepIndex
+                this.redrawCone = () => {
+                    const currentId = this.state.imageId;
+                    if (!currentId) {
+                        console.warn("No current image ID — cone not drawn");
+                        return;
+                    }
+
+                    const img = this.state.sequenceImages.find(s => s.id === currentId);
+                    if (!img) {
+                        console.warn("Image data not found for ID:", currentId);
+                        return;
+                    }
+
+                    const view = this.state.jimuMapView?.view;
+                    if (!view) {
+                        console.warn("Map view is not available");
+                        return;
+                    }
+
+                    const bearing = this._lastBearing || 0;
+                    const length = this.coneLengths[this.zoomStepIndex];
+                    const spread = this.coneSpreads[this.zoomStepIndex];
+
+                    // Validate parameters before drawing to avoid NaN path errors
+                    if ([img.lon, img.lat, length, spread, bearing].some(v => typeof v !== "number" || isNaN(v))) {
+                        console.warn("Invalid cone parameters, skipping draw", { lon: img.lon, lat: img.lat, length, spread, bearing });
+                        return;
+                    }
+
+                    if (this.currentConeGraphic) {
+                        view.graphics.remove(this.currentConeGraphic);
+                    }
+
+                    this.currentConeGraphic = this.drawCone(img.lon, img.lat, bearing, length, spread);
+                };
+
+                // Viewer load setup
+                this.mapillaryViewer.on("load", () => {
+                    // ---- Zoom subscription ----
+                    const zoomComponent: any = this.mapillaryViewer.getComponent("zoom");
+                    if (!zoomComponent || !zoomComponent._zoomDelta$) {
+                        console.warn("Zoom component or _zoomDelta$ not found");
+                        return;
+                    }
+
+                    const navigator: any = this.mapillaryViewer.getNavigator?.() || (this.mapillaryViewer as any)._navigator;
+                    if (!navigator) {
+                        console.warn("Navigator not found");
+                        return;
+                    }
+
+                    // Listen for zoom changes (UI buttons, internal wheel, API calls)
+                    zoomComponent._zoomDelta$.subscribe((delta: number) => {
+                        if (delta > 0) {
+                            this.zoomStepIndex = Math.min(this.zoomStepIndex + 1, this.coneSpreads.length - 1);
+                        } else if (delta < 0) {
+                            this.zoomStepIndex = Math.max(this.zoomStepIndex - 1, 0);
+                        }
+                        // Call cone redraw helper
+                        this.redrawCone();
+                    });
+
+                    // Disable Mapillary's internal +/- keyboard zoom
+                    const keyboardComponent: any = this.mapillaryViewer.getComponent("keyboard");
+                    if (keyboardComponent?.keyZoom) {
+                        keyboardComponent.keyZoom.disable();
+                        console.log("Keyboard zoom (+/-) disabled");
+                    }
+
+                    });
+
+
+                    // Custom wheel handler for cone & zoomStepIndex update
+                    this.viewerContainer.current.addEventListener(
+                    "wheel",
+                    (evt) => {
+                        evt.preventDefault(); // prevent page scroll
+
+                        if (evt.deltaY < 0) {
+                        // Zoom in → narrow cone
+                        this.zoomStepIndex = Math.min(this.zoomStepIndex + 1, this.coneSpreads.length - 1);
+                        } else {
+                        // Zoom out → wider cone
+                        this.zoomStepIndex = Math.max(this.zoomStepIndex - 1, 0);
+                        }
+
+                        // Use the same helper for redraw
+                        this.redrawCone();
+                    },
+                    { passive: false }
+                );
 
                 // Event: Bearing change → update cone
                 this.mapillaryViewer.on("bearing", (event: any) => {
                     const newBearing = event.bearing;
+                      this._lastBearing = newBearing; // store for wheel redraws
                     const currentId = this.state.imageId;
                     if (!currentId) return;
                     const img = this.state.sequenceImages.find(s => s.id === currentId);
@@ -270,7 +374,13 @@ export default class Widget extends React.PureComponent<
                     const view = this.state.jimuMapView?.view;
                     if (!view) return;
                     if (this.currentConeGraphic) view.graphics.remove(this.currentConeGraphic);
-                    this.currentConeGraphic = this.drawCone(img.lon, img.lat, newBearing);
+                    this.currentConeGraphic = this.drawCone(
+                        img.lon,
+                        img.lat,
+                        event.bearing,
+                        this.coneLengths[this.zoomStepIndex],
+                        this.coneSpreads[this.zoomStepIndex]
+                    );
                 });
 
                 // Event: Image change → update active frame + cone + address
@@ -281,26 +391,52 @@ export default class Widget extends React.PureComponent<
                     const view = this.state.jimuMapView?.view;
                     if (!view) return;
 
+                    // Store old active point coords before switching
+                    if (this.state.imageId) {
+                        const prevImg = this.state.sequenceImages.find(s => s.id === this.state.imageId);
+                        if (prevImg) {
+                            // Turn previous active into static blue point
+                            if (this.currentGreenGraphic) {
+                                if ((this.currentGreenGraphic as any)._pulseInterval) {
+                                    clearInterval((this.currentGreenGraphic as any)._pulseInterval);
+                                }
+                                view.graphics.remove(this.currentGreenGraphic);
+                            }
+                            // Draw as sequence blue point
+                            this.drawPointWithoutRemoving(prevImg.lon, prevImg.lat, [0, 0, 255, 1]);
+                        }
+                    }
+
+                    // Update active imageId
                     this.setState({ imageId: newId });
 
+                    // Remove old cone graphics
                     view.graphics.forEach(g => {
                         if ((g as any).__isCone) {
                             view.graphics.remove(g);
                         }
                     });
 
-                    // Clear pulse
-                    this.clearGreenPulse();
-
+                    // Draw new green pulsing point at current active image
                     this.currentGreenGraphic = this.drawPulsingPoint(img.lon, img.lat, [0, 255, 0, 1]);
+
+                    // Reverse geocode for info panel
                     this.fetchReverseGeocode(img.lat, img.lon);
 
+                    // Draw cone for current image
                     const currentBearing = await this.mapillaryViewer.getBearing();
                     if (currentBearing !== null) {
-                        this.currentConeGraphic = this.drawCone(img.lon, img.lat, currentBearing);
+                        this._lastBearing = currentBearing;
+                        this.currentConeGraphic = this.drawCone(
+                            img.lon,
+                            img.lat,
+                            currentBearing,
+                            this.coneLengths[this.zoomStepIndex],
+                            this.coneSpreads[this.zoomStepIndex]
+                        );
                     }
                 });
-            }
+                            }
 
             // Clear previous green pulse
             this.clearGreenPulse();
@@ -1114,6 +1250,9 @@ export default class Widget extends React.PureComponent<
 
                             // Update selected sequence ID in state
                             this.setState({ selectedSequenceId: seqId });
+
+                            // Clear old active frame before loading new sequence
+                            this.clearGreenPulse();
 
                             // If we already have lon/lat of last click, go to closest image for that point
                             const { clickLon, clickLat } = this.state;
