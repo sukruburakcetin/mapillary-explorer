@@ -2,8 +2,6 @@
   <img src="https://images2.imgbox.com/88/fe/WenwtUOl_o.jpg"><br/>Mapillary Explorer
 </h1>
 
-# Mapillary Esri Experience Builder Widget
-
 This is a custom **ArcGIS Experience Builder widget** written in **TypeScript + React** that integrates **Mapillary street-level imagery** with an **ArcGIS web map**.
 
 It allows users to click a point on the map and instantly load the corresponding Mapillary panorama — complete with visual map markers, sequence tracking, and geocoded information.
@@ -393,16 +391,9 @@ To save the dist version of your widget, go and apply this section:
 [Register the Widget in ArcGIS Portal](#3-register-the-widget-in-arcgis-portal)
 
 ---
-### 📦 [Download Built Widget (v1.4.0)](https://github.com/sukruburakcetin/mapillary-esri-exb-widget/releases/latest)
+### 📦 [Download Built Widget (v1.5.0)](https://github.com/sukruburakcetin/mapillary-explorer/releases/latest)
 ---
 ### License
 
 This project is licensed under the **MIT License**.
-
-You are free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of this software, provided that all copies include the original copyright notice and this permission notice.
-
-The software is provided **"as is"**, without warranty of any kind — express or implied — including but not limited to the warranties of merchantability, fitness for a particular purpose, and noninfringement.  
-In no event shall the authors or copyright holders be liable for any claim, damages, or other liability arising from, out of, or in connection with the software or the use or other dealings in the software.
-
-For more details, see the full [MIT License text](https://opensource.org/licenses/MIT).
 

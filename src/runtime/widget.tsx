@@ -2,9 +2,6 @@
 import {React, AllWidgetProps, jsx} from "jimu-core";
 import {JimuMapViewComponent, JimuMapView} from "jimu-arcgis";
 import ReactDOM from "react-dom";
-import { Subscription } from "rxjs"; // if not already imported
-
-
 
 const {loadArcGISJSAPIModules} = require("jimu-arcgis");
 
@@ -50,6 +47,7 @@ export default class Widget extends React.PureComponent<
     private coneSpreads = [60, 40, 30, 20]; // width in degrees
     private coneLengths = [10, 15, 20, 30];  // length in meters, tuned to 5m spacing
     private zoomStepIndex = 0;              // start zoomed out
+    private mapillaryVTLayer: __esri.VectorTileLayer | null = null;
 
     state: State = {
         jimuMapView: null,
@@ -68,7 +66,7 @@ export default class Widget extends React.PureComponent<
     constructor(props: AllWidgetProps<any>) {
         super(props);
 		
-		    // Read from manifest
+		// Read accessToken from manifest.json properties - you should use your own token start with MLY
 		this.accessToken = props.manifest?.properties?.mapillaryAccessToken || "";
 		// console.log("Loaded Access Token:", this.accessToken);
 
@@ -95,6 +93,17 @@ export default class Widget extends React.PureComponent<
 				console.warn("Error clearing graphics:", err);
 			}
 		}
+
+         //  Force remove Mapillary Vector Tile Layer when widget closes
+        if (this.mapillaryVTLayer && this.state.jimuMapView.view.map.layers.includes(this.mapillaryVTLayer)) {
+            try {
+                this.state.jimuMapView.view.map.remove(this.mapillaryVTLayer);
+                console.log("Mapillary layer removed on widget close");
+            } catch (err) {
+                console.warn("Error removing Mapillary layer:", err);
+            }
+        }
+        
 
 		// Destroy Mapillary viewer
 		if (this.mapillaryViewer) {
@@ -180,6 +189,87 @@ export default class Widget extends React.PureComponent<
                 });
             }
         });
+    };
+
+    /*
+     --- Initializes the Mapillary Vector Tile Layer ---
+     * 
+     * - Creates a VectorTileLayer from the Mapillary tiles API
+     * - Uses an inline `minimalStyle` object for symbology (sequence = green line, image = light cyan blue circle)
+     * - Stores the layer in `this.mapillaryVTLayer` for later toggling
+    */
+    private initMapillaryLayer() {
+        const { VectorTileLayer } = this.ArcGISModules
+
+        // Base URL for Mapillary Vector Tiles API (image + sequence data)
+        const vectorTileSourceUrl = `https://tiles.mapillary.com/maps/vtp/mly1_public/2/{z}/{x}/{y}?access_token=${this.accessToken}`
+
+        // A minimal Mapbox GL style object describing how the layer should look
+        const minimalStyle = {
+            "version": 8,
+            "sources": {
+            "mapillary": {
+                "type": "vector",
+                "tiles": [vectorTileSourceUrl],
+                "minzoom": 0,
+                "maxzoom": 14
+            }
+            },
+            "layers": [
+                {
+                    // Green lines = photo capture sequences
+                    "id": "sequence",
+                    "source": "mapillary",
+                    "source-layer": "sequence",
+                    "type": "line",
+                    "paint": {
+                        "line-opacity": 0.6,
+                        "line-color": "#35AF6D",
+                        "line-width": 2
+                    }
+                },
+                {
+                    // light cyan blue circles = individual images
+                    "id": "image",
+                    "source": "mapillary",
+                    "source-layer": "image",
+                    "type": "circle",
+                    "paint": {
+                        "circle-radius": 3,
+                    //  "circle-color": "#3388ff",
+                        "circle-color": "#33c2ffff",
+                        "circle-stroke-color": "#ffffff",
+                        "circle-stroke-width": 1
+                    }
+                }
+            ]
+        }
+
+        // Store the VectorTileLayer instance so we can toggle it later
+        this.mapillaryVTLayer = new VectorTileLayer({
+            style: minimalStyle   // pass the object directly — no external style.json
+        })
+    }
+
+    /*
+     --- Toggles Mapillary Vector Tile Layer on/off in the current map view ---
+     * 
+     * - If layer is already in the map, remove it
+     * - If layer is not in the map, add it
+     * - Controlled by button in UI ("🗺️" icon)
+     * - Uses `this.mapillaryVTLayer` created by initMapillaryLayer()
+    */
+    private toggleMapillaryTiles = () => {
+        const { jimuMapView } = this.state;
+        if (!jimuMapView || !this.mapillaryVTLayer) return;
+
+        const layers = jimuMapView.view.map.layers;
+        if (layers.includes(this.mapillaryVTLayer)) {
+            // Layer is currently ON → remove it from map
+            jimuMapView.view.map.remove(this.mapillaryVTLayer);
+        } else {
+            jimuMapView.view.map.add(this.mapillaryVTLayer);
+        }
     };
 
     // --- Local caching of last sequence ---
@@ -324,12 +414,11 @@ export default class Widget extends React.PureComponent<
 
                     // Listen for zoom changes (UI buttons, internal wheel, API calls)
                     zoomComponent._zoomDelta$.subscribe((delta: number) => {
-                        if (delta > 0) {
-                            this.zoomStepIndex = Math.min(this.zoomStepIndex + 1, this.coneSpreads.length - 1);
-                        } else if (delta < 0) {
-                            this.zoomStepIndex = Math.max(this.zoomStepIndex - 1, 0);
+                        if (delta > 0 && this.zoomStepIndex < this.coneSpreads.length - 1) {
+                            this.zoomStepIndex++;
+                        } else if (delta < 0 && this.zoomStepIndex > 0) {
+                            this.zoomStepIndex--;
                         }
-                        // Call cone redraw helper
                         this.redrawCone();
                     });
 
@@ -476,14 +565,17 @@ export default class Widget extends React.PureComponent<
     // and attaches resize/fullscreen event listeners.
     async componentDidMount() {
         try {
-            const [Graphic, Point, SimpleMarkerSymbol] =
+            const [Graphic, Point, SimpleMarkerSymbol, VectorTileLayer] =
                 await loadArcGISJSAPIModules([
                     "esri/Graphic",
                     "esri/geometry/Point",
                     "esri/symbols/SimpleMarkerSymbol",
+                    "esri/layers/VectorTileLayer"
                 ]);
-            this.ArcGISModules = {Graphic, Point, SimpleMarkerSymbol};
+            this.ArcGISModules = {Graphic, Point, SimpleMarkerSymbol, VectorTileLayer};
             console.log("ArcGIS API modules loaded");
+            // ✅ Initialize Mapillary Vector Tile Layer right after modules are ready
+            this.initMapillaryLayer();
         } catch (err) {
             console.error("ArcGIS modules failed to load:", err);
         }
@@ -1363,6 +1455,7 @@ export default class Widget extends React.PureComponent<
                 {/* Fullscreen toggle button */}
                 <button
                     onClick={this.toggleFullscreen}
+                    title="Maximize/Fullscreen"
                     style={{
                         position: 'absolute',
                         top: '10px',
@@ -1370,10 +1463,10 @@ export default class Widget extends React.PureComponent<
                         zIndex: 10000,
                         background: 'rgba(2, 117, 216, 0.7)',
                         color: 'white',
-                        padding: '2px 6px',
+                        padding: '2px 8px',
                         borderRadius: '3px',
                         cursor: 'pointer',
-                        fontSize: '12px'
+                        fontSize: '14px'
                     }}
                 >
                     🗖
@@ -1397,6 +1490,28 @@ export default class Widget extends React.PureComponent<
                     {this.state.sequenceId && <>Sequence ID: {this.state.sequenceId}<br/></>}
 					 {this.state.address && <>📍 {this.state.address}</>}
                 </div>
+
+                <button
+                    onClick={this.toggleMapillaryTiles}
+                    title="Toggle Mapillary Layer"
+                    style={{
+                        position: 'absolute',
+                        top: '50px',
+                        left: '10px',
+                        background: 'rgba(53, 175, 109, 0.7)',
+                        color: '#fff',
+                        borderRadius: '3px',
+                        padding: '2px 6px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        zIndex: 10000
+                    }}
+                >
+                    🗺️
+
+              
+                </button>
+
             </div>
         );
 
