@@ -2,7 +2,9 @@
 import {React, AllWidgetProps, jsx} from "jimu-core";
 import {JimuMapViewComponent, JimuMapView} from "jimu-arcgis";
 import ReactDOM from "react-dom";
-
+import * as webMercatorUtils from "esri/geometry/support/webMercatorUtils";
+import Pbf from 'pbf';
+import { VectorTile } from '@mapbox/vector-tile';
 const {loadArcGISJSAPIModules} = require("jimu-arcgis");
 
 interface WindowWithMapillary extends Window {
@@ -31,6 +33,9 @@ interface State {
     selectedSequenceId?: string;
     clickLon?: number;
     clickLat?: number;
+    tilesActive?: boolean;
+    trafficSignsActive?: boolean;
+    objectsActive?: boolean;
 }
 
 export default class Widget extends React.PureComponent<
@@ -49,13 +54,76 @@ export default class Widget extends React.PureComponent<
     private zoomStepIndex = 0;              // start zoomed out
     private mapillaryVTLayer: __esri.VectorTileLayer | null = null;
     private mapillaryTrafficSignsLayer: __esri.VectorTileLayer | null = null;
+    private mapillaryObjectsLayer: __esri.VectorTileLayer | null = null;
+    private objectsStationaryHandle: IHandle | null = null;
+
+    /**
+        * Human‑readable names for Mapillary object classification codes.
+        *
+        * Mapillary returns raw object `value` codes such as `"object--bench"` or `"marking--discrete--stop-line"`.
+        * These codes are hierarchical (double‑dash separated) and not user‑friendly for display.
+        *
+        * This lookup table maps each known Mapillary object classification code to a
+        * descriptive, human‑readable label for use in the UI, popups, and legends.
+        *
+        * Notes:
+        * - Keys match `value` properties returned by Mapillary's vector tile/object API.
+        * - Values are short descriptive labels optimized for end‑users.
+        * - Any `value` not found here will fall back to displaying the raw code, unless further formatting is applied.
+        *
+        * This is used in {@link loadMapillaryObjectsFromTilesBBox} to set the `name` attribute
+        * for each object feature before creating the ArcGIS FeatureLayer.
+    */
+    private objectNameMap: Record<string, string> = {
+        "construction--barrier--temporary": "Temporary Barrier",
+        "construction--flat--crosswalk-plain": "Crosswalk - Plain",
+        "construction--flat--driveway": "Driveway",
+        "marking--discrete--arrow--left": "Lane Marking - Arrow (Left)",
+        "marking--discrete--arrow--right": "Lane Marking - Arrow (Right)",
+        "marking--discrete--arrow--split-left-or-straight": "Lane Marking - Arrow (Split Left or Straight)",
+        "marking--discrete--arrow--split-right-or-straight": "Lane Marking - Arrow (Split Right or Straight)",
+        "marking--discrete--arrow--straight": "Lane Marking - Arrow (Straight)",
+        "marking--discrete--crosswalk-zebra": "Lane Marking - Crosswalk",
+        "marking--discrete--give-way-row": "Lane Marking - Give Way (Row)",
+        "marking--discrete--give-way-single": "Lane Marking - Give Way (Single)",
+        "marking--discrete--other-marking": "Lane Marking - Other",
+        "marking--discrete--stop-line": "Lane Marking - Stop Line",
+        "marking--discrete--symbol--bicycle": "Lane Marking - Symbol (Bicycle)",
+        "marking--discrete--text": "Lane Marking - Text",
+        "object--banner": "Banner",
+        "object--bench": "Bench",
+        "object--bike-rack": "Bike Rack",
+        "object--catch-basin": "Catch Basin",
+        "object--cctv-camera": "CCTV Camera",
+        "object--fire-hydrant": "Fire Hydrant",
+        "object--junction-box": "Junction Box",
+        "object--mailbox": "Mailbox",
+        "object--manhole": "Manhole",
+        "object--parking-meter": "Parking Meter",
+        "object--phone-booth": "Phone Booth",
+        "object--sign--advertisement": "Signage - Advertisement",
+        "object--sign--information": "Signage - Information",
+        "object--sign--store": "Signage - Store",
+        "object--street-light": "Street Light",
+        "object--support--pole": "Pole",
+        "object--support--traffic-sign-frame": "Traffic Sign Frame",
+        "object--support--utility-pole": "Utility Pole",
+        "object--traffic-cone": "Traffic Cone",
+        "object--traffic-light--cyclists": "Traffic Light - Cyclists",
+        "object--traffic-light--general-horizontal": "Traffic Light - General (Horizontal)",
+        "object--traffic-light--general-single": "Traffic Light - General (Single)",
+        "object--traffic-light--general-upright": "Traffic Light - General (Upright)",
+        "object--traffic-light--other": "Traffic Light - Other",
+        "object--traffic-light--pedestrians": "Traffic Light - Pedestrians",
+        "object--trash-can": "Trash Can",
+        "object--water-valve": "Water Valve"
+    };
+
     /*
         * Default color palette for sequence overlays.
         * Each item is [R, G, B, A] with RGB 0–255 and Alpha 0–1.
-        * 
         * This palette intentionally avoids pure blue for polylines so that blue markers 
         * (sequence images) remain visually distinct from sequence lines.
-        * 
         * Order is chosen to maximize contrast between neighboring sequences 
         * and to match common cartographic color practices.
     */
@@ -83,7 +151,10 @@ export default class Widget extends React.PureComponent<
         isLoading: false,
         availableSequences: [],
         selectedSequenceId: null,
-        noImageMessageVisible: false
+        noImageMessageVisible: false,
+        tilesActive: false,
+        trafficSignsActive: false,
+        objectsActive: false
     };
 
     constructor(props: AllWidgetProps<any>) {
@@ -210,7 +281,7 @@ export default class Widget extends React.PureComponent<
     // Stops animation intervals, removes all map graphics,
     // destroys Mapillary viewer instance, clears DOM container,
     // and resets internal state if requested.
-	private cleanupWidgetEnvironment(resetState: boolean = false) {
+	private cleanupWidgetEnvironment(resetState: boolean = false, fullRemove: boolean = true) {
 		// Stop pulsing point
 		if (this.currentGreenGraphic && (this.currentGreenGraphic as any)._pulseInterval) {
 			clearInterval((this.currentGreenGraphic as any)._pulseInterval);
@@ -219,19 +290,60 @@ export default class Widget extends React.PureComponent<
 
 		// Remove all graphics from map
 		if (this.state.jimuMapView) {
+            const view = this.state.jimuMapView.view; // ✅ define view here
+            // Remove any sequence overlay graphics
             const toRemove: __esri.Graphic[] = [];
-            this.state.jimuMapView.view.graphics.forEach(g => {
-                if ((g as any).__isSequenceOverlay) {
+            view.graphics.forEach(g => {
+            if ((g as any).__isSequenceOverlay) {
                 toRemove.push(g);
-                }
+            }
             });
-            toRemove.forEach(g => this.state.jimuMapView.view.graphics.remove(g));
-			try {
-				this.state.jimuMapView.view.graphics.removeAll();
-			} catch (err) {
-				console.warn("Error clearing graphics:", err);
-			}
+            toRemove.forEach(g => view.graphics.remove(g));
+
+            try {
+                view.graphics.removeAll();
+            } catch (err) {
+                console.warn("Error clearing graphics:", err);
+            }
+            // Only do hard layer removals if fullRemove = true
+            if (fullRemove) {
+                const layersToRemove: __esri.Layer[] = [];
+                view.map.layers.forEach((layer) => {
+                    if (
+                        layer === this.mapillaryObjectsLayer ||
+                        layer === this.mapillaryObjectsFeatureLayer ||
+                        (
+                            layer.type === "feature" &&
+                            (layer as any).fields?.some((f: any) => f.name === "value") &&
+                            (layer as any).fields?.some((f: any) => f.name === "name")
+                        ) ||
+                        (layer as any).title?.includes("Mapillary Objects") // ✅ Not generic
+                    ) {
+                        layersToRemove.push(layer);
+                    }
+                });
+                layersToRemove.forEach(l => view.map.remove(l));
+            }
 		}
+
+         // Null references so they can’t be re-added later
+        this.mapillaryObjectsLayer = null;
+        this.mapillaryObjectsFeatureLayer = null;
+        this.mapillaryVTLayer = null;
+        this.mapillaryTrafficSignsLayer = null;
+
+        // Cancel any pending object feature fetch
+        this._cancelObjectsFetch = true;
+
+        // Remove stationary watch on object layer
+        if (this.objectsStationaryHandle) {
+            this.objectsStationaryHandle.remove();
+            this.objectsStationaryHandle = null;
+        }
+        if (this.objectsZoomHandle) {
+            this.objectsZoomHandle.remove();
+            this.objectsZoomHandle = null;
+        }
 
         //  Force remove Mapillary Vector Tile Layer when widget closes
         if (this.mapillaryVTLayer && this.state.jimuMapView.view.map.layers.includes(this.mapillaryVTLayer)) {
@@ -278,7 +390,10 @@ export default class Widget extends React.PureComponent<
 				lon: null,
 				lat: null,
 				isFullscreen: false,
-				address: null
+				address: null,
+                tilesActive: false,
+                trafficSignsActive: false,
+                objectsActive: false // ✅ Reset toggles
 			});
 		}
 	}
@@ -410,7 +525,7 @@ export default class Widget extends React.PureComponent<
         const vectorTileSourceUrl = `https://tiles.mapillary.com/maps/vtp/mly_map_feature_traffic_sign/2/{z}/{x}/{y}?access_token=${this.accessToken}`;
 
         // raw.githubusercontent.com for direct asset access
-        const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs";
+        const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
 
         // Minimal Mapbox GL style for traffic signs visualization using icons
         const minimalStyle = {
@@ -445,6 +560,492 @@ export default class Widget extends React.PureComponent<
         });
     }
 
+        /*
+        --- Initializes the Mapillary Objects Layer Layer ---
+        * - Creates a Object Layer from the Mapillary tiles API
+        * - Stores the layer in `this.mapillaryObjectsLayer` for later toggling
+    */
+    private initMapillaryObjectsLayer() {
+        const { VectorTileLayer } = this.ArcGISModules;
+
+        const vectorTileSourceUrl = `https://tiles.mapillary.com/maps/vtp/mly_map_feature_point/2/{z}/{x}/{y}?access_token=${this.accessToken}`;
+
+        const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
+
+        const minimalStyle = {
+            version: 8,
+            sprite: spriteBaseUrl, // expects package_objects.png & package_objects.json
+            sources: {
+                "mapillary-objects": {
+                    type: "vector",
+                    tiles: [vectorTileSourceUrl],
+                    minzoom: 0,
+                    maxzoom: 14
+                }
+            },
+            layers: [
+                {
+                    id: "mapillary-objects-icons",
+                    source: "mapillary-objects",
+                    "source-layer": "point", // from Mapillary docs
+                    type: "symbol",
+                    layout: {
+                        "icon-image": ["get", "value"], // matches sprite keys
+                        "icon-size": 1
+                    }
+                }
+            ]
+        };
+
+        this.mapillaryObjectsLayer = new VectorTileLayer({
+            style: minimalStyle
+        });
+    }
+
+    /**
+        * Fetches a specific icon from a Mapillary sprite sheet (PNG + JSON) and returns it as a base64 PNG Data URL.
+        * This is used to extract individual traffic sign or object icons for rendering as ArcGIS picture markers.
+        * The sprite data comes from Mapillary-hosted or custom-hosted sprite assets and provides position/size info in the JSON.
+        * @param spriteJSONUrl URL to sprite JSON metadata (contains icon coordinates in the sprite PNG)
+        * @param spritePNGUrl  URL to sprite PNG image containing all icons
+        * @param iconName      Key name of the icon within the sprite JSON
+        * @returns Promise<string> base64 encoded PNG of the specified icon
+    */
+    private async loadSpriteIconDataURL(
+        spriteJSONUrl: string,
+        spritePNGUrl: string,
+        iconName: string
+        ): Promise<string> {
+        const jsonResp = await fetch(spriteJSONUrl);
+        if (!jsonResp.ok) throw new Error(`Failed to fetch sprite JSON: ${jsonResp.status}`);
+        const spriteData = await jsonResp.json();
+
+        if (!spriteData[iconName]) throw new Error(`Icon '${iconName}' not found in sprite JSON`);
+        const { x, y, width, height, pixelRatio } = spriteData[iconName];
+        const ratio = pixelRatio || 1;
+
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous'; // Ensure CORS works
+            img.src = spritePNGUrl;
+
+            img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = width / ratio;
+            canvas.height = height / ratio;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                reject(new Error("Canvas context not available"));
+                return;
+            }
+            ctx.drawImage(
+                img,
+                x, y, width, height,       // source rect
+                0, 0, width / ratio, height / ratio // dest rect
+            );
+            resolve(canvas.toDataURL('image/png'));
+            };
+        });
+    }
+
+    /**
+        * Converts geographic longitude/latitude to XYZ map tile indices for a given zoom level.
+        * This is used to map the current view extent into the required tile coordinate system
+        * for requesting Mapillary vector tiles. Formula uses Web Mercator projection math.
+        * @param lon  Longitude in decimal degrees
+        * @param lat  Latitude in decimal degrees
+        * @param zoom Map zoom level in tile schema (usually 14 for Mapillary feature points)
+        * @returns Object {x, y} tile indices
+    */
+    private lngLatToTile(lon: number, lat: number, zoom: number) {
+        const xTile = Math.floor((lon + 180) / 360 * Math.pow(2, zoom));
+        const yTile = Math.floor(
+            (1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom)
+        );
+        return { x: xTile, y: yTile };
+    }
+
+    /**
+        * Computes a list of XYZ tiles covering the given bounding box for a specified zoom.
+        * This enumerates all vector tiles intersecting the bbox, enabling batch requests
+        * to Mapillary's tile API for coverage or feature layers.
+        * @param bbox [minLon, minLat, maxLon, maxLat] in WGS84 degrees
+        * @param zoom Map zoom level
+        * @returns Array of [x, y, zoom] tuples
+    */
+    private bboxToTileRange(bbox: number[], zoom: number) {
+        const minTile = this.lngLatToTile(bbox[0], bbox[3], zoom); // top-left
+        const maxTile = this.lngLatToTile(bbox[2], bbox[1], zoom); // bottom-right
+
+        const tiles: Array<[number, number, number]> = [];
+        for (let x = minTile.x; x <= maxTile.x; x++) {
+            for (let y = minTile.y; y <= maxTile.y; y++) {
+            tiles.push([x, y, zoom]);
+            }
+        }
+        return tiles;
+    }
+
+    /**
+        * Formats Mapillary traffic sign code strings into human-friendly names.
+        * 
+        * Mapillary encodes sign values with a double‑dash hierarchy (e.g., "warning--yield-ahead--g3").
+        * This helper capitalizes and spaces each component for UI display.
+        * 
+        * @param code Raw Mapillary traffic sign code
+        * @returns Human‑readable name
+    */
+    private formatTrafficSignName(code: string): string {
+        if (!code) return "Unknown";
+        return code
+            .split("--")
+            .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(" ");
+    }
+
+    /**
+        * Fetches and builds an ArcGIS FeatureLayer containing traffic sign features within the current map view bounding box.
+        * 
+        * This method:
+        *  - Calculates the tile set covering the current extent (zoom 14)
+        *  - Requests traffic sign vector tiles from Mapillary
+        *  - Decodes features with PBF VectorTile parser
+        *  - Converts coordinates to Web Mercator points
+        *  - Optionally matches sprite icons for display
+        * The resulting FeatureLayer is stored in `this.mapillaryTrafficSignsFeatureLayer` for display with popups.
+        * 
+        * @param matchSpriteIcons Whether to match Mapillary traffic sign icons from sprite sheets in renderer
+    */
+    private async loadMapillaryTrafficSignsFromTilesBBox(matchSpriteIcons: boolean = true) {
+        if (this._cancelTrafficSignsFetch) {
+            console.log("Cancelled traffic signs tile fetch");
+            return;
+        }
+        const { jimuMapView } = this.state;
+        if (!jimuMapView) return;
+
+        if (jimuMapView.view.zoom < 18) {
+            console.log("Not loading traffic signs — zoom below threshold");
+            return;
+        }
+
+        const extent = jimuMapView.view.extent;
+        if (!extent) {
+            console.warn("Map extent not available yet");
+            return;
+        }
+
+        const geoExtent = webMercatorUtils.webMercatorToGeographic(extent);
+        const bbox = [geoExtent.xmin, geoExtent.ymin, geoExtent.xmax, geoExtent.ymax];
+        const accessToken = this.accessToken;
+        const zoom = 14;
+        const tiles = this.bboxToTileRange(bbox, zoom);
+
+        const features: any[] = [];
+
+        for (const [x, y, z] of tiles) {
+            const url = `https://tiles.mapillary.com/maps/vtp/mly_map_feature_traffic_sign/2/${z}/${x}/${y}?access_token=${accessToken}`;
+            let resp;
+            try {
+                resp = await fetch(url);
+            } catch (err) {
+                console.error("Tile fetch error", err);
+                continue;
+            }
+            if (!resp.ok) continue;
+
+            const arrayBuffer = await resp.arrayBuffer();
+            const pbfInstance = new Pbf(arrayBuffer);
+            const tile = new VectorTile(pbfInstance);
+            const layer = tile.layers['traffic_sign'];
+            if (!layer) continue;
+
+            for (let i = 0; i < layer.length; i++) {
+                try {
+                    const feat = layer.feature(i).toGeoJSON(x, y, z);
+                    const [lon, lat] = feat.geometry.coordinates;
+                    if (lon >= bbox[0] && lon <= bbox[2] && lat >= bbox[1] && lat <= bbox[3]) {
+                        const wmPoint = webMercatorUtils.geographicToWebMercator({
+                            type: "point",
+                            x: lon,
+                            y: lat,
+                            spatialReference: { wkid: 4326 }
+                        });
+                        features.push({
+                        geometry: wmPoint,
+                        attributes: {
+                            id: feat.properties.id,
+                            value: feat.properties.value,
+                            name: this.formatTrafficSignName(feat.properties.value),
+                            first_seen_at: feat.properties.first_seen_at,
+                            last_seen_at: feat.properties.last_seen_at
+                        }
+        });
+                    }
+                } catch (err) {
+                    console.warn("Feature parse error", err);
+                }
+            }
+        }
+
+        const [FeatureLayer] = await loadArcGISJSAPIModules(["esri/layers/FeatureLayer"]);
+
+        const fields = [
+            { name: "id", type: "string", alias: "ID" },
+            { name: "value", type: "string", alias: "Sign Code" },
+            { name: "name", type: "string", alias: "Sign Name" },
+            { name: "first_seen_at", type: "date", alias: "First Seen" },
+            { name: "last_seen_at", type: "date", alias: "Last Seen" }
+        ];
+
+        let renderer: __esri.Renderer;
+        if (matchSpriteIcons) {
+            const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
+            const uniqueValues = Array.from(new Set(features.map(f => f.attributes.value)));
+            const iconCache: Record<string, string> = {};
+            for (const val of uniqueValues) {
+                try {
+                    iconCache[val] = await this.loadSpriteIconDataURL(
+                        `${spriteBaseUrl}.json`,
+                        `${spriteBaseUrl}.png`,
+                        val
+                    );
+                } catch (err) {
+                    console.warn(`Could not load icon for ${val}`, err);
+                }
+            }
+            renderer = {
+                type: "unique-value",
+                field: "value",
+                uniqueValueInfos: uniqueValues.map(v => ({
+                    value: v,
+                    symbol: iconCache[v]
+                        ? { type: "picture-marker", url: iconCache[v], width: 20, height: 20 }
+                        : { type: "simple-marker", size: 6, color: "orange", outline: { color: "white", width: 1 } }
+                })),
+                defaultSymbol: { type: "simple-marker", size: 6, color: "orange", outline: { color: "white", width: 1 } }
+            };
+        } else {
+            renderer = {
+                type: "simple",
+                symbol: { type: "simple-marker", size: 6, color: "orange", outline: { color: "white", width: 1 } }
+            };
+        }
+
+        const layer = new FeatureLayer({
+            source: features,
+            fields,
+            objectIdField: "id",
+            spatialReference: { wkid: 3857 },
+            geometryType: "point",
+            renderer,
+            popupTemplate: {
+                title: `{name}`,
+                content: `<b>ID:</b> {id}<br>
+                <b>First Seen:</b> {first_seen_at}<br>
+                <b>Value Code:</b> {value}<br>
+                <b>Last Seen:</b> {last_seen_at}`
+            }
+        });
+        this.mapillaryTrafficSignsFeatureLayer = layer;
+    }
+
+    /**
+        * Fetches and builds an ArcGIS FeatureLayer containing Mapillary object features within the current map view bounding box.
+        * This method:
+        *  - Calculates tile set covering the current extent (zoom 14)
+        *  - Requests object vector tiles from Mapillary
+        *  - Decodes features with PBF VectorTile parser
+        *  - Converts coordinates to Web Mercator points
+        *  - Optionally matches sprite icons for display
+        * The resulting FeatureLayer is stored in `this.mapillaryObjectsFeatureLayer` for display with popups.
+        * @param matchSpriteIcons Whether to match Mapillary object icons from sprite sheets in renderer
+    */
+    private async loadMapillaryObjectsFromTilesBBox(matchSpriteIcons: boolean = true) {
+
+        if (this._cancelObjectsFetch) {
+            console.log("Cancelled object tile fetch — widget closed or toggle off");
+            return;
+        }
+        const { jimuMapView } = this.state;
+        if (!jimuMapView) return;
+
+        if (jimuMapView.view.zoom < 18) {
+            console.log("Not loading objects — zoom below threshold");
+            return;
+        }
+
+        const extent = jimuMapView.view.extent;
+        if (!extent) {
+            console.warn("Map extent not available yet");
+            return;
+        }
+
+        // Convert extent to WGS84 lon/lat
+        const geoExtent = webMercatorUtils.webMercatorToGeographic(extent);
+        const bbox = [geoExtent.xmin, geoExtent.ymin, geoExtent.xmax, geoExtent.ymax];
+
+        const accessToken = this.accessToken;
+        const zoom = 14; // recommended zoom for points
+
+        const tiles = this.bboxToTileRange(bbox, zoom);
+        const features: any[] = [];
+
+        for (const [x, y, z] of tiles) {
+            const url = `https://tiles.mapillary.com/maps/vtp/mly_map_feature_point/2/${z}/${x}/${y}?access_token=${accessToken}`;
+
+            let resp;
+            try {
+            resp = await fetch(url);
+            } catch (err) {
+            console.error("Tile fetch error", err);
+            continue;
+            }
+            if (!resp.ok) continue;
+
+            const arrayBuffer = await resp.arrayBuffer();
+            const pbfInstance = new Pbf(arrayBuffer);
+            const tile = new VectorTile(pbfInstance);
+            const layer = tile.layers['point'];
+            if (!layer) continue;
+
+            for (let i = 0; i < layer.length; i++) {
+            try {
+                const feat = layer.feature(i).toGeoJSON(x, y, z);
+                const [lon, lat] = feat.geometry.coordinates;
+
+                if (lon >= bbox[0] && lon <= bbox[2] && lat >= bbox[1] && lat <= bbox[3]) {
+                const wmPoint = webMercatorUtils.geographicToWebMercator({
+                    type: "point",
+                    x: lon,
+                    y: lat,
+                    spatialReference: { wkid: 4326 }
+                });
+
+                features.push({
+                geometry: wmPoint,
+                    attributes: {
+                                    id: feat.properties.id,
+                                    value: feat.properties.value,
+                                    name: this.objectNameMap[feat.properties.value] || feat.properties.value, // ✅ readable name
+                                    first_seen_at: feat.properties.first_seen_at,
+                                    last_seen_at: feat.properties.last_seen_at
+                                }
+                });
+                }
+            } catch (err) {
+                console.warn("Feature parse error", err);
+            }
+            }
+        }
+
+        const [FeatureLayer] = await loadArcGISJSAPIModules(["esri/layers/FeatureLayer"]);
+
+        const fields = [
+            { name: 'id', type: 'string', alias: 'ID' },
+            { name: 'value', type: 'string', alias: 'Object Type Code' },
+            { name: 'name', type: 'string', alias: 'Object Type Name' },
+            { name: 'first_seen_at', type: 'date', alias: 'First Seen' },
+            { name: 'last_seen_at', type: 'date', alias: 'Last Seen' }
+        ];
+
+        let renderer: __esri.Renderer;
+        if (matchSpriteIcons) {
+            const spriteBaseUrl =
+            "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects"; // Host PNG + JSON with CORS!
+
+            // Cache icons for each value
+            const uniqueValues = Array.from(new Set(features.map(f => f.attributes.value)));
+            const iconCache: Record<string, string> = {};
+
+            for (const val of uniqueValues) {
+            try {
+                iconCache[val] = await this.loadSpriteIconDataURL(
+                `${spriteBaseUrl}.json`,
+                `${spriteBaseUrl}.png`,
+                val
+                );
+            } catch (err) {
+                    console.warn(`Could not load icon for ${val}`, err);
+                }
+            }
+
+            renderer = {
+            type: "unique-value",
+            field: "value",
+            uniqueValueInfos: uniqueValues.map(v => ({
+                value: v,
+                symbol: iconCache[v]
+                ? {
+                    type: "picture-marker",
+                    url: iconCache[v],
+                    width: 20,
+                    height: 20
+                    }
+                : {
+                    type: "simple-marker",
+                    size: 6,
+                    color: "orange",
+                    outline: { color: "white", width: 1 }
+                    }
+            })),
+            defaultSymbol: {
+                type: "simple-marker",
+                size: 6,
+                color: "orange",
+                outline: { color: "white", width: 1 }
+            }
+            };
+        } else {
+            renderer = {
+            type: "simple",
+            symbol: {
+                type: "simple-marker",
+                size: 6,
+                color: "orange",
+                outline: { color: "white", width: 1 }
+            }
+            };
+        }
+
+        const layer = new FeatureLayer({
+            source: features,
+            fields,
+            objectIdField: "id",
+            spatialReference: { wkid: 3857 },
+            geometryType: "point",
+            renderer,
+            popupTemplate: {
+                title: `{name}`,
+                content: `
+                    <b>ID:</b> {id}<br>
+                    <b>First Seen:</b> {first_seen_at}<br>
+                    <b>Value Code:</b> {value}<br>
+                    <b>Last Seen:</b> {last_seen_at}
+                `
+            }
+        });
+        this.mapillaryObjectsFeatureLayer = layer;
+    }
+
+    /**
+        * Returns a debounced version of the provided function.
+        * Debounced functions delay invocation until after `wait` milliseconds have elapsed since
+        * the last time they were called. Useful for rate‑limiting operations like API calls during
+        * map zooming or panning, to avoid excessive requests.
+        * @template T Function type
+        * @param func Function to debounce
+        * @param wait Milliseconds to delay execution after last call
+        * @returns A new function with debouncing applied
+    */
+    private debounce<T extends (...args: any[]) => void>(func: T, wait: number) {
+        let timeout: any;
+        return (...args: Parameters<T>) => {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func(...args), wait);
+        };
+    }
+
     /*
         --- Toggles Mapillary Vector Tile Layer or Mapillary Traffic Signs on/off in the current map view --- 
         * - If layer is already in the map, remove it
@@ -459,24 +1060,303 @@ export default class Widget extends React.PureComponent<
 
         const layers = jimuMapView.view.map.layers;
         if (layers.includes(this.mapillaryVTLayer)) {
-            // Layer is currently ON → remove it from map
             jimuMapView.view.map.remove(this.mapillaryVTLayer);
+            this.setState({ tilesActive: false }); // deactivate
         } else {
             jimuMapView.view.map.add(this.mapillaryVTLayer);
+            this.setState({ tilesActive: true }); // activate
         }
     };
 
-    private toggleMapillaryTrafficSigns = () => {
+    /**
+        * Toggles the Mapillary traffic signs overlay on/off in the map.
+        * When ON:
+        *  - Ensures the traffic sign VectorTileLayer (coverage layer) is always present when active
+        *  - Dynamically loads/removes a FeatureLayer of traffic signs from the current bounding box if zoom >= 18
+        *  - Uses watchers on zoom/stationary events to auto-remove features when zoomed out and refresh when zoomed in
+        * When OFF:
+        *  - Removes all traffic sign FeatureLayers from the map, leaves coverage layer intact
+        *  - Cleans up event watchers and fetch cancellation flags
+        * This separation allows fast coverage display at all zoom levels via VectorTileLayer,
+        * and detailed, interactive popups via FeatureLayer only at close zoom.
+    */
+    private toggleMapillaryTrafficSigns = async () => {
         const { jimuMapView } = this.state;
-        if (!jimuMapView || !this.mapillaryTrafficSignsLayer) return;
+        if (!jimuMapView) return;
 
-        const layers = jimuMapView.view.map.layers;
+        // === Turn OFF ===
+        if (this.state.trafficSignsActive) {
+            if (this.trafficSignsStationaryHandle) {
+                this.trafficSignsStationaryHandle.remove();
+                this.trafficSignsStationaryHandle = null;
+            }
+            if (this.trafficSignsZoomHandle) {
+                this.trafficSignsZoomHandle.remove();
+                this.trafficSignsZoomHandle = null;
+            }
 
-        if (layers.includes(this.mapillaryTrafficSignsLayer)) {
-            jimuMapView.view.map.remove(this.mapillaryTrafficSignsLayer);
-        } else {
+            this._cancelTrafficSignsFetch = true;
+
+            // Remove the VectorTileLayer (coverage) if present
+            if (this.mapillaryTrafficSignsLayer && jimuMapView.view.map.layers.includes(this.mapillaryTrafficSignsLayer)) {
+                jimuMapView.view.map.remove(this.mapillaryTrafficSignsLayer);
+            }
+
+            // Remove the FeatureLayer if present
+            if (this.mapillaryTrafficSignsFeatureLayer && jimuMapView.view.map.layers.includes(this.mapillaryTrafficSignsFeatureLayer)) {
+                jimuMapView.view.map.remove(this.mapillaryTrafficSignsFeatureLayer);
+            }
+
+            this.mapillaryTrafficSignsLayer = null;
+            this.mapillaryTrafficSignsFeatureLayer = null;
+
+            this.setState({ trafficSignsActive: false });
+            return;
+        }
+
+        // === Turn ON ===
+        this._cancelTrafficSignsFetch = false;
+        if (!this.mapillaryTrafficSignsLayer) {
+            this.initMapillaryTrafficSignsLayer();
+            jimuMapView.view.map.add(this.mapillaryTrafficSignsLayer); // Ensure VT layer always on
+        } else if (!jimuMapView.view.map.layers.includes(this.mapillaryTrafficSignsLayer)) {
             jimuMapView.view.map.add(this.mapillaryTrafficSignsLayer);
         }
+
+        if (jimuMapView.view.zoom >= 18) {
+            await this.loadMapillaryTrafficSignsFromTilesBBox(true);
+            if (this.mapillaryTrafficSignsFeatureLayer) {
+            jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
+            }
+        }
+
+        // Zoom watcher
+        const zoomHandle = jimuMapView.view.watch("zoom", (currentZoom) => {
+            if (currentZoom < 18) {
+            this._cancelTrafficSignsFetch = true;
+
+            // Remove any FeatureLayer for traffic signs — KEEP VT layer
+            jimuMapView.view.map.layers.forEach((layer) => {
+                if (
+                layer.type === "feature" &&
+                (layer as any).fields?.some((f: any) => f.name === "value") &&
+                (layer as any).fields?.some((f: any) => f.name === "name")
+                ) {
+                jimuMapView.view.map.remove(layer);
+                }
+            });
+
+            this.mapillaryTrafficSignsFeatureLayer = null;
+            } else {
+            this._cancelTrafficSignsFetch = false;
+            // No need to re‑add VT layer — it was never removed
+            }
+        });
+
+        // Debounced refresh for stationary event
+        const debouncedRefresh = this.debounce(async () => {
+            if (this._cancelTrafficSignsFetch || jimuMapView.view.zoom < 18) {
+            // Force remove FeatureLayer if zoomed out
+            jimuMapView.view.map.layers.forEach((layer) => {
+                if (
+                layer.type === "feature" &&
+                (layer as any).fields?.some((f: any) => f.name === "value") &&
+                (layer as any).fields?.some((f: any) => f.name === "name")
+                ) {
+                jimuMapView.view.map.remove(layer);
+                }
+            });
+            return;
+            }
+
+            // Fetch and add FeatureLayer if zoom >= 18
+            await this.loadMapillaryTrafficSignsFromTilesBBox(true);
+            if (this.mapillaryTrafficSignsFeatureLayer) {
+            // Remove old FeatureLayer(s) and add fresh one
+            jimuMapView.view.map.layers.forEach((layer) => {
+                if (
+                layer.type === "feature" &&
+                (layer as any).fields?.some((f: any) => f.name === "value") &&
+                (layer as any).fields?.some((f: any) => f.name === "name")
+                ) {
+                jimuMapView.view.map.remove(layer);
+                }
+            });
+            jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
+            }
+        }, 500);
+
+        // Stationary watcher
+        this.trafficSignsStationaryHandle = jimuMapView.view.watch("stationary", (isStationary) => {
+            if (!isStationary) return;
+            if (this._cancelTrafficSignsFetch) return;
+
+            if (jimuMapView.view.zoom < 18) {
+            // Remove only FeatureLayers — KEEP VT layer
+            jimuMapView.view.map.layers.forEach((layer) => {
+                if (
+                layer.type === "feature" &&
+                (layer as any).fields?.some((f: any) => f.name === "value") &&
+                (layer as any).fields?.some((f: any) => f.name === "name")
+                ) {
+                jimuMapView.view.map.remove(layer);
+                }
+            });
+            return;
+            }
+
+            debouncedRefresh();
+        });
+
+        // Save zoom handle for cleanup
+        this.trafficSignsZoomHandle = zoomHandle;
+        this.setState({ trafficSignsActive: true });
+    };
+
+    /**
+        * Toggles the Mapillary objects overlay on/off in the map.
+        * When ON:
+        *  - Ensures the objects VectorTileLayer (coverage layer) is always present when active
+        *  - Dynamically loads/removes a FeatureLayer of objects from the current bounding box if zoom >= 18
+        *  - Uses watchers on zoom/stationary events to auto-remove features when zoomed out and refresh when zoomed in
+        * When OFF:
+        *  - Removes all object-related FeatureLayers from the map, leaves coverage layer intact
+        *  - Cleans up event watchers and fetch cancellation flags
+        * This mirrors the logic for `toggleMapillaryTrafficSigns`, ensuring consistent behaviour
+        * for both overlays while isolating heavy FeatureLayer rendering to close zoom levels only.
+    */
+    private toggleMapillaryObjects = async () => {
+        const { jimuMapView } = this.state;
+        if (!jimuMapView) return;
+
+        // === Turn OFF ===
+        if (this.state.objectsActive) {
+            if (this.objectsStationaryHandle) {
+                this.objectsStationaryHandle.remove();
+                this.objectsStationaryHandle = null;
+            }
+            if (this.objectsZoomHandle) {
+                this.objectsZoomHandle.remove();
+                this.objectsZoomHandle = null;
+            }
+
+            this._cancelObjectsFetch = true;
+
+            // Remove the VectorTileLayer (coverage)
+            if (this.mapillaryObjectsLayer && jimuMapView.view.map.layers.includes(this.mapillaryObjectsLayer)) {
+                jimuMapView.view.map.remove(this.mapillaryObjectsLayer);
+            }
+
+            // Remove the FeatureLayer
+            if (this.mapillaryObjectsFeatureLayer && jimuMapView.view.map.layers.includes(this.mapillaryObjectsFeatureLayer)) {
+                jimuMapView.view.map.remove(this.mapillaryObjectsFeatureLayer);
+            }
+
+            this.mapillaryObjectsLayer = null;
+            this.mapillaryObjectsFeatureLayer = null;
+
+            this.setState({ objectsActive: false });
+            return;
+        }
+
+        // === Turn ON ===
+        this._cancelObjectsFetch = false;
+
+        // Ensure vector tile coverage layer is present
+        if (!this.mapillaryObjectsLayer) {
+            this.initMapillaryObjectsLayer();
+            jimuMapView.view.map.add(this.mapillaryObjectsLayer);
+        } else if (!jimuMapView.view.map.layers.includes(this.mapillaryObjectsLayer)) {
+            jimuMapView.view.map.add(this.mapillaryObjectsLayer);
+        }
+
+        if (jimuMapView.view.zoom >= 18) {
+            await this.loadMapillaryObjectsFromTilesBBox(true);
+            if (this.mapillaryObjectsFeatureLayer) {
+            jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
+            }
+        }
+
+        // Zoom watcher
+        const zoomHandle = jimuMapView.view.watch("zoom", (currentZoom) => {
+            if (currentZoom < 18) {
+            this._cancelObjectsFetch = true;
+
+            // Remove all object FeatureLayers — KEEP vector tile coverage layer
+            jimuMapView.view.map.layers.forEach((layer) => {
+                if (
+                layer.type === "feature" &&
+                (layer as any).fields?.some((f: any) => f.name === "value") &&
+                (layer as any).fields?.some((f: any) => f.name === "name")
+                ) {
+                jimuMapView.view.map.remove(layer);
+                }
+            });
+
+            this.mapillaryObjectsFeatureLayer = null;
+            } else {
+            this._cancelObjectsFetch = false;
+            // No need to re-add vector tile coverage — it's always present
+            }
+        });
+
+        // Debounced refresh
+        const debouncedRefresh = this.debounce(async () => {
+            if (this._cancelObjectsFetch || jimuMapView.view.zoom < 18) {
+            // Force remove FeatureLayer if zoomed out
+            jimuMapView.view.map.layers.forEach((layer) => {
+                if (
+                layer.type === "feature" &&
+                (layer as any).fields?.some((f: any) => f.name === "value") &&
+                (layer as any).fields?.some((f: any) => f.name === "name")
+                ) {
+                jimuMapView.view.map.remove(layer);
+                }
+            });
+            return;
+            }
+
+            // Fetch and add bbox FeatureLayer if zoom >= 18
+            await this.loadMapillaryObjectsFromTilesBBox(true);
+            if (this.mapillaryObjectsFeatureLayer) {
+            // Remove old FeatureLayers and add fresh
+            jimuMapView.view.map.layers.forEach((layer) => {
+                if (
+                layer.type === "feature" &&
+                (layer as any).fields?.some((f: any) => f.name === "value") &&
+                (layer as any).fields?.some((f: any) => f.name === "name")
+                ) {
+                jimuMapView.view.map.remove(layer);
+                }
+            });
+            jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
+            }
+        }, 500);
+
+        // Stationary watcher
+        this.objectsStationaryHandle = jimuMapView.view.watch("stationary", (isStationary) => {
+            if (!isStationary) return;
+            if (this._cancelObjectsFetch) return;
+
+            if (jimuMapView.view.zoom < 18) {
+            // Remove any object FeatureLayers — KEEP vector tile coverage layer
+            jimuMapView.view.map.layers.forEach((layer) => {
+                if (
+                layer.type === "feature" &&
+                (layer as any).fields?.some((f: any) => f.name === "value") &&
+                (layer as any).fields?.some((f: any) => f.name === "name")
+                ) {
+                jimuMapView.view.map.remove(layer);
+                }
+            });
+            return;
+            }
+
+            debouncedRefresh();
+        });
+
+        this.objectsZoomHandle = zoomHandle;
+        this.setState({ objectsActive: true });
     };
 
     // --- Local caching of last sequence ---
@@ -502,7 +1382,7 @@ export default class Widget extends React.PureComponent<
                 if (parsed.sequenceId && Array.isArray(parsed.sequenceImages)) {
                     // Only restore sequence images so blue dots appear
                     this.setState({
-                        sequenceId: null,                // keep it hidden until user clicks
+                        sequenceId: null,  // keep it hidden until user clicks
                         sequenceImages: parsed.sequenceImages
                     });
                     console.log("Sequence images restored from localStorage");
@@ -791,6 +1671,7 @@ export default class Widget extends React.PureComponent<
             // ✅ Initialize Mapillary Vector Tile Layer right after modules are ready
             this.initMapillaryLayer();
             this.initMapillaryTrafficSignsLayer();
+            this.initMapillaryObjectsLayer(); 
         } catch (err) {
             console.error("ArcGIS modules failed to load:", err);
         }
@@ -900,22 +1781,46 @@ export default class Widget extends React.PureComponent<
         jmv.view.on("click", async (evt) => {
             const { clickLon, clickLat, selectedSequenceId } = this.state;
 
-            // First: always record clicked location
+            // Always record clicked location
             const point = jmv.view.toMap(evt) as __esri.Point;
             this.setState({ clickLon: point.longitude, clickLat: point.latitude });
-
-            // Check if clicked an overlay sequence polyline/text/dot
+            
+            // Hit-test
             const hit = await jmv.view.hitTest(evt);
+            // Check Mapillary object popup layer
+            const objectHit = hit.results.find(r => r.graphic?.layer === this.mapillaryObjectsFeatureLayer);
+            if (objectHit) {
+                console.log("Clicked Mapillary object:", objectHit.graphic.attributes);
+                return; // 🛑 stop — let ArcGIS popup handle it
+            }
+
+            // Check Mapillary traffic sign popup layer
+            const trafficSignHit = hit.results.find(r => r.graphic?.layer === this.mapillaryTrafficSignsFeatureLayer);
+            if (trafficSignHit) {
+                console.log("Clicked traffic sign:", trafficSignHit.graphic.attributes);
+                return; // 🛑 stop — let ArcGIS popup handle it
+            }
+
+            // Check Mapillary VectorTileLayer icons (optional) for objects or signs
+            const vtHit = hit.results.find(r =>
+                r.layer === this.mapillaryObjectsLayer ||
+                r.layer === this.mapillaryTrafficSignsLayer
+            );
+            if (vtHit) {
+                console.log("Clicked Mapillary vector tile icon");
+                return; // 🛑 avoid running streetview logic
+            }
+
+            // 2️⃣ Check if clicked an overlay sequence polyline/text/dot
             const seqGraphic = hit.results.find(r => (r.graphic as any).__isSequenceOverlay);
             if (seqGraphic && seqGraphic.graphic.attributes?.sequenceId) {
                 const seqId = seqGraphic.graphic.attributes.sequenceId;
                 console.log("Sequence overlay clicked:", seqId);
 
-                // If clicked sequence differs from current one, switch to it 
                 if (seqId !== selectedSequenceId) {
-                        const updatedSequence = await this.getSequenceWithCoords(seqId, this.accessToken);
-                        if (updatedSequence.length) {
-                            const closestImg = updatedSequence.reduce((closest, img) => {
+                    const updatedSequence = await this.getSequenceWithCoords(seqId, this.accessToken);
+                    if (updatedSequence.length) {
+                        const closestImg = updatedSequence.reduce((closest, img) => {
                             const dist = this.distanceMeters(img.lat, img.lon, point.latitude, point.longitude);
                             return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
                         }, null as any);
@@ -925,14 +1830,34 @@ export default class Widget extends React.PureComponent<
                             await this.loadSequenceById(seqId, closestImg.id);
                         }
                     }
-                    return; //  overlay click handled, skip rest
+                    return; // ✅ sequence overlay click handled — skip rest
                 }
             }
 
-            // If not an overlay or it's the same sequence, run normal map click logic
+            // 3️⃣ If not an overlay or object, run normal map click logic
             await this.handleMapClick(evt);
         });
+
+        jmv.view.on("pointer-move", async (evt) => {
+            const hit = await jmv.view.hitTest(evt);
+            const obj = hit.results.find(r => r.graphic?.layer === this.mapillaryObjectsFeatureLayer);
+            if (obj) {
+                this.setState({
+                    hoveredMapObject: {
+                        x: evt.x,
+                        y: evt.y,
+                        objectName: obj.graphic.attributes.value,
+                        firstSeen: new Date(obj.graphic.attributes.first_seen_at).toLocaleString(),
+                        lastSeen: new Date(obj.graphic.attributes.last_seen_at).toLocaleString()
+                    }
+                });
+            } else {
+                if (this.state.hoveredMapObject) this.setState({ hoveredMapObject: null });
+            }
+        });
     }
+
+
 
     private showNoImageMessage() {
         this.setState({ noImageMessageVisible: true });
@@ -1121,7 +2046,7 @@ export default class Widget extends React.PureComponent<
         }, 30);
     }
 
-    private drawCone(lon: number, lat: number, heading: number, radiusMeters = 10, spreadDeg = 60) {
+    private drawCone(lon: number, lat: number, heading: number, radiusMeters = 5, spreadDeg = 60) {
         const {jimuMapView} = this.state;
         if (!jimuMapView || !this.ArcGISModules) return null;
 
@@ -1728,26 +2653,6 @@ export default class Widget extends React.PureComponent<
                     </div>
                 )}
 
-                {/* Fullscreen toggle button */}
-                <button
-                    onClick={this.toggleFullscreen}
-                    title="Maximize/Fullscreen"
-                    style={{
-                        position: 'absolute',
-                        top: '10px',
-                        left: '10px',
-                        zIndex: 10000,
-                        background: 'rgba(2, 117, 216, 0.7)',
-                        color: 'white',
-                        padding: '2px 8px',
-                        borderRadius: '3px',
-                        cursor: 'pointer',
-                        fontSize: '14px'
-                    }}
-                >
-                    🗖
-                </button>
-
                 {/* Info box */}
                 <div
                     style={{
@@ -1767,44 +2672,57 @@ export default class Widget extends React.PureComponent<
 					 {this.state.address && <>📍 {this.state.address}</>}
                 </div>
 
-                <button
-                    onClick={this.toggleMapillaryTiles}
-                    title="Toggle Mapillary Layer"
+                {/* Unified control buttons container */}
+                <div
                     style={{
                         position: 'absolute',
-                        top: '50px',
-                        left: '10px',
-                        background: 'rgba(53, 175, 109, 0.7)',
-                        color: '#fff',
-                        borderRadius: '3px',
-                        padding: '2px 6px',
-                        cursor: 'pointer',
-                        fontSize: '13px',
-                        zIndex: 10000
+                        top: '2px',
+                        left: '2px',
+                        zIndex: 10000,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                        background: 'rgba(0, 0, 0, 0.35)',
+                        padding: '4px',
+                        borderRadius: '8px',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.4)'
                     }}
-                    >
-                    🗺️
-               </button>
-
-               <button
-                    onClick={this.toggleMapillaryTrafficSigns}
-                    title="Toggle Traffic Signs Coverage Layer"
-                    style={{
-                        position: 'absolute',
-                        top: '80px', // 50px for previous, 30px below that
-                        left: '10px',
-                        background: 'rgba(255, 0, 0, 0.7)',
-                        color: '#fff',
-                        borderRadius: '3px',
-                        padding: '2px 6px',
-                        cursor: 'pointer',
-                        fontSize: '13px',
-                        zIndex: 10000
-                    }}
-                    >
-                    🚦
-                </button>
-
+                >
+                    {[
+                        { emoji: '🗖', onClick: this.toggleFullscreen, title: 'Maximize/Fullscreen', bg: 'rgba(2, 117, 216, 0.9)', active: this.state.isFullscreen },
+                        { emoji: '🗺️', onClick: this.toggleMapillaryTiles, title: 'Toggle Mapillary Layer', bg: 'rgba(53, 175, 109, 0.9)', active: this.state.tilesActive },
+                        { emoji: '🚦', onClick: this.toggleMapillaryTrafficSigns, title: 'Toggle Traffic Signs Coverage Layer', bg: 'rgba(255, 0, 0, 0.9)', active: this.state.trafficSignsActive },
+                        { emoji: '📍', onClick: this.toggleMapillaryObjects, title: 'Toggle Mapillary Objects Layer', bg: 'rgba(255, 165, 0, 0.9)', active: this.state.objectsActive }
+                    ].map((btn, i) => (
+                        <button
+                            key={i}
+                            title={btn.title}
+                            onClick={btn.onClick}
+                            style={{
+                                background: btn.active ? btn.bg : btn.bg.replace('0.9', '0.5'), // dim background if inactive
+                                color: '#fff',
+                                width: '25px',
+                                height: '25px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '18px',
+                                borderRadius: '6px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                boxShadow: btn.active
+                                    ? '0 0 6px rgba(255,255,255,0.8)' // glow when active
+                                    : '0 2px 4px rgba(0,0,0,0.3)',
+                                transform: btn.active ? 'scale(1.1)' : 'scale(1)',
+                                transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'}
+                            onMouseLeave={e => e.currentTarget.style.transform = btn.active ? 'scale(1.1)' : 'scale(1)'}
+                        >
+                            {btn.emoji}
+                        </button>
+                    ))}
+                </div>
             </div>
         );
 
