@@ -36,6 +36,7 @@ interface State {
     tilesActive?: boolean;
     trafficSignsActive?: boolean;
     objectsActive?: boolean;
+    sequenceOffset?: number;
 }
 
 export default class Widget extends React.PureComponent<
@@ -59,18 +60,14 @@ export default class Widget extends React.PureComponent<
 
     /**
         * Human‑readable names for Mapillary object classification codes.
-        *
         * Mapillary returns raw object `value` codes such as `"object--bench"` or `"marking--discrete--stop-line"`.
         * These codes are hierarchical (double‑dash separated) and not user‑friendly for display.
-        *
         * This lookup table maps each known Mapillary object classification code to a
         * descriptive, human‑readable label for use in the UI, popups, and legends.
-        *
         * Notes:
         * - Keys match `value` properties returned by Mapillary's vector tile/object API.
         * - Values are short descriptive labels optimized for end‑users.
         * - Any `value` not found here will fall back to displaying the raw code, unless further formatting is applied.
-        *
         * This is used in {@link loadMapillaryObjectsFromTilesBBox} to set the `name` attribute
         * for each object feature before creating the ArcGIS FeatureLayer.
     */
@@ -154,7 +151,8 @@ export default class Widget extends React.PureComponent<
         noImageMessageVisible: false,
         tilesActive: false,
         trafficSignsActive: false,
-        objectsActive: false
+        objectsActive: false,
+        sequenceOffset: 0
     };
 
     constructor(props: AllWidgetProps<any>) {
@@ -172,9 +170,7 @@ export default class Widget extends React.PureComponent<
         * Returns a consistent but visually distinct color for a sequence index.
         * Repeats the base palette cyclically, darkening subsequent cycles by 10% 
         * to hint repeated usage without losing sequence distinction.
-        * 
-        * @param index Sequence order index from availableSequences array 
-        *              (used for both polyline and dropdown background).
+        * @param index Sequence order index from availableSequences array (used for both polyline and dropdown background).
         * @returns Array [R, G, B, A] suitable for ArcGIS API symbol color.
     */
     private pickSequenceColor(index: number) {
@@ -199,10 +195,8 @@ export default class Widget extends React.PureComponent<
     /*
         * Draws full sequence overlays (Polyline or Dot Marker + Sequence Number Text)
         * for all items in this.state.availableSequences.
-        * 
         * This method is called after state.availableSequences is updated,
         * ensuring users always see the entire route for selected/available sequences.
-        * 
         * Design notes:
         * - Polyline drawn when ≥ 2 coords are available; fallback to point marker for single-image sequences.
         * - Graphic attributes.sequenceId are set so hitTest clicks can identify the sequence.
@@ -230,8 +224,8 @@ export default class Widget extends React.PureComponent<
             const color = seq._color || this.pickSequenceColor(idx);
             const paths = seq.images.map(img => [img.lon, img.lat]);
 
+            // Draw multi-vertex route as polyline
             if (paths.length > 1) {
-                // Draw multi-vertex route as polyline
                 const polylineGraphic = new Graphic({
                     geometry: { type: "polyline", paths, spatialReference: { wkid: 4326 } },
                     symbol: { type: "simple-line", color, width: 2 },
@@ -239,41 +233,49 @@ export default class Widget extends React.PureComponent<
                 });
                 (polylineGraphic as any).__isSequenceOverlay = true;
                 jimuMapView.view.graphics.add(polylineGraphic);
-            } else {
-                // Single-image sequence → draw a colored dot
+            }
+
+            // Draw a **point for every image** in this sequence
+            seq.images.forEach(img => {
                 const pointGraphic = new Graphic({
-                    geometry: { type: "point", longitude: paths[0][0], latitude: paths[0][1], spatialReference: { wkid: 4326 } },
-                    symbol: { type: "simple-marker", color, size: "6px", outline: { color: "white", width: 3 } },
+                    geometry: { 
+                        type: "point", 
+                        longitude: img.lon, 
+                        latitude: img.lat, 
+                        spatialReference: { wkid: 4326 }
+                    },
+                    symbol: { 
+                        type: "simple-marker", 
+                        color: color,     // use sequence color
+                        size: "10px", 
+                        outline: { color: "white", width: 1 } 
+                    },
                     attributes: { sequenceId: seq.sequenceId }
                 });
                 (pointGraphic as any).__isSequenceOverlay = true;
                 jimuMapView.view.graphics.add(pointGraphic);
-            }
+            });
 
             // Draw sequence number label at first image location
-            // This links visually to dropdown item number
             const firstImg = seq.images[0];
-            const markerGraphic = new Graphic({
-            geometry: {
-                type: "point",
-                longitude: firstImg.lon,
-                latitude: firstImg.lat
-            },
-            symbol: {
+            const labelGraphic = new Graphic({
+                geometry: { 
+                    type: "point", 
+                    longitude: firstImg.lon, 
+                    latitude: firstImg.lat 
+                },
+                symbol: {
                     type: "text",
-                    text: String(idx + 1), // number matches dropdown order
+                    text: String(idx + 1),
                     color: color,
                     haloColor: "white",
-                    haloSize: 2, // bigger halo for visibility
-                    font: {
-                        size: 20, // bigger number size
-                        weight: "bold"
-                    }
-            },
-            attributes: { sequenceId: seq.sequenceId }
+                    haloSize: 2,
+                    font: { size: 14, weight: "bold" }
+                },
+                attributes: { sequenceId: seq.sequenceId }
             });
-            (markerGraphic as any).__isSequenceOverlay = true;
-            jimuMapView.view.graphics.add(markerGraphic);
+            (labelGraphic as any).__isSequenceOverlay = true;
+            jimuMapView.view.graphics.add(labelGraphic);
         });
     }
 
@@ -382,20 +384,23 @@ export default class Widget extends React.PureComponent<
 		}
 
 		// Reset state to fresh opened widget if flagged
-		if (resetState) {
-			this.setState({
-				imageId: null,
-				sequenceId: null,
-				sequenceImages: [],
-				lon: null,
-				lat: null,
-				isFullscreen: false,
-				address: null,
+        if (resetState) {
+            this.setState({
+                imageId: null,
+                sequenceId: null,
+                sequenceImages: [],
+                lon: null,
+                lat: null,
+                isFullscreen: false,
+                address: null,
                 tilesActive: false,
                 trafficSignsActive: false,
-                objectsActive: false // ✅ Reset toggles
-			});
-		}
+                objectsActive: false,
+                availableSequences: [],     // Clear sequence list
+                selectedSequenceId: null,   // Reset active sequence
+                noImageMessageVisible: false // Hide "no image" banner if it was showing
+            });
+        }
 	}
 	
     // --- Reverse geocoding helper ---
@@ -1516,13 +1521,8 @@ export default class Widget extends React.PureComponent<
                         console.log("Keyboard zoom (+/-) disabled");
                     }
 
-                    });
-
-
                     // Custom wheel handler for cone & zoomStepIndex update
-                    this.viewerContainer.current.addEventListener(
-                    "wheel",
-                    (evt) => {
+                    this.viewerContainer.current.addEventListener("wheel", (evt) => {
                         evt.preventDefault(); // prevent page scroll
 
                         if (evt.deltaY < 0) {
@@ -1535,9 +1535,10 @@ export default class Widget extends React.PureComponent<
 
                         // Use the same helper for redraw
                         this.redrawCone();
-                    },
-                    { passive: false }
-                );
+                        },
+                        { passive: false }
+                    );
+                });
 
                 // Event: Bearing change → update cone
                 this.mapillaryViewer.on("bearing", (event: any) => {
@@ -1612,7 +1613,7 @@ export default class Widget extends React.PureComponent<
                         );
                     }
                 });
-                            }
+            }
 
             // Clear previous green pulse
             this.clearGreenPulse();
@@ -1668,7 +1669,7 @@ export default class Widget extends React.PureComponent<
                 ]);
             this.ArcGISModules = {Graphic, Point, SimpleMarkerSymbol, VectorTileLayer};
             console.log("ArcGIS API modules loaded");
-            // ✅ Initialize Mapillary Vector Tile Layer right after modules are ready
+            // Initialize Mapillary Vector Tile Layer right after modules are ready
             this.initMapillaryLayer();
             this.initMapillaryTrafficSignsLayer();
             this.initMapillaryObjectsLayer(); 
@@ -1791,14 +1792,14 @@ export default class Widget extends React.PureComponent<
             const objectHit = hit.results.find(r => r.graphic?.layer === this.mapillaryObjectsFeatureLayer);
             if (objectHit) {
                 console.log("Clicked Mapillary object:", objectHit.graphic.attributes);
-                return; // 🛑 stop — let ArcGIS popup handle it
+                return; // stop — let ArcGIS popup handle it
             }
 
             // Check Mapillary traffic sign popup layer
             const trafficSignHit = hit.results.find(r => r.graphic?.layer === this.mapillaryTrafficSignsFeatureLayer);
             if (trafficSignHit) {
                 console.log("Clicked traffic sign:", trafficSignHit.graphic.attributes);
-                return; // 🛑 stop — let ArcGIS popup handle it
+                return; // stop — let ArcGIS popup handle it
             }
 
             // Check Mapillary VectorTileLayer icons (optional) for objects or signs
@@ -1808,10 +1809,10 @@ export default class Widget extends React.PureComponent<
             );
             if (vtHit) {
                 console.log("Clicked Mapillary vector tile icon");
-                return; // 🛑 avoid running streetview logic
+                return; // avoid running streetview logic
             }
 
-            // 2️⃣ Check if clicked an overlay sequence polyline/text/dot
+            // Check if clicked an overlay sequence polyline/text/dot
             const seqGraphic = hit.results.find(r => (r.graphic as any).__isSequenceOverlay);
             if (seqGraphic && seqGraphic.graphic.attributes?.sequenceId) {
                 const seqId = seqGraphic.graphic.attributes.sequenceId;
@@ -1830,11 +1831,11 @@ export default class Widget extends React.PureComponent<
                             await this.loadSequenceById(seqId, closestImg.id);
                         }
                     }
-                    return; // ✅ sequence overlay click handled — skip rest
+                    return; // sequence overlay click handled — skip rest
                 }
             }
 
-            // 3️⃣ If not an overlay or object, run normal map click logic
+            // If not an overlay or object, run normal map click logic
             await this.handleMapClick(evt);
         });
 
@@ -1856,8 +1857,6 @@ export default class Widget extends React.PureComponent<
             }
         });
     }
-
-
 
     private showNoImageMessage() {
         this.setState({ noImageMessageVisible: true });
@@ -2132,14 +2131,10 @@ export default class Widget extends React.PureComponent<
         const { jimuMapView, selectedSequenceId } = this.state;
         if (!jimuMapView) return;
 
-            // Remove old overlays before new search
-            const toRemove: __esri.Graphic[] = [];
-            jimuMapView.view.graphics.forEach(g => {
-                if ((g as any).__isSequenceOverlay) {
-                toRemove.push(g);
-                }
-            });
-        toRemove.forEach(g => jimuMapView.view.graphics.remove(g));
+
+
+        // Immediately remove active sequence markers (blue points + green pulse) before starting load
+        this.clearGreenPulse();
 
         // Step 0: Get clicked map location.
         const point = jimuMapView.view.toMap(event) as __esri.Point;
@@ -2159,48 +2154,64 @@ export default class Widget extends React.PureComponent<
 
         try {
             if (!selectedSequenceId) {
-                // -------------------------------------------------
-                // FIRST CLICK – Start from scratch, fetch sequences
-                // -------------------------------------------------
-                const nearbySeqs = await this.getSequencesInBBox(lon, lat, this.accessToken);
-                if (!nearbySeqs.length) {
-                    this.showNoImageMessage();
-                    return;
-                }
+            // ------------------
+            // FIRST CLICK – fixed
+            // ------------------
+            const nearbySeqs = await this.getSequencesInBBox(lon, lat, this.accessToken);
+            if (!nearbySeqs.length) {
+                this.showNoImageMessage();
+                return;
+            }
 
-                // Fetch full routes for each sequence found in bbox
-                const fullSeqs = await Promise.all(
-                    nearbySeqs.map(async (seq, idx) => {
+            // Fetch full routes for each sequence found in bbox
+            const fullSeqs = await Promise.all(
+                nearbySeqs.map(async (seq, idx) => {
                     const allImages = await this.getSequenceWithCoords(seq.sequenceId, this.accessToken);
                     return {
-                        ...seq,
-                        images: allImages,
-                        _color: this.pickSequenceColor(idx)
+                    ...seq,
+                    images: allImages,
+                    _color: this.pickSequenceColor(idx)
                     };
-                    })
-                );
+                })
+            );
 
-                this.setState({ availableSequences: fullSeqs }, () => {
-                    this.drawSequencesOverlay();
-                });
+            // Save for overlay drawing
+            this.setState({ availableSequences: fullSeqs }, () => {
+                this.drawSequencesOverlay();
+            });
 
-               // Pick closest image in the first sequence (full route)
-                const firstSeq = fullSeqs[0];
-                const closestImg = firstSeq.images.reduce((closest, img) => {
+            // Find the nearest image in ANY sequence
+            let globalClosest: { seqId: string; imgId: string; dist: number } | null = null;
+
+            fullSeqs.forEach(seq => {
+                seq.images.forEach(img => {
                     const dist = this.distanceMeters(img.lat, img.lon, lat, lon);
-                    return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
-                }, null as (typeof firstSeq.images[0] & { dist: number }) | null);
+                    if (!globalClosest || dist < globalClosest.dist) {
+                        globalClosest = { seqId: seq.sequenceId, imgId: img.id, dist };
+                    }
+                });
+            });
 
-                this.setState({ selectedSequenceId: firstSeq.sequenceId, lon, lat });
-                this.clearNoImageMessage();
-                await this.loadSequenceById(firstSeq.sequenceId, closestImg.id);
+            if (!globalClosest) {
+                this.showNoImageMessage();
+                return;
+            }
+
+            // Use the closest sequence & image
+            this.setState({
+                selectedSequenceId: globalClosest.seqId,
+                lon,
+                lat
+            });
+            this.clearNoImageMessage();
+            await this.loadSequenceById(globalClosest.seqId, globalClosest.imgId);
 
             } else {
                 // ------------------------------------------------------
                 // LATER CLICK – Keep current sequence or switch if far
                 // ------------------------------------------------------
 
-                // Use already loaded sequence data from state if present
+                // Try to use cached sequenceImages; fetch if missing
                 let updatedSequence = this.state.sequenceImages && this.state.sequenceImages.length
                     ? this.state.sequenceImages
                     : await this.getSequenceWithCoords(selectedSequenceId, this.accessToken);
@@ -2213,7 +2224,9 @@ export default class Widget extends React.PureComponent<
                 // Find closest frame in this sequence to clicked point
                 const closestImg = updatedSequence.reduce((closest, img) => {
                     const dist = this.distanceMeters(img.lat, img.lon, lat, lon);
-                    return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
+                    return (!closest || dist < closest.dist) 
+                        ? { ...img, dist } 
+                        : closest;
                 }, null as ({ id: string; lat: number; lon: number; dist: number }) | null);
 
                 if (!closestImg) {
@@ -2221,58 +2234,78 @@ export default class Widget extends React.PureComponent<
                     return;
                 }
                 
-                // Within ≤ 5meters:
+                // Within ≤ 0.5meters:
                 // Uses this.state.sequenceImages from localStorage/state if available, so NO extra API call -fast and offline-friendly.
                 // Calls loadSequenceById to reposition viewer to the nearest image.
-                // Beyond 5 meters:
+                // Beyond 0.5 meters:
                 // Calls getSequencesInBBox → new API request to discover sequences near clicked point.
                 // Updates availableSequences and selectedSequenceId to the new sequence.
                 // Calls loadSequenceById to load that new sequence and image.
 
-                const DISTANCE_THRESHOLD_METERS = 5; // your chosen threshold
+                const DISTANCE_THRESHOLD_METERS = 0.5; // your chosen threshold
 
-                // If clicked location is too far from any image in current sequence...
+                // === CASE A: If clicked location is too far from any image in current sequence...
                 if (closestImg.dist > DISTANCE_THRESHOLD_METERS) {
                     // ...search for new sequences near clicked point
                     const nearbySeqs = await this.getSequencesInBBox(lon, lat, this.accessToken);
                     if (!nearbySeqs.length) {
-                    this.showNoImageMessage();
-                    return;
+                        this.showNoImageMessage();
+                        return;
                     }
 
                     // Option 2: fetch full routes for each nearby sequence
                     const fullSeqs = await Promise.all(
                     nearbySeqs.map(async (seq, idx) => {
                         const allImages = await this.getSequenceWithCoords(seq.sequenceId, this.accessToken);
-                        return {
-                        ...seq,
-                        images: allImages,
-                        _color: this.pickSequenceColor(idx)
-                        };
-                    })
+                            return {
+                                ...seq,
+                                images: allImages,
+                                _color: this.pickSequenceColor(idx)
+                            };
+                        })
                     );
 
-                        this.setState({ availableSequences: fullSeqs }, () => {
+                    this.setState({ availableSequences: fullSeqs }, () => {
                         this.drawSequencesOverlay();
                     });
 
-                    // Pick closest in the first full sequence
-                    const newSeq = fullSeqs[0];
-                    const newClosest = newSeq.images.reduce((c, img) => {
-                    const d = this.distanceMeters(img.lat, img.lon, lat, lon);
-                    return (!c || d < c.dist) ? { ...img, dist: d } : c;
-                    }, null as any);
+                    // Find globally closest image across all returned sequences
+                    let globalClosest2: { seqId: string; imgId: string; dist: number } | null = null;
 
-                    this.setState({ selectedSequenceId: newSeq.sequenceId, lon, lat });
+                    fullSeqs.forEach(seq => {
+                        seq.images.forEach(img => {
+                        const dist = this.distanceMeters(img.lat, img.lon, lat, lon);
+                        if (!globalClosest2 || dist < globalClosest2.dist) {
+                            globalClosest2 = { seqId: seq.sequenceId, imgId: img.id, dist };
+                        }
+                        });
+                    });
+
+                    if (!globalClosest2) {
+                        this.showNoImageMessage();
+                        return;
+                    }
+
+                    this.setState({ selectedSequenceId: globalClosest2.seqId, lon, lat });
                     this.clearNoImageMessage();
-                    await this.loadSequenceById(newSeq.sequenceId, newClosest.id);
+                    await this.loadSequenceById(globalClosest2.seqId, globalClosest2.imgId);
                     return;
                 }
 
-                // Within threshold — stick with current sequence
-                await this.loadSequenceById(selectedSequenceId, closestImg.id);
-                  // Redraw overlays so polyline/full route is visible again
-                this.drawSequencesOverlay();
+                // === CASE B: Click is NEAR an image in current sequence ===
+                console.log("Same sequence within threshold — reusing cached overlay");
+
+                await this.loadSequenceById(selectedSequenceId, closestImg.id, { skipInactiveMarkers: true });
+
+                // Optional: if you still want to mark “off-point” clicks with a red marker
+                const toleranceMeters = 0.5;
+                const onSequencePoint = updatedSequence.some(img =>
+                    this.distanceMeters(img.lat, img.lon, lat, lon) <= toleranceMeters
+                );
+                if (!onSequencePoint) {
+                    this.drawPoint(lon, lat);
+                }
+                return;
             }
         } catch (err) {
             console.error("Error in handleMapClick:", err);
@@ -2283,11 +2316,11 @@ export default class Widget extends React.PureComponent<
     }
 
     // --- Fetch nearby sequences (single API call) ---
-    // Queries Mapillary Graph API for images within ~55m bbox.
+    // Queries Mapillary Graph API for images within ~5m bbox.
     // Groups them by sequence ID and keeps the earliest captured_at
     // date per sequence for UI dropdown display.
     private async getSequencesInBBox(lon: number, lat: number, accessToken: string) {
-        const bboxSize = 0.0001; // ~10 meters
+        const bboxSize = 0.00005; // ~5 meters
         const url = `https://graph.mapillary.com/images?fields=id,geometry,sequence,captured_at&bbox=${
             lon - bboxSize
         },${lat - bboxSize},${lon + bboxSize},${lat + bboxSize}&limit=100`;
@@ -2505,7 +2538,7 @@ export default class Widget extends React.PureComponent<
                     display: "flex",
                     flexDirection: "column"
                 }}
-            >
+                >
                 {mapWidgetId ? (
                     <JimuMapViewComponent
                         useMapWidgetId={mapWidgetId}
@@ -2519,75 +2552,128 @@ export default class Widget extends React.PureComponent<
 
                 {viewerArea}
 
-                {/* Sequence picker overlay */}
+                {/* Revolver-style sequence picker */}
                 {this.state.availableSequences && this.state.availableSequences.length > 1 && (
-                    <div style={{
-                        position: "absolute",
-                        top: "10px", // Below info box which is at 10px
-                        left: "50px", // Hug top-right
-                        background: "rgba(0,0,0,0.6)", // Semi-transparent dark
-                        padding: "1px 1px 0px 2px",
-                        borderRadius: "6px",
+                <div
+                    style={{
+                    background: "rgba(0,0,0,0.6)",
+                    padding: "2px",
+                    zIndex: 10000,
+                    color: "#fff",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    justifyContent: "center"
+                    }}
+                >
+                    {/* Prev arrow — only show if more than 3 sequences */}
+                    {this.state.availableSequences.length > 3 && (
+                    <button
+                        onClick={() => {
+                        this.setState(prev => ({
+                            sequenceOffset:
+                            (prev.sequenceOffset! - 1 + this.state.availableSequences!.length) %
+                            this.state.availableSequences!.length
+                        }));
+                        }}
+                        style={{
+                        background: "rgba(255,255,255,0.2)",
+                        border: "none",
+                        color: "#fff",
                         fontSize: "10px",
-                        zIndex: 10000,
-                        boxShadow: "0 2px 4px rgba(0,0,0,0.4)",
-                        color: "#fff"
-                    }}>
-                        <label style={{ marginRight: "2px", fontWeight: 300 }}>SeqID:</label>
-                        <select
-                            value={this.state.selectedSequenceId || ""}
-                            onChange={async (e) => {
-                                const seqId = e.target.value;
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        padding: "2px 6px"
+                        }}
+                    >
+                        ◀
+                    </button>
+                    )}
 
-                                // Update selected sequence ID in state
-                                this.setState({ selectedSequenceId: seqId });
+                    {/* Sequence slots — at most #available, max 3 */}
+                    {Array.from({ length: Math.min(3, this.state.availableSequences!.length) }).map((_, slotIdx) => {
+                    const seqIndex =
+                        (this.state.sequenceOffset! + slotIdx) % this.state.availableSequences!.length;
+                    const seq = this.state.availableSequences![seqIndex];
+                    const colorArr = seq._color || this.pickSequenceColor(seqIndex);
+                    const cssColor = `rgba(${colorArr[0]}, ${colorArr[1]}, ${colorArr[2]}, ${colorArr[3] ?? 1})`;
+                    const date = seq.capturedAt
+                        ? new Date(seq.capturedAt).toLocaleDateString("en-US", { month: "short", year: "numeric" })
+                        : "Unknown date";
+                    const isActive = this.state.selectedSequenceId === seq.sequenceId;
 
-                                // Clear old active frame pulse
-                                this.clearGreenPulse();
-
-                                // If we already have a click location, go to closest image for that point
-                                const { clickLon, clickLat } = this.state;
-                                if (clickLon != null && clickLat != null) {
-                                const updatedSequence = await this.getSequenceWithCoords(seqId, this.accessToken);
-                                    if (updatedSequence.length) {
-                                            const closestImg = updatedSequence.reduce((closest, img) => {
-                                            const dist = this.distanceMeters(img.lat, img.lon, clickLat, clickLon);
-                                            return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
-                                        }, null as any);
-
-                                        if (closestImg) {
-                                            // This will handle viewer setup and drawing
-                                            await this.loadSequenceById(seqId, closestImg.id);
-                                        }
-                                    }
+                    return (
+                        <div
+                        key={seq.sequenceId}
+                        onClick={async () => {
+                            this.setState({ selectedSequenceId: seq.sequenceId });
+                            this.clearGreenPulse();
+                            const { clickLon, clickLat } = this.state;
+                            if (clickLon != null && clickLat != null) {
+                            const updatedSequence = await this.getSequenceWithCoords(seq.sequenceId, this.accessToken);
+                            if (updatedSequence.length) {
+                                const closestImg = updatedSequence.reduce((closest, img) => {
+                                const dist = this.distanceMeters(img.lat, img.lon, clickLat, clickLon);
+                                return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
+                                }, null as any);
+                                if (closestImg) {
+                                await this.loadSequenceById(seq.sequenceId, closestImg.id);
                                 }
+                            }
+                            }
+                        }}
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            background: isActive ? "rgba(255,255,255,0.2)" : "transparent",
+                            padding: "4px 6px",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            minWidth: "60px"
+                        }}
+                        >
+                        {/* Color swatch */}
+                        <span
+                            style={{
+                            display: "inline-block",
+                            width: "12px",
+                            height: "12px",
+                            borderRadius: "50%",
+                            backgroundColor: cssColor,
+                            border: "1px solid #fff"
                             }}
-                            style={{ 
-                                borderRadius:"10px",
-                                background: "rgba(255,255,255,0.9)"
-                             }}
-                            >
-                            {this.state.availableSequences.map((seq, idx) => {
-                                const cssColor = Array.isArray(seq._color)
-                                ? `rgba(${seq._color[0]}, ${seq._color[1]}, ${seq._color[2]}, ${seq._color[3] ?? 1})`
-                                : seq._color;
+                        />
+                        {/* Label */}
+                        <span style={{ whiteSpace: "nowrap", fontSize:"10px" }}>
+                            {seqIndex + 1}. {seq.sequenceId.slice(0, 3)}… ({date})
+                        </span>
+                        </div>
+                    );
+                    })}
 
-                                const date = seq.capturedAt
-                                ? new Date(seq.capturedAt).toLocaleDateString("en-US", { month: "short", year: "numeric" })
-                                : "Unknown date";
-
-                                return (
-                                <option
-                                    key={seq.sequenceId}
-                                    value={seq.sequenceId}
-                                    style={{ backgroundColor: cssColor }}
-                                    >
-                                    {idx + 1}. {seq.sequenceId.slice(0, 3)}... ({seq.images.length} nearby) — {date}
-                                </option>
-                                );
-                            })}
-                        </select>
-                    </div>
+                    {/* Next arrow — only show if more than 3 sequences */}
+                    {this.state.availableSequences.length > 3 && (
+                    <button
+                        onClick={() => {
+                        this.setState(prev => ({
+                            sequenceOffset: (prev.sequenceOffset! + 1) % this.state.availableSequences!.length
+                        }));
+                        }}
+                        style={{
+                        background: "rgba(255,255,255,0.2)",
+                        border: "none",
+                        color: "#fff",
+                        fontSize: "10px",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        padding: "2px 6px"
+                        }}
+                    >
+                        ▶
+                    </button>
+                    )}
+                </div>
                 )}
 
                 {/* Legend — only show if user clicked & image loaded */}
@@ -2595,13 +2681,13 @@ export default class Widget extends React.PureComponent<
                     <div
                         style={{
                             position: "absolute",
-                            bottom: "12px",
-                            left: "12px",
+                            bottom: "30px",
+                            left: "3px",
                             background: "rgba(255,255,255,0.3)",
-                            padding: "6px 10px",
+                            padding: "4px 8px",
                             borderRadius: "4px",
                             boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
-                            fontSize: "10px",
+                            fontSize: "8px",
                         }}
                     >
                         <div style={{display: "flex", alignItems: "center", marginBottom: "4px"}}>
@@ -2669,59 +2755,115 @@ export default class Widget extends React.PureComponent<
                 >
                     {this.state.imageId && <>Image ID: {this.state.imageId}<br/></>}
                     {this.state.sequenceId && <>Sequence ID: {this.state.sequenceId}<br/></>}
-					 {this.state.address && <>📍 {this.state.address}</>}
+                    {/* Lat/Lon */}
+                    {(() => {
+                        if (this.state.imageId && this.state.sequenceImages.length > 0) {
+                            const currentImg = this.state.sequenceImages.find(
+                                img => img.id === this.state.imageId
+                            );
+                            if (currentImg) {
+                                return (
+                                    <>
+                                        📍{" "}Lat: {currentImg.lat.toFixed(6)}{", "}
+                                        Lon: {currentImg.lon.toFixed(6)}
+                                    </>
+                                );
+                            }
+                        }
+                        return null;
+                    })()}
+					{this.state.address && <><br/>🌎{" "}{this.state.address}</>}
+
                 </div>
 
                 {/* Unified control buttons container */}
                 <div
-                    style={{
-                        position: 'absolute',
-                        top: '2px',
-                        left: '2px',
-                        zIndex: 10000,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '6px',
-                        background: 'rgba(0, 0, 0, 0.35)',
-                        padding: '4px',
-                        borderRadius: '8px',
-                        boxShadow: '0 2px 6px rgba(0,0,0,0.4)'
-                    }}
+                style={{
+                    position: 'absolute',
+                    top: '2px',
+                    left: '2px',
+                    zIndex: 10000,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                    background: 'rgba(0, 0, 0, 0.35)',
+                    padding: '4px',
+                    borderRadius: '8px',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.4)'
+                }}
                 >
-                    {[
-                        { emoji: '🗖', onClick: this.toggleFullscreen, title: 'Maximize/Fullscreen', bg: 'rgba(2, 117, 216, 0.9)', active: this.state.isFullscreen },
-                        { emoji: '🗺️', onClick: this.toggleMapillaryTiles, title: 'Toggle Mapillary Layer', bg: 'rgba(53, 175, 109, 0.9)', active: this.state.tilesActive },
-                        { emoji: '🚦', onClick: this.toggleMapillaryTrafficSigns, title: 'Toggle Traffic Signs Coverage Layer', bg: 'rgba(255, 0, 0, 0.9)', active: this.state.trafficSignsActive },
-                        { emoji: '📍', onClick: this.toggleMapillaryObjects, title: 'Toggle Mapillary Objects Layer', bg: 'rgba(255, 165, 0, 0.9)', active: this.state.objectsActive }
-                    ].map((btn, i) => (
-                        <button
-                            key={i}
-                            title={btn.title}
-                            onClick={btn.onClick}
-                            style={{
-                                background: btn.active ? btn.bg : btn.bg.replace('0.9', '0.5'), // dim background if inactive
-                                color: '#fff',
-                                width: '25px',
-                                height: '25px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '18px',
-                                borderRadius: '6px',
-                                border: 'none',
-                                cursor: 'pointer',
-                                boxShadow: btn.active
-                                    ? '0 0 6px rgba(255,255,255,0.8)' // glow when active
-                                    : '0 2px 4px rgba(0,0,0,0.3)',
-                                transform: btn.active ? 'scale(1.1)' : 'scale(1)',
-                                transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.15)'}
-                            onMouseLeave={e => e.currentTarget.style.transform = btn.active ? 'scale(1.1)' : 'scale(1)'}
-                        >
-                            {btn.emoji}
-                        </button>
-                    ))}
+                {[
+                    {
+                        emoji: '🗖', onClick: this.toggleFullscreen, title: 'Maximize/Fullscreen', bg: 'rgba(2, 117, 216, 0.9)', active: this.state.isFullscreen
+                    },
+                    {
+                        emoji: '🗺️', onClick: this.toggleMapillaryTiles, title: 'Toggle Mapillary Layer', bg: 'rgba(53, 175, 109, 0.9)', active: this.state.tilesActive
+                    },
+                    {
+                    icon: (
+                        <img
+                        src={`data:image/svg+xml;charset=utf-8,%3Csvg width='16' height='16' 
+                            viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E 
+                            %3Crect width='5' height='7' fill='%23FFC01B'/%3E %3Crect x='4' y='9' 
+                            width='7' height='7' rx='3.5' fill='white'/%3E %3Cpath d='M12.5 0L15.5311 
+                            1.75V5.25L12.5 7L9.46891 5.25V1.75L12.5 0Z' fill='%23FF6D1B'/%3E %3C/svg%3E`}
+                        alt="Traffic Sign Icon"
+                        style={{ width: '16px', height: '16px' }}
+                        />
+                    ),
+                    onClick: this.toggleMapillaryTrafficSigns, title: 'Toggle Traffic Signs Coverage Layer', bg: 'rgba(255, 165, 0, 0.9)', active: this.state.trafficSignsActive
+                    },
+                    {
+                    icon: (
+                        <img
+                        src={`data:image/svg+xml;charset=utf-8,%3Csvg width='16' height='16' 
+                            viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E 
+                            %3Ccircle cx='3' cy='3' r='3' fill='%2346CDFA'/%3E %3Ccircle cx='13' cy='3
+                            ' r='3' fill='%23FFB81A'/%3E %3Ccircle cx='3' cy='13' r='3'
+                             fill='%23F35700'/%3E %3Ccircle cx='13' cy='13' r='3' fill='%23D99AB9'/%3E
+                              %3Ccircle cx='8' cy='8' r='3' fill='%23D2DCE0'/%3E %3C/svg%3E`}
+                        alt="Map Objects Icon"
+                        style={{ width: '16px', height: '16px' }}
+                        />
+                    ),
+                    onClick: this.toggleMapillaryObjects, title: 'Toggle Mapillary Objects Layer', bg: 'rgba(255, 0, 0, 0.9)', active: this.state.objectsActive
+                    }
+                ].map((btn, i) => (
+                    <button
+                    key={i}
+                    title={btn.title}
+                    onClick={btn.onClick}
+                    style={{
+                        background: btn.active ? btn.bg : btn.bg.replace('0.9', '0.5'),
+                        color: '#fff',
+                        width: '25px',
+                        height: '25px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: btn.emoji ? '18px' : 'initial', // if emoji, bump font size
+                        borderRadius: '6px',
+                        border: 'none',
+                        cursor: 'pointer',
+                        boxShadow: btn.active
+                        ? '0 0 6px rgba(255,255,255,0.8)' // glow when active
+                        : '0 2px 4px rgba(0,0,0,0.3)',
+                        transform: btn.active ? 'scale(1.1)' : 'scale(1)',
+                        transition:
+                        'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
+                    }}
+                    onMouseEnter={e =>
+                        (e.currentTarget.style.transform = 'scale(1.15)')
+                    }
+                    onMouseLeave={e =>
+                        (e.currentTarget.style.transform = btn.active
+                        ? 'scale(1.1)'
+                        : 'scale(1)')
+                    }
+                    >
+                    {btn.emoji || btn.icon}
+                    </button>
+                ))}
                 </div>
             </div>
         );
