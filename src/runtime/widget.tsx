@@ -10,6 +10,43 @@ import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import * as projection from "@arcgis/core/geometry/projection";
 import SpatialReference from "@arcgis/core/geometry/SpatialReference";
 
+// --- Legend & UI helper styles ---
+const legendContainerStyle: React.CSSProperties = {
+  position: "absolute",
+  bottom: "30px",
+  left: "3px",
+  background: "rgba(255,255,255,0.3)",
+  padding: "4px 8px",
+  borderRadius: "4px",
+  boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
+  fontSize: "10px",
+  fontWeight: "500"
+};
+
+const legendRowStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  marginBottom: "4px"
+};
+
+const legendCircleStyle = (color: string): React.CSSProperties => ({
+  display: "inline-block",
+  width: "12px",
+  height: "12px",
+  borderRadius: "50%",
+  backgroundColor: color,
+  marginRight: "6px",
+  border: "1px solid #ccc"
+});
+
+const cacheClearStyle: React.CSSProperties = {
+  background: "#d9534f",
+  color: "#fff",
+  borderRadius: "3px",
+  cursor: "pointer",
+  fontSize: "10px",
+  padding: "2px 4px"
+};
 
 interface WindowWithMapillary extends Window {
     mapillary: any;
@@ -323,6 +360,41 @@ export default class Widget extends React.PureComponent<
 
         // Also remove green pulsing active point
         this.clearGreenPulse();
+    }
+
+    private clearActiveSequenceGraphics(sequenceId: string) {
+        const { jimuMapView } = this.state;
+        if (!jimuMapView) return;
+
+        const { view } = jimuMapView;
+
+        const toRemove: __esri.Graphic[] = [];
+        view.graphics.forEach(g => {
+            if ((g as any).__isCone) {
+                toRemove.push(g);
+            }
+            // remove markers from this sequence only
+            if ((g as any).__isSequenceOverlay && g.attributes?.sequenceId === sequenceId) {
+                // but do NOT remove polylines
+                if (g.geometry.type !== "polyline" && g.symbol?.type !== "text") {
+                    toRemove.push(g);
+                }
+            }
+        });
+        toRemove.forEach(g => view.graphics.remove(g));
+
+        // Also remove green pulse
+        this.clearGreenPulse();
+    }
+
+    private clearSequenceUI() {
+        this.clearSequenceGraphics();
+        this.setState({
+            availableSequences: [],
+            selectedSequenceId: null,
+            clickLon: null,
+            clickLat: null
+        });
     }
 
     // --- Clean up everything when widget closes or reloads ---
@@ -1645,7 +1717,7 @@ export default class Widget extends React.PureComponent<
                 type: "simple",
                 symbol: {
                 type: "simple-marker",
-                color: [100, 50, 50, 0.9],
+                color: [165, 42, 42, 0.9],
                 size: 6,
                 outline: { color: [255, 255, 255, 1], width: 1 }
             },
@@ -1701,7 +1773,7 @@ export default class Widget extends React.PureComponent<
 
         //  New: If the new sequence is not the same as the existing selectedSequenceId, clear all existing sequence markers
         if (this.state.selectedSequenceId && this.state.selectedSequenceId !== sequenceId) {
-            this.clearSequenceGraphics();
+            this.clearActiveSequenceGraphics(this.state.selectedSequenceId);
         }
 
         this.setState({ isLoading: true });
@@ -3210,65 +3282,54 @@ export default class Widget extends React.PureComponent<
 
                 {/* Legend only show if user clicked & image loaded */}
                 {this.state.imageId && (
-                    <div
-                        style={{
-                            position: "absolute",
-                            bottom: "30px",
-                            left: "3px",
-                            background: "rgba(255,255,255,0.3)",
-                            padding: "4px 8px",
-                            borderRadius: "4px",
-                            boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
-                            fontSize: "10px",
-                            fontWeight: "500"
-                        }}
-                    >
-                        <div style={{display: "flex", alignItems: "center", marginBottom: "4px"}}>
-					  <span style={{
-						  display: "inline-block", width: "12px", height: "12px",
-						  borderRadius: "50%", backgroundColor: "red", marginRight: "6px",
-						  border: "1px solid #ccc"
-					  }}></span>
-											Clicked location
-										</div>
-										<div style={{display: "flex", alignItems: "center", marginBottom: "4px"}}>
-					  <span style={{
-						  display: "inline-block", width: "12px", height: "12px",
-						  borderRadius: "50%", backgroundColor: "green", marginRight: "6px",
-						  border: "1px solid #ccc"
-					  }}></span>
-											Active frame
-										</div>
-										<div style={{display: "flex", alignItems: "center", marginBottom: "8px"}}>
-					  <span style={{
-						  display: "inline-block", width: "12px", height: "12px",
-						  borderRadius: "50%", backgroundColor: "blue", marginRight: "6px",
-						  border: "1px solid #ccc"
-					  }}></span>
-                            Active sequence images
-                        </div>
+                    <div style={legendContainerStyle}>
+                        {this.state.turboModeActive ? (
+                            // Turbo Mode Legend
+                            <>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('green')}></span>
+                                    Active frame
+                                </div>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('blue')}></span>
+                                    Active sequence images
+                                </div>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('brown')}></span>
+                                    All Mapillary coverage points
+                                </div>
+                                <div style={legendRowStyle}>
+                                    <span style={{
+                                        ...legendCircleStyle('transparent'),
+                                        border: '2px solid cyan'
+                                    }}></span>
+                                    Highlighted feature
+                                </div>
+                            </>
+                        ) : (
+                            // Normal Mode Legend
+                            <>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('red')}></span>
+                                    Clicked location
+                                </div>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('green')}></span>
+                                    Active frame
+                                </div>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('blue')}></span>
+                                    Active sequence images
+                                </div>
+                            </>
+                        )}
 
                         {/* Cache Clear Button */}
-                        <button
-                            onClick={() => {
-                                localStorage.removeItem("mapillary_sequence_cache");
-                                // Clear all bearings (scan keys or use a prefixed clear)
-                                Object.keys(localStorage).forEach(key => {
-                                    if (key.startsWith("mapillary_bearing_")) {
-                                        localStorage.removeItem(key);
-                                    }
-                                });
-                                window.location.reload();
-                            }}
-                            style={{
-                                background: "#d9534f",
-                                color: "#fff",
-                                borderRadius: "3px",
-                                cursor: "pointer"
-                            }}
-                        >
-                            Clear Sequence Cache
-                        </button>
+                        {!this.state.turboModeActive && (
+                            <button style={cacheClearStyle} onClick={this.clearSequenceCache}>
+                                Clear Sequence Cache
+                            </button>
+                        )}
                     </div>
                 )}
 
@@ -3412,8 +3473,8 @@ export default class Widget extends React.PureComponent<
                             this.setState({ turboModeActive: next });
 
                             if (next) {
+                                this.clearSequenceUI();
                                 // First load with NO filter (fastest)
-                                this.clearSequenceGraphics();
                                 this.enableTurboCoverageLayer(); // no username for speed
                                 
                                 if (this.state.jimuMapView) {
