@@ -4,7 +4,7 @@
 
 This is a custom **ArcGIS Experience Builder widget** written in **TypeScript + React** that integrates **Mapillary street-level imagery** with an **ArcGIS web map**.
 
-It allows users to click a point on the map and instantly load the corresponding Mapillary panorama — complete with visual map markers, sequence tracking, and geocoded information.
+It allows users to click a point on the map and instantly load the corresponding Mapillary panorama, complete with visual map markers, sequence tracking, and geocoded information.
 
 ---
 
@@ -113,7 +113,7 @@ Displays clear fallback messages for missing or unavailable data.
 ## Setup & Installation
 
 This widget is distributed as a **prebuilt (production) package** containing a `/dist` folder and `manifest.json`.  
-You do **not** need ArcGIS Experience Builder Developer Edition to use it — only a web server (such as IIS) and portal administrator privileges.
+You do **not** need ArcGIS Experience Builder Developer Edition to use it, only a web server (such as IIS) and portal administrator privileges.
 
 ---
 
@@ -235,7 +235,7 @@ Below is an example of the `manifest.json` file used for configuration:
    When a click occurs, the widget calls the **Mapillary Graph API** to find the closest image to the clicked coordinates.
 
 3. **Image and Sequence Retrieval**  
-   It fetches image metadata — such as sequence ID, image coordinates, and compass angle — and retrieves all images within that sequence.
+   It fetches image metadata , such as sequence ID, image coordinates, and compass angle , and retrieves all images within that sequence.
 
 4. **Map Visualization**  
    The widget draws multiple map graphics using the ArcGIS API for JavaScript:
@@ -262,7 +262,6 @@ Below is an example of the `manifest.json` file used for configuration:
 ### Mapillary Explorer Demo Video
 
 [![Watch the video](https://img.youtube.com/vi/bX-O5CRUuUY/maxresdefault.jpg)](https://www.youtube.com/watch?v=bX-O5CRUuUY)
-
 
 
 ## State Management
@@ -298,101 +297,15 @@ The `State` interface keeps track of the widget’s core data and runtime behavi
 
 ### Security Notes
 
-Sensitive credentials — such as the Mapillary access token — are never hardcoded.  
+Sensitive credentials, such as the Mapillary access token, are never hardcoded.  
 They are stored securely in the widget’s `manifest.json` file under the property:
 
 ```json
 "mapillaryAccessToken": "YOUR_MAPILLARY_ACCESS_TOKEN"
 ```
 
-## How to Contribute
-
-Thank you for your interest in contributing to this widget! Here’s how to get started, test changes, and submit your contributions.
-
-### Prerequisites
-
-- **Install ArcGIS Experience Builder (Developer Edition)**  
-  Follow [Esri’s guide](https://developers.arcgis.com/experience-builder/guide/install-guide/) to install both the server and client services locally.
-  ```
-  Recommendation is: "exbVersion": "1.18.0".
-  ```
-
-- **Node.js**  
-  Make sure you have Node.js installed (check the version required by your Experience Builder release).
-    ```
-  Recommendation is: "node version": "v22 or higher".
-  ```
-
-- **ArcGIS Client ID**  
-  Obtain an ArcGIS Client ID via your ArcGIS Online or Enterprise portal, and configure redirect URLs (e.g., `https://localhost:3001/`) as required.
-
-## Setup the Development Environment
-
-1. Clone the repository to your local machine:
-
-   ```bash
-   git clone https://github.com/sukruburakcetin/mapillary-explorer.git
-   cd mapillary-explorer
-   ```
-2. Ensure that your local ArcGIS Experience Builder (Developer Edition) installation is ready to accept extensions.
-By default, this is located under:
-```text
-  <experience-builder-root>/client/your-extensions/widgets
- ```
-3. Copy (or symlink) this widget’s source directory into the widgets/ folder of your Experience Builder installation, e.g.:
-```bash
-  cp -R path/to/this-repo ./<experience-builder-root>/client/your-extensions/widgets/mapillary-explorer
- ```
 ---
-### Running & Testing Changes Locally
-### Start the Experience Builder Server
-1. In one terminal, go to the server directory of Experience Builder and start the Experience Builder Server:
-```bash
-cd <experience-builder-root>/server
-npm install      # install dependencies (only needed the first time)
-npm install pbf @mapbox/vector-tile
-npm start        # start the server
- ```
-2. Go to the server directory of Experience Builder, and start the Experience Builder Client:
-   Open a new terminal window and run:
-```bash
-cd <experience-builder-root>/client
-npm install      # install dependencies (only needed the first time)
-npm start        # start the client development server
- ```
-Once both services are running, open the Experience Builder interface in your browser at:
-```text
-  https://localhost:3001/
- ```
----
-### Editing the Widget
-Make your code changes inside the widget’s src/runtime/ folder(widget.tsx).
-The client-server generally auto-rebuilds when you edit files.
-However, you may need to restart if you modify:
-```text
-manifest.json
-File or folder structure
-Widget name or registration information
- ```
----
-### Building & Preparing for Release
-
-To generate a production-ready build (inside the \client\your-extensions\widgets directory):
- ```
-npm run build:prod
- ```
-After building, the compiled widget will be located at(latest developer version now extract it into dist folder rather than creating dist-prod):
-```text
-<experience-builder-root>/client/dist/widgets/
- ```
-Ensure that any required files (e.g., chunks, shared-code, manifest.json) are included in the correct structure for deployment.
-
-To save the dist version of your widget, go and apply this section:
-
-[Register the Widget in ArcGIS Portal](#3-register-the-widget-in-arcgis-portal)
-
----
-### 📦 [Download Built Widget (v1.5.0)](https://github.com/sukruburakcetin/mapillary-explorer/releases/latest)
+### 📦 [Download Built Widget(dist) Latest Version)](https://github.com/sukruburakcetin/mapillary-explorer/releases/latest)
 ---
 ### License
 

@@ -12,40 +12,40 @@ import SpatialReference from "@arcgis/core/geometry/SpatialReference";
 
 // --- Legend & UI helper styles ---
 const legendContainerStyle: React.CSSProperties = {
-  position: "absolute",
-  bottom: "30px",
-  left: "3px",
-  background: "rgba(255,255,255,0.3)",
-  padding: "4px 8px",
-  borderRadius: "4px",
-  boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
-  fontSize: "10px",
-  fontWeight: "500"
+    position: "absolute",
+    bottom: "33px",
+    left: "3px",
+    background: "rgba(255,255,255,0.3)",
+    padding: "4px 8px",
+    borderRadius: "4px",
+    boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
+    fontSize: "9px",
+    fontWeight: "500"
 };
 
 const legendRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  marginBottom: "4px"
+    display: "flex",
+    alignItems: "center",
+    marginBottom: "4px"
 };
 
 const legendCircleStyle = (color: string): React.CSSProperties => ({
-  display: "inline-block",
-  width: "12px",
-  height: "12px",
-  borderRadius: "50%",
-  backgroundColor: color,
-  marginRight: "6px",
-  border: "1px solid #ccc"
+    display: "inline-block",
+    width: "12px",
+    height: "12px",
+    borderRadius: "50%",
+    backgroundColor: color,
+    marginRight: "6px",
+    border: "1px solid #ccc"
 });
 
 const cacheClearStyle: React.CSSProperties = {
-  background: "#d9534f",
-  color: "#fff",
-  borderRadius: "3px",
-  cursor: "pointer",
-  fontSize: "10px",
-  padding: "2px 4px"
+    background: "#d9534f",
+    color: "#fff",
+    borderRadius: "3px",
+    cursor: "pointer",
+    fontSize: "10px",
+    padding: "2px 4px"
 };
 
 interface WindowWithMapillary extends Window {
@@ -80,6 +80,9 @@ interface State {
     sequenceOffset?: number;
     turboModeActive?: boolean;
     turboLoading?: boolean;
+    turboFilterStartDate?: string; // ISO yyyy-mm-dd
+    turboFilterEndDate?: string;   // ISO yyyy-mm-dd
+    turboFilterIsPano?: boolean; // true = only panoramas, false = only non-panos, undefined/empty = no filter
 }
 
 export default class Widget extends React.PureComponent<
@@ -184,6 +187,9 @@ export default class Widget extends React.PureComponent<
         sequenceOffset: 0,
         turboLoading: false,
         turboFilterUsername: "",
+        turboFilterStartDate: "",
+        turboFilterEndDate: "",
+        turboFilterIsPano: undefined,   // null means no filter, otherwise boolean
         showTurboFilterBox: false
     };
 
@@ -196,14 +202,9 @@ export default class Widget extends React.PureComponent<
         
         // Wrap the layer reload logic in debounce (700ms delay after typing stops)
         this.debouncedTurboFilter = this.debounce(async () => {
-            const val = this.state.turboFilterUsername.trim();
-            if (this.state.jimuMapView && this.state.turboModeActive) {
-                if (val) {
-                    await this.enableTurboCoverageLayer(val);
-                } else {
-                    await this.enableTurboCoverageLayer();
-                }
-            }
+        if (this.state.jimuMapView && this.state.turboModeActive) {
+            await this.enableTurboCoverageLayer();
+        }
         }, 700);
 
         this.onActiveViewChange = this.onActiveViewChange.bind(this);
@@ -344,6 +345,10 @@ export default class Widget extends React.PureComponent<
         });
     }
 
+    /** 
+        * Removes all sequence overlay and cone graphics from the map, 
+        * and clears the active pulsing point. 
+    */
     private clearSequenceGraphics() {
         const { jimuMapView } = this.state;
         if (!jimuMapView) return;
@@ -362,6 +367,10 @@ export default class Widget extends React.PureComponent<
         this.clearGreenPulse();
     }
 
+    /** 
+        * Removes cone graphics and point markers for the given sequence ID 
+        * (keeps polylines/text), and clears the pulsing point. 
+    */
     private clearActiveSequenceGraphics(sequenceId: string) {
         const { jimuMapView } = this.state;
         if (!jimuMapView) return;
@@ -387,6 +396,9 @@ export default class Widget extends React.PureComponent<
         this.clearGreenPulse();
     }
 
+    /** 
+        * Clears all sequence graphics and resets related state values. 
+    */
     private clearSequenceUI() {
         this.clearSequenceGraphics();
         this.setState({
@@ -1585,8 +1597,16 @@ export default class Widget extends React.PureComponent<
         * - Ends by setting `turboLoading` false to hide the spinner.
         * Called when Turbo Mode starts or reloads (stationary/zoom watchers).
     */
-    private async enableTurboCoverageLayer(filterUsername?: string) {
-        const { jimuMapView } = this.state;
+
+    private async enableTurboCoverageLayer() {
+        const {
+            jimuMapView,
+            turboFilterUsername,
+            turboFilterStartDate,
+            turboFilterEndDate,
+            turboFilterIsPano
+        } = this.state;
+
         if (!jimuMapView) return;
 
         const minTurboZoom = 16;
@@ -1594,18 +1614,21 @@ export default class Widget extends React.PureComponent<
             console.log(`Turbo Mode disabled - zoom level ${jimuMapView.view.zoom} is below ${minTurboZoom}`);
             return;
         }
-        
+
         this.setState({ turboLoading: true });
+
+        // Remove old Turbo layer if exists
         const oldLayer = jimuMapView.view.map.findLayerById("turboCoverage");
-        
         if (oldLayer) jimuMapView.view.map.remove(oldLayer);
 
+        // Get current extent in WGS84
         const extent = jimuMapView.view.extent;
         const wgs84Extent = projection.project(extent, SpatialReference.WGS84) as __esri.Extent;
         const bbox = [wgs84Extent.xmin, wgs84Extent.ymin, wgs84Extent.xmax, wgs84Extent.ymax];
         const zoom = 14;
         const tiles = this.bboxToTileRange(bbox, zoom);
 
+        // Prepare base list (id, lon, lat)
         const seenIds = new Set<string>();
         const baseFeatureList: { id: string; lon: number; lat: number }[] = [];
 
@@ -1624,9 +1647,11 @@ export default class Widget extends React.PureComponent<
                 const [lon, lat] = feat.geometry.coordinates;
                 const id = feat.properties.id;
 
-                if (!seenIds.has(id) &&
-                    lon >= bbox[0] && lon <= bbox[2] &&
-                    lat >= bbox[1] && lat <= bbox[3]) {
+                if (
+                !seenIds.has(id) &&
+                lon >= bbox[0] && lon <= bbox[2] &&
+                lat >= bbox[1] && lat <= bbox[3]
+                ) {
                 seenIds.add(id);
                 baseFeatureList.push({ id, lon, lat });
                 }
@@ -1636,25 +1661,34 @@ export default class Widget extends React.PureComponent<
             }
         }
 
+        // Decide if we need extra Graph API calls
+        const needDetails =
+            Boolean(turboFilterUsername?.trim()) ||
+            Boolean(turboFilterStartDate) ||
+            Boolean(turboFilterEndDate) ||
+            turboFilterIsPano !== undefined;
+
         let features: any[] = [];
 
-        if (!filterUsername) {
-            // No filter → no Graph API call
+        if (!needDetails) {
+            // No filtering → fastest mode
             features = baseFeatureList.map(base => ({
-                geometry: webMercatorUtils.geographicToWebMercator({
-                    type: "point",
-                    x: base.lon,
-                    y: base.lat,
-                    spatialReference: { wkid: 4326 }
-                }),
+            geometry: webMercatorUtils.geographicToWebMercator({
+                type: "point",
+                x: base.lon,
+                y: base.lat,
+                spatialReference: { wkid: 4326 }
+            }),
             attributes: { id: base.id }
             }));
         } else {
-            // Filter mode → batch Graph API calls with sequence
+            // Need details: creator_username + captured_at
             const idToUser: Record<string, string> = {};
             const idToSequence: Record<string, string> = {};
-            const chunkSize = 100;
+            const idToCapturedAt: Record<string, string> = {};
+            const idToIsPano: Record<string, boolean | null> = {};
 
+            const chunkSize = 100;
             const chunks: string[][] = [];
             for (let i = 0; i < baseFeatureList.length; i += chunkSize) {
             chunks.push(baseFeatureList.slice(i, i + chunkSize).map(f => f.id));
@@ -1663,7 +1697,8 @@ export default class Widget extends React.PureComponent<
             await Promise.all(
             chunks.map(async chunk => {
                 try {
-                const apiUrl = `https://graph.mapillary.com/?ids=${chunk.join(",")}&fields=id,creator.username,sequence`;
+                const fields = "id,creator.username,sequence,captured_at,is_pano";
+                const apiUrl = `https://graph.mapillary.com/?ids=${chunk.join(",")}&fields=${fields}`;
                 const resp = await fetch(apiUrl, {
                     headers: { Authorization: `OAuth ${this.accessToken}` }
                 });
@@ -1672,6 +1707,8 @@ export default class Widget extends React.PureComponent<
                 for (const [id, obj] of Object.entries(json)) {
                     idToUser[id] = (obj as any).creator?.username || "Unknown";
                     idToSequence[id] = (obj as any).sequence || null;
+                    idToCapturedAt[id] = (obj as any).captured_at || null;
+                    idToIsPano[id] = (obj as any).is_pano ?? null;
                 }
                 } catch (err) {
                 console.warn("Graph API chunk error", err);
@@ -1679,68 +1716,94 @@ export default class Widget extends React.PureComponent<
             })
             );
 
+            const startTime = turboFilterStartDate ? new Date(turboFilterStartDate).getTime() : null;
+            const endTime = turboFilterEndDate ? new Date(turboFilterEndDate).getTime() : null;
+
             features = baseFeatureList
-            .filter(base => idToUser[base.id] === filterUsername)
+            .filter(base => {
+                const userOk = turboFilterUsername?.trim()
+                ? idToUser[base.id] === turboFilterUsername.trim()
+                : true;
+
+                const dateStr = idToCapturedAt[base.id];
+                let dateOk = true;
+                if (dateStr) {
+                    const t = new Date(dateStr).getTime();
+                    if (startTime && t < startTime) dateOk = false;
+                    if (endTime && t > endTime) dateOk = false;
+                }
+
+                let panoOk = true;
+                if (turboFilterIsPano !== undefined) {
+                    panoOk = idToIsPano[base.id] === turboFilterIsPano;
+                }
+
+                return userOk && dateOk && panoOk;
+            })
             .map(base => ({
                 geometry: webMercatorUtils.geographicToWebMercator({
-                type: "point",
-                x: base.lon,
-                y: base.lat,
-                spatialReference: { wkid: 4326 }
+                    type: "point",
+                    x: base.lon,
+                    y: base.lat,
+                    spatialReference: { wkid: 4326 }
                 }),
                 attributes: {
                     id: base.id,
                     creator_username: idToUser[base.id],
-                    sequence_id: idToSequence[base.id] || null
+                    sequence_id: idToSequence[base.id],
+                    captured_at: idToCapturedAt[base.id],
+                    is_pano: idToIsPano[base.id]
                 }
             }));
         }
 
         if (!features.length) {
-            console.warn("No Turbo coverage matches for filter:", filterUsername || "(none)");
+            console.warn(
+            "No Turbo coverage matches for filters:",
+            { turboFilterUsername, turboFilterStartDate, turboFilterEndDate }
+            );
             this.setState({ turboLoading: false });
             return;
         }
 
         this.turboCoverageLayer = new FeatureLayer({
-        id: "turboCoverage",
-        source: features,
-        objectIdField: "id",
-        fields: [
-            { name: "id", type: "string" },
-            { name: "creator_username", type: "string" },
-            { name: "sequence_id", type: "string" }
-        ],
-        geometryType: "point",
-        spatialReference: { wkid: 3857 },
-        renderer: {
-                type: "simple",
-                symbol: {
+            id: "turboCoverage",
+            source: features,
+            objectIdField: "id",
+            fields: [
+                { name: "id", type: "string" },
+                { name: "creator_username", type: "string" },
+                { name: "sequence_id", type: "string" },
+                { name: "captured_at", type: "string" }
+            ],
+            geometryType: "point",
+            spatialReference: { wkid: 3857 },
+            renderer: {
+            type: "simple",
+            symbol: {
                 type: "simple-marker",
                 color: [165, 42, 42, 0.9],
                 size: 6,
                 outline: { color: [255, 255, 255, 1], width: 1 }
-            },
-            outFields: ["*"]
-        },
-
-        // Popup completely off in NO FILTER mode
-        ...(filterUsername
-            ? {
-                popupEnabled: true,
-                popupTemplate: {
-                title: `{creator_username}`,
-                content: `<b>Image ID:</b> {id}<br><b>Creator:</b> {creator_username}`
-                }
             }
-            : {
-                popupEnabled: false // disables popups completely
-            })
+            },
+            popupEnabled: needDetails,
+            popupTemplate: needDetails
+            ? {
+                title: `{creator_username}`,
+                content: `
+                    <b>Image ID:</b> {id}<br>
+                    <b>Creator:</b> {creator_username}<br>
+                    <b>Captured At:</b> {captured_at}<br>
+                    <b>Panorama:</b> {is_pano}
+                `
+                }
+            : undefined
         });
 
         jimuMapView.view.map.add(this.turboCoverageLayer);
 
-        // Store layer view for clicking/highlighting
+        // Store LayerView for highlighting
         jimuMapView.view.whenLayerView(this.turboCoverageLayer).then(lv => {
             this.turboCoverageLayerView = lv;
         });
@@ -3196,8 +3259,7 @@ export default class Widget extends React.PureComponent<
 
                     {/* Sequence slots at most #available, max 3 */}
                     {Array.from({ length: Math.min(3, this.state.availableSequences!.length) }).map((_, slotIdx) => {
-                        const seqIndex =
-                            (this.state.sequenceOffset! + slotIdx) % this.state.availableSequences!.length;
+                        const seqIndex = (this.state.sequenceOffset! + slotIdx) % this.state.availableSequences!.length;
                         const seq = this.state.availableSequences![seqIndex];
                         const colorArr = seq._color || this.pickSequenceColor(seqIndex);
                         const cssColor = `rgba(${colorArr[0]}, ${colorArr[1]}, ${colorArr[2]}, ${colorArr[3] ?? 1})`;
@@ -3214,16 +3276,16 @@ export default class Widget extends React.PureComponent<
                                 this.clearGreenPulse();
                                 const { clickLon, clickLat } = this.state;
                                 if (clickLon != null && clickLat != null) {
-                                const updatedSequence = await this.getSequenceWithCoords(seq.sequenceId, this.accessToken);
-                                if (updatedSequence.length) {
-                                    const closestImg = updatedSequence.reduce((closest, img) => {
-                                    const dist = this.distanceMeters(img.lat, img.lon, clickLat, clickLon);
-                                    return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
-                                    }, null as any);
-                                    if (closestImg) {
-                                        await this.loadSequenceById(seq.sequenceId, closestImg.id);
+                                    const updatedSequence = await this.getSequenceWithCoords(seq.sequenceId, this.accessToken);
+                                    if (updatedSequence.length) {
+                                        const closestImg = updatedSequence.reduce((closest, img) => {
+                                        const dist = this.distanceMeters(img.lat, img.lon, clickLat, clickLon);
+                                        return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
+                                        }, null as any);
+                                        if (closestImg) {
+                                            await this.loadSequenceById(seq.sequenceId, closestImg.id);
+                                        }
                                     }
-                                }
                                 }
                             }}
                             style={{
@@ -3240,12 +3302,12 @@ export default class Widget extends React.PureComponent<
                             {/* Color swatch */}
                             <span
                                 style={{
-                                display: "inline-block",
-                                width: "12px",
-                                height: "12px",
-                                borderRadius: "50%",
-                                backgroundColor: cssColor,
-                                border: "1px solid #fff"
+                                    display: "inline-block",
+                                    width: "12px",
+                                    height: "12px",
+                                    borderRadius: "50%",
+                                    backgroundColor: cssColor,
+                                    border: "1px solid #fff"
                                 }}
                             />
                             {/* Label */}
@@ -3260,18 +3322,18 @@ export default class Widget extends React.PureComponent<
                     {this.state.availableSequences.length > 3 && (
                     <button
                         onClick={() => {
-                        this.setState(prev => ({
-                            sequenceOffset: (prev.sequenceOffset! + 1) % this.state.availableSequences!.length
-                        }));
+                            this.setState(prev => ({
+                                sequenceOffset: (prev.sequenceOffset! + 1) % this.state.availableSequences!.length
+                            }));
                         }}
                         style={{
-                        background: "rgba(255,255,255,0.2)",
-                        border: "none",
-                        color: "#fff",
-                        fontSize: "10px",
-                        borderRadius: "4px",
-                        cursor: "pointer",
-                        padding: "2px 6px"
+                            background: "rgba(255,255,255,0.2)",
+                            border: "none",
+                            color: "#fff",
+                            fontSize: "10px",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            padding: "2px 6px"
                         }}
                     >
                         ▶
@@ -3366,12 +3428,11 @@ export default class Widget extends React.PureComponent<
                         return null;
                     })()}
 					{this.state.address && <><br/>🌎{" "}{this.state.address}</>}
-
                 </div>
-                {/* Filter button + optional textbox */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                {/* Filter button */}
-                {/* Show textbox when filter mode active */}
+                
+                {/* Filter button + optional aux */}
+                {/* Show textbox + date + is_pano info when filter mode active */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', backgroundColor: 'gold', borderRadius: '5px' }}>
                 {this.state.showTurboFilterBox && (
                     <div style={{ position: 'relative', display: 'inline-block' }}>
                     <input
@@ -3402,9 +3463,10 @@ export default class Widget extends React.PureComponent<
                             background: 'rgba(255,255,255,0.95)',
                             border: '1px solid #ccc',
                             borderRadius: '999px',
-                            padding: '4px 26px 4px 10px', // space for X button
-                            fontSize: '11px',
-                            width: '130px',
+                            padding: '4px 15px 4px 10px', // space for X button
+                            marginTop:'2px',
+                            fontSize: '8px',
+                            width: '100px',
                             boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
                             transition: 'all 0.2s ease-in-out',
                             boxSizing: 'border-box'
@@ -3412,6 +3474,85 @@ export default class Widget extends React.PureComponent<
                         autoFocus
                         title="Enter a Mapillary creator username to filter coverage points"
                     />
+
+                    {/* Date range filter */}
+                    <label style={{ fontSize: '9px', color: 'black', marginLeft:'5px', fontWeight:'500'}}>From:</label>
+                    <input
+                        type="date"
+                        value={this.state.turboFilterStartDate}
+                        onChange={(e) => {
+                                this.setState({ turboFilterStartDate: e.target.value }, () => {
+                                this.debouncedTurboFilter();
+                            });
+                        }}
+                        style={{
+                            fontSize: '10px',
+                            padding: '2px',
+                            borderRadius: '4px',
+                            border: '1px solid #ccc'
+                        }}
+                        />
+                        <label style={{ fontSize: '9px', color: 'black', marginLeft:'2px', fontWeight:'500'}}>To:</label>
+                        <input
+                            type="date"
+                            value={this.state.turboFilterEndDate}
+                            onChange={(e) => {
+                                    this.setState({ turboFilterEndDate: e.target.value }, () => {
+                                    this.debouncedTurboFilter();
+                                });
+                            }}
+                            style={{
+                                fontSize: '10px',
+                                padding: '2px',
+                                borderRadius: '4px',
+                                border: '1px solid #ccc'
+                            }}
+                    />
+
+                    {/* Panorama filter - switch style */}
+                    <span style={{ fontSize: '9px', color: 'black', marginLeft:'5px', fontWeight:'500'}}>Show panoramas only: </span>
+                    
+                    <label style={{ position: 'relative', display: 'inline-block', width: '34px', height: '18px' }}>
+                        <input
+                        type="checkbox"
+                        checked={this.state.turboFilterIsPano === true}
+                        onChange={(e) => {
+                            const checked = e.target.checked;
+                            const val = checked ? true : undefined; // undefined = show all
+                            this.setState({ turboFilterIsPano: val }, () => {
+                                this.debouncedTurboFilter();
+                            });
+                        }}
+                        style={{ opacity: 0, width: 0, height: 0 }}
+                        />
+                        {/* Slider look */}
+                        <span
+                        style={{
+                            position: 'absolute',
+                            cursor: 'pointer',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            backgroundColor: this.state.turboFilterIsPano ? '#4CAF50' : '#ccc',
+                            transition: '0.4s',
+                            borderRadius: '34px'
+                        }}
+                        >
+                        <span
+                            style={{
+                            position: 'absolute',
+                            height: '14px',
+                            width: '14px',
+                            left: this.state.turboFilterIsPano ? '18px' : '4px',
+                            bottom: '2px',
+                            backgroundColor: 'white',
+                            transition: '0.4s',
+                            borderRadius: '50%'
+                        }}
+                        />
+                        </span>
+                    </label>
 
                     {this.state.turboFilterUsername && (
                         <button
