@@ -13,14 +13,18 @@ import SpatialReference from "@arcgis/core/geometry/SpatialReference";
 // --- Legend & UI helper styles ---
 const legendContainerStyle: React.CSSProperties = {
     position: "absolute",
-    bottom: "33px",
-    left: "3px",
+    bottom: "10px",               // inside viewer relative position
+    left: "10px",
     background: "rgba(255,255,255,0.3)",
     padding: "4px 8px",
     borderRadius: "4px",
     boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
     fontSize: "9px",
-    fontWeight: "500"
+    fontWeight: "500",
+    display: "flex",
+    flexDirection: "column",       // vertical layout
+    gap: "4px",                    // vertical space between each legend row
+    maxWidth: "160px"              // optional width cap if text long
 };
 
 const legendRowStyle: React.CSSProperties = {
@@ -510,7 +514,7 @@ export default class Widget extends React.PureComponent<
         // Clear sequence overlays
         if (fullRemove && this.state.jimuMapView) {
             const { view } = this.state.jimuMapView;
-            view.graphics.removeAll(); // ✅ simple & brute force
+            view.graphics.removeAll(); // simple & brute force
         }
 
         if (fullRemove) { // remove listeners only when widget fully closed
@@ -1193,7 +1197,7 @@ export default class Widget extends React.PureComponent<
                     attributes: {
                                     id: feat.properties.id,
                                     value: feat.properties.value,
-                                    name: this.objectNameMap[feat.properties.value] || feat.properties.value, // ✅ readable name
+                                    name: this.objectNameMap[feat.properties.value] || feat.properties.value, // readable name
                                     first_seen_at: feat.properties.first_seen_at,
                                     last_seen_at: feat.properties.last_seen_at
                                 }
@@ -3168,8 +3172,61 @@ export default class Widget extends React.PureComponent<
                 {/* This empty div is controlled by Mapillary, React will never touch its internals */}
                 <div
                     ref={this.viewerContainer}
-                    style={{width: "100%", height: "100%"}}
+                    style={{width: "100%", height: "100%", position: "relative"}}
                 />
+                {/* Legend only show if user clicked & image loaded */}
+                {this.state.imageId && (
+                    <div style={legendContainerStyle}>
+                        {this.state.turboModeActive ? (
+                            // Turbo Mode Legend
+                            <>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('green')}></span>
+                                    Active frame
+                                </div>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('blue')}></span>
+                                    Active sequence images
+                                </div>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('brown')}></span>
+                                    All Mapillary coverage points
+                                </div>
+                                <div style={legendRowStyle}>
+                                    <span style={{
+                                        ...legendCircleStyle('transparent'),
+                                        border: '2px solid cyan'
+                                    }}></span>
+                                    Highlighted feature
+                                </div>
+                            </>
+                        ) : (
+                            // Normal Mode Legend
+                            <>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('red')}></span>
+                                    Clicked location
+                                </div>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('green')}></span>
+                                    Active frame
+                                </div>
+                                <div style={legendRowStyle}>
+                                    <span style={legendCircleStyle('blue')}></span>
+                                    Active sequence images
+                                </div>
+                            </>
+                        )}
+
+                        {/* Cache Clear Button */}
+                        {!this.state.turboModeActive && (
+                            <button style={cacheClearStyle} onClick={this.clearSequenceCache}>
+                                Clear Sequence Cache
+                            </button>
+                        )}
+                    </div>
+                )}
+
                 {this.state.turboLoading && (
                     <div style={{
                         position: "absolute",
@@ -3452,58 +3509,7 @@ export default class Widget extends React.PureComponent<
                 </div>
                 )}
 
-                {/* Legend only show if user clicked & image loaded */}
-                {this.state.imageId && (
-                    <div style={legendContainerStyle}>
-                        {this.state.turboModeActive ? (
-                            // Turbo Mode Legend
-                            <>
-                                <div style={legendRowStyle}>
-                                    <span style={legendCircleStyle('green')}></span>
-                                    Active frame
-                                </div>
-                                <div style={legendRowStyle}>
-                                    <span style={legendCircleStyle('blue')}></span>
-                                    Active sequence images
-                                </div>
-                                <div style={legendRowStyle}>
-                                    <span style={legendCircleStyle('brown')}></span>
-                                    All Mapillary coverage points
-                                </div>
-                                <div style={legendRowStyle}>
-                                    <span style={{
-                                        ...legendCircleStyle('transparent'),
-                                        border: '2px solid cyan'
-                                    }}></span>
-                                    Highlighted feature
-                                </div>
-                            </>
-                        ) : (
-                            // Normal Mode Legend
-                            <>
-                                <div style={legendRowStyle}>
-                                    <span style={legendCircleStyle('red')}></span>
-                                    Clicked location
-                                </div>
-                                <div style={legendRowStyle}>
-                                    <span style={legendCircleStyle('green')}></span>
-                                    Active frame
-                                </div>
-                                <div style={legendRowStyle}>
-                                    <span style={legendCircleStyle('blue')}></span>
-                                    Active sequence images
-                                </div>
-                            </>
-                        )}
-
-                        {/* Cache Clear Button */}
-                        {!this.state.turboModeActive && (
-                            <button style={cacheClearStyle} onClick={this.clearSequenceCache}>
-                                Clear Sequence Cache
-                            </button>
-                        )}
-                    </div>
-                )}
+                
 
                 {/* Info box */}
                 <div
@@ -3673,7 +3679,7 @@ export default class Widget extends React.PureComponent<
                         }}
                         style={{
                             position: 'absolute',
-                            right: '8px',
+                            left: '80px',
                             top: '50%',
                             transform: 'translateY(-50%)',
                             cursor: 'pointer',
