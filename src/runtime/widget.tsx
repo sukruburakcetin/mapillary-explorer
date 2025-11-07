@@ -109,6 +109,8 @@ export default class Widget extends React.PureComponent<
     private turboStationaryHandle: IHandle | null = null;
     private tooltipDiv: HTMLDivElement | null = null;
     private debouncedTurboFilter: () => void;
+    private clickedLocationGraphic: __esri.Graphic | null = null;
+    private sequenceCoordsCache: Record<string, {id: string, lat: number, lon: number}[]> = {};
 
     /**
         * Human‑readable names for Mapillary object classification codes.
@@ -372,19 +374,17 @@ export default class Widget extends React.PureComponent<
         * (keeps polylines/text), and clears the pulsing point. 
     */
     private clearActiveSequenceGraphics(sequenceId: string) {
-        const { jimuMapView } = this.state;
+        const { jimuMapView, availableSequences } = this.state;
         if (!jimuMapView) return;
-
         const { view } = jimuMapView;
 
+        // Remove cones & blue active sequence markers
         const toRemove: __esri.Graphic[] = [];
         view.graphics.forEach(g => {
             if ((g as any).__isCone) {
                 toRemove.push(g);
             }
-            // remove markers from this sequence only
             if ((g as any).__isSequenceOverlay && g.attributes?.sequenceId === sequenceId) {
-                // but do NOT remove polylines
                 if (g.geometry.type !== "polyline" && g.symbol?.type !== "text") {
                     toRemove.push(g);
                 }
@@ -392,7 +392,37 @@ export default class Widget extends React.PureComponent<
         });
         toRemove.forEach(g => view.graphics.remove(g));
 
-        // Also remove green pulse
+        if (this.clickedLocationGraphic) {
+            this.state.jimuMapView?.view.graphics.remove(this.clickedLocationGraphic);
+            this.clickedLocationGraphic = null;
+        }
+
+        // Restore original colored markers for that sequence
+        const seq = availableSequences?.find(s => s.sequenceId === sequenceId);
+        if (seq) {
+            const color = seq._color || this.pickSequenceColor(availableSequences.indexOf(seq));
+            seq.images.forEach(img => {
+                const pointGraphic = new this.ArcGISModules.Graphic({
+                    geometry: { 
+                        type: "point", 
+                        longitude: img.lon, 
+                        latitude: img.lat, 
+                        spatialReference: { wkid: 4326 }
+                    },
+                    symbol: { 
+                        type: "simple-marker", 
+                        color: color,
+                        size: "10px", 
+                        outline: { color: "white", width: 1 } 
+                    },
+                    attributes: { sequenceId: seq.sequenceId }
+                });
+                (pointGraphic as any).__isSequenceOverlay = true;
+                view.graphics.add(pointGraphic);
+            });
+        }
+
+        // Clear pulsing green point
         this.clearGreenPulse();
     }
 
@@ -408,6 +438,63 @@ export default class Widget extends React.PureComponent<
             clickLat: null
         });
     }
+    /**
+        * Clears the locally saved Mapillary sequence cache and resets the widget UI
+        * so there is no active sequence or markers remaining.
+        *
+        * Triggered by the "Clear Sequence Cache" button in the legend UI.
+        * - Removes cache from localStorage
+        * - Stops & removes the pulsing green active image marker
+        * - Removes clicked location red marker
+        * - Clears all map graphics
+        * - Resets relevant widget state
+    */
+    private clearSequenceCache = () => {
+        try {
+            localStorage.removeItem("mapillary_sequence_cache");
+            console.log("Sequence cache cleared from localStorage");
+
+            // Stop and remove green pulsing marker
+            this.clearGreenPulse();
+
+            // Remove red clicked location marker
+            if (this.clickedLocationGraphic && this.state.jimuMapView) {
+                this.state.jimuMapView.view.graphics.remove(this.clickedLocationGraphic);
+                this.clickedLocationGraphic = null;
+            }
+
+            // Clear all map graphics
+            if (this.state.jimuMapView) {
+                this.state.jimuMapView.view.graphics.removeAll();
+            }
+
+            // 🌟 Destroy the Mapillary viewer completely
+            if (this.mapillaryViewer) {
+                try {
+                    this.mapillaryViewer.remove();
+                } catch (err) {
+                    console.warn("Failed to remove Mapillary viewer", err);
+                }
+                this.mapillaryViewer = null;
+            }
+
+            // Reset widget state so UI fully refreshes
+            this.setState({
+                availableSequences: [],
+                selectedSequenceId: null,
+                sequenceId: null,
+                sequenceImages: [],
+                imageId: null,
+                clickLon: null,
+                clickLat: null,
+                address: null,
+                isLoading: false
+            });
+
+        } catch (err) {
+            console.warn("Failed to clear sequence cache", err);
+        }
+    };
 
     // --- Clean up everything when widget closes or reloads ---
     // Stops animation intervals, removes all map graphics,
@@ -568,9 +655,15 @@ export default class Widget extends React.PureComponent<
                 tilesActive: false,
                 trafficSignsActive: false,
                 objectsActive: false,
-                availableSequences: [],     // Clear sequence list
-                selectedSequenceId: null,   // Reset active sequence
+                availableSequences: [],      // Clear sequence list
+                selectedSequenceId: null,    // Reset active sequence
                 noImageMessageVisible: false // Hide "no image" banner if it was showing
+                turboModeActive: false,      //  ensure turbo mode is OFF
+                turboFilterUsername: "",     // clear filter
+                turboFilterStartDate: "",
+                turboFilterEndDate: "",
+                turboFilterIsPano: undefined,
+                showTurboFilterBox: false
             });
         }
 	}
@@ -2181,8 +2274,21 @@ export default class Widget extends React.PureComponent<
 
         // Reopened after closed → reattach listeners
         if (prevProps.state === 'CLOSED' && this.props.state === 'OPENED' && this.state.jimuMapView) {
-        console.log("Widget reopened - reattaching event handles");
-        this.onActiveViewChange(this.state.jimuMapView);
+            console.log("Widget reopened - reattaching event handles");
+            // Always ensure TurboMode is OFF and filter cleared
+            this.setState({
+                turboModeActive: false,
+                turboFilterUsername: "",
+                turboFilterStartDate: "",
+                turboFilterEndDate: "",
+                turboFilterIsPano: undefined,
+                showTurboFilterBox: false
+            });
+
+            // Also remove any leftover Turbo coverage layer from the map
+            this.disableTurboCoverageLayer();
+
+            this.onActiveViewChange(this.state.jimuMapView);
         }
 	}
 
@@ -2592,9 +2698,6 @@ export default class Widget extends React.PureComponent<
             },
         });
 
-        // Tag so cleanup knows it’s sequence-related
-        (graphic as any).__isSequenceOverlay = true;
-
         jimuMapView.view.graphics.add(graphic);
     }
 
@@ -2608,44 +2711,48 @@ export default class Widget extends React.PureComponent<
 
         const { Graphic } = this.ArcGISModules;
 
+        // Remove existing clicked location marker
+        if (this.clickedLocationGraphic) {
+            jimuMapView.view.graphics.remove(this.clickedLocationGraphic);
+            this.clickedLocationGraphic = null;
+        }
+
         const graphic = new Graphic({
             geometry: {
-            type: "point",
-            longitude: lon,
-            latitude: lat,
-            spatialReference: { wkid: 4326 },
+                type: "point",
+                longitude: lon,
+                latitude: lat,
+                spatialReference: { wkid: 4326 },
             },
             symbol: {
-            type: "simple-marker",
-            style: "circle",
-            color: "red",
-            size: 14, // start bigger for pop effect
-            outline: { color: "white", width: 2 },
+                type: "simple-marker",
+                style: "circle",
+                color: "red",
+                size: 14, // pop effect start size
+                outline: { color: "white", width: 2 },
             },
+            attributes: { isClickedLocation: true }
         });
 
-            // Tag it so Turbo cleanup removes it
         (graphic as any).__isSequenceOverlay = true;
 
         jimuMapView.view.graphics.add(graphic);
+        this.clickedLocationGraphic = graphic;
 
-        // Animate shrink to normal size
         let size = 14;
         const shrink = setInterval(() => {
             size -= 1;
             graphic.symbol = {
-            type: "simple-marker",
-            style: "circle",
-            color: "red",
-            size,
-            outline: { color: "white", width: 2 }
+                type: "simple-marker",
+                style: "circle",
+                color: "red",
+                size,
+                outline: { color: "white", width: 2 }
             };
-            if (size <= 10) {
-            clearInterval(shrink);
-            }
+            if (size <= 10) clearInterval(shrink);
         }, 30);
     }
-
+    
     /**
         * Draws a camera view cone polygon at the given location and bearing,
         * using radius/spread parameters. Tagged as cone graphic for cleanup.
@@ -3002,29 +3109,32 @@ export default class Widget extends React.PureComponent<
     private async getSequenceWithCoords(
         sequenceId: string,
         accessToken: string
-    ): Promise<{ id: string; lat: number; lon: number }[]> {
+        ): Promise<{ id: string; lat: number; lon: number }[]> {
+        if (this.sequenceCoordsCache[sequenceId]) {
+            return this.sequenceCoordsCache[sequenceId];
+        }
         try {
             const url = `https://graph.mapillary.com/image_ids?sequence_id=${sequenceId}`;
             const response = await fetch(url, {
-                headers: {Authorization: `OAuth ${accessToken}`},
+            headers: { Authorization: `OAuth ${accessToken}` },
             });
             const data = await response.json();
             if (!Array.isArray(data.data)) return [];
 
             const ids = data.data.map((d: any) => d.id);
-            const coordUrl = `https://graph.mapillary.com/?ids=${ids.join(
-                ","
-            )}&fields=id,geometry`;
+            const coordUrl = `https://graph.mapillary.com/?ids=${ids.join(",")}&fields=id,geometry`;
             const coordResp = await fetch(coordUrl, {
-                headers: {Authorization: `OAuth ${accessToken}`},
+            headers: { Authorization: `OAuth ${accessToken}` },
             });
             const coordsData = await coordResp.json();
 
-            return Object.entries(coordsData).map(([id, value]: [string, any]) => ({
-                id,
-                lon: value.geometry?.coordinates?.[0] || 0,
-                lat: value.geometry?.coordinates?.[1] || 0,
+            const coords = Object.entries(coordsData).map(([id, value]: [string, any]) => ({
+            id,
+            lon: value.geometry?.coordinates?.[0] || 0,
+            lat: value.geometry?.coordinates?.[1] || 0,
             }));
+            this.sequenceCoordsCache[sequenceId] = coords; // Cache for session
+            return coords;
         } catch {
             return [];
         }
