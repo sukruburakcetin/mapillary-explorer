@@ -87,6 +87,9 @@ interface State {
     turboFilterStartDate?: string; // ISO yyyy-mm-dd
     turboFilterEndDate?: string;   // ISO yyyy-mm-dd
     turboFilterIsPano?: boolean; // true = only panoramas, false = only non-panos, undefined/empty = no filter
+    turboColorByDate?: boolean;
+    turboYearLegend?: { year: string, color: string }[];
+    zoomWarningMessage?: string;
 }
 
 export default class Widget extends React.PureComponent<
@@ -196,7 +199,8 @@ export default class Widget extends React.PureComponent<
         turboFilterStartDate: "",
         turboFilterEndDate: "",
         turboFilterIsPano: undefined,   // null means no filter, otherwise boolean
-        showTurboFilterBox: false
+        showTurboFilterBox: false,
+        turboYearLegend: []
     };
 
     constructor(props: AllWidgetProps<any>) {
@@ -994,7 +998,7 @@ export default class Widget extends React.PureComponent<
         const { jimuMapView } = this.state;
         if (!jimuMapView) return;
 
-        if (jimuMapView.view.zoom < 18) {
+        if (jimuMapView.view.zoom < 16) {
             console.log("Not loading traffic signs, zoom below threshold");
             return;
         }
@@ -1140,7 +1144,7 @@ export default class Widget extends React.PureComponent<
         const { jimuMapView } = this.state;
         if (!jimuMapView) return;
 
-        if (jimuMapView.view.zoom < 18) {
+        if (jimuMapView.view.zoom < 16) {
             console.log("Not loading objects, zoom below threshold");
             return;
         }
@@ -1347,7 +1351,7 @@ export default class Widget extends React.PureComponent<
         * Toggles the Mapillary traffic signs overlay on/off in the map.
         * When ON:
         *  - Ensures the traffic sign VectorTileLayer (coverage layer) is always present when active
-        *  - Dynamically loads/removes a FeatureLayer of traffic signs from the current bounding box if zoom >= 18
+        *  - Dynamically loads/removes a FeatureLayer of traffic signs from the current bounding box if zoom >= 16
         *  - Uses watchers on zoom/stationary events to auto-remove features when zoomed out and refresh when zoomed in
         * When OFF:
         *  - Removes all traffic sign FeatureLayers from the map, leaves coverage layer intact
@@ -1358,6 +1362,9 @@ export default class Widget extends React.PureComponent<
     private toggleMapillaryTrafficSigns = async () => {
         const { jimuMapView } = this.state;
         if (!jimuMapView) return;
+        if (!this.state.trafficSignsActive && jimuMapView.view.zoom < 16) {
+            this.showZoomWarning("Zoom in closer (≥ 16) to view clickable traffic sign features.");
+        }
 
         // === Turn OFF ===
         if (this.state.trafficSignsActive) {
@@ -1398,7 +1405,7 @@ export default class Widget extends React.PureComponent<
             jimuMapView.view.map.add(this.mapillaryTrafficSignsLayer);
         }
 
-        if (jimuMapView.view.zoom >= 18) {
+        if (jimuMapView.view.zoom >= 16) {
             await this.loadMapillaryTrafficSignsFromTilesBBox(true);
             if (this.mapillaryTrafficSignsFeatureLayer) {
             jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
@@ -1407,7 +1414,7 @@ export default class Widget extends React.PureComponent<
 
         // Zoom watcher
         const zoomHandle = jimuMapView.view.watch("zoom", (currentZoom) => {
-            if (currentZoom < 18) {
+            if (currentZoom < 16) {
             this._cancelTrafficSignsFetch = true;
 
             // Remove any FeatureLayer for traffic signs, KEEP VT layer
@@ -1430,7 +1437,7 @@ export default class Widget extends React.PureComponent<
 
         // Debounced refresh for stationary event
         const debouncedRefresh = this.debounce(async () => {
-            if (this._cancelTrafficSignsFetch || jimuMapView.view.zoom < 18) {
+            if (this._cancelTrafficSignsFetch || jimuMapView.view.zoom < 16) {
             // Force remove FeatureLayer if zoomed out
             jimuMapView.view.map.layers.forEach((layer) => {
                 if (
@@ -1444,7 +1451,7 @@ export default class Widget extends React.PureComponent<
             return;
             }
 
-            // Fetch and add FeatureLayer if zoom >= 18
+            // Fetch and add FeatureLayer if zoom >= 16
             await this.loadMapillaryTrafficSignsFromTilesBBox(true);
             if (this.mapillaryTrafficSignsFeatureLayer) {
             // Remove old FeatureLayer(s) and add fresh one
@@ -1466,7 +1473,7 @@ export default class Widget extends React.PureComponent<
             if (!isStationary) return;
             if (this._cancelTrafficSignsFetch) return;
 
-            if (jimuMapView.view.zoom < 18) {
+            if (jimuMapView.view.zoom < 16) {
             // Remove only FeatureLayers, KEEP VT layer
             jimuMapView.view.map.layers.forEach((layer) => {
                 if (
@@ -1492,7 +1499,7 @@ export default class Widget extends React.PureComponent<
         * Toggles the Mapillary objects overlay on/off in the map.
         * When ON:
         *  - Ensures the objects VectorTileLayer (coverage layer) is always present when active
-        *  - Dynamically loads/removes a FeatureLayer of objects from the current bounding box if zoom >= 18
+        *  - Dynamically loads/removes a FeatureLayer of objects from the current bounding box if zoom >= 16
         *  - Uses watchers on zoom/stationary events to auto-remove features when zoomed out and refresh when zoomed in
         * When OFF:
         *  - Removes all object-related FeatureLayers from the map, leaves coverage layer intact
@@ -1503,6 +1510,9 @@ export default class Widget extends React.PureComponent<
     private toggleMapillaryObjects = async () => {
         const { jimuMapView } = this.state;
         if (!jimuMapView) return;
+        if (!this.state.objectsActive && jimuMapView.view.zoom < 16) {
+            this.showZoomWarning("Zoom in closer (≥ 16) to view clickable object features.");
+        }
 
         // === Turn OFF ===
         if (this.state.objectsActive) {
@@ -1545,7 +1555,7 @@ export default class Widget extends React.PureComponent<
             jimuMapView.view.map.add(this.mapillaryObjectsLayer);
         }
 
-        if (jimuMapView.view.zoom >= 18) {
+        if (jimuMapView.view.zoom >= 16) {
             await this.loadMapillaryObjectsFromTilesBBox(true);
             if (this.mapillaryObjectsFeatureLayer) {
             jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
@@ -1554,7 +1564,7 @@ export default class Widget extends React.PureComponent<
 
         // Zoom watcher
         const zoomHandle = jimuMapView.view.watch("zoom", (currentZoom) => {
-            if (currentZoom < 18) {
+            if (currentZoom < 16) {
             this._cancelObjectsFetch = true;
 
             // Remove all object FeatureLayers, KEEP vector tile coverage layer
@@ -1577,7 +1587,7 @@ export default class Widget extends React.PureComponent<
 
         // Debounced refresh
         const debouncedRefresh = this.debounce(async () => {
-            if (this._cancelObjectsFetch || jimuMapView.view.zoom < 18) {
+            if (this._cancelObjectsFetch || jimuMapView.view.zoom < 16) {
             // Force remove FeatureLayer if zoomed out
             jimuMapView.view.map.layers.forEach((layer) => {
                 if (
@@ -1591,7 +1601,7 @@ export default class Widget extends React.PureComponent<
             return;
             }
 
-            // Fetch and add bbox FeatureLayer if zoom >= 18
+            // Fetch and add bbox FeatureLayer if zoom >= 16
             await this.loadMapillaryObjectsFromTilesBBox(true);
             if (this.mapillaryObjectsFeatureLayer) {
             // Remove old FeatureLayers and add fresh
@@ -1613,7 +1623,7 @@ export default class Widget extends React.PureComponent<
             if (!isStationary) return;
             if (this._cancelObjectsFetch) return;
 
-            if (jimuMapView.view.zoom < 18) {
+            if (jimuMapView.view.zoom < 16) {
             // Remove any object FeatureLayers, KEEP vector tile coverage layer
             jimuMapView.view.map.layers.forEach((layer) => {
                 if (
@@ -1678,6 +1688,58 @@ export default class Widget extends React.PureComponent<
         }
     }
 
+    private showZoomWarning(message: string) {
+        this.setState({ zoomWarningMessage: message });
+        setTimeout(() => this.setState({ zoomWarningMessage: undefined }), 4000); // clear after 4 seconds
+    }
+
+    /**
+        * Categorizes a date string into predefined time periods
+    */
+    private getDateCategory(dateString: string): string {
+        if (!dateString) return "unknown";
+        const d = new Date(dateString);
+        if (isNaN(d.getTime())) return "unknown";
+        return String(d.getFullYear()); // precise year as category
+    }
+
+    /**
+        * Creates a renderer that colors points based on date categories
+    */
+    private createYearBasedRenderer(years: string[]): __esri.UniqueValueRenderer {
+        // Distinct color palette
+        const palette = [
+            [46, 204, 113],  // green
+            [52, 152, 219],  // blue
+            [241, 196, 15],  // yellow
+            [231, 76, 60],   // red
+            [155, 89, 182],  // purple
+            [26, 188, 156],  // turquoise
+            [230, 126, 34],  // orange
+            [149, 165, 166]  // gray
+        ];
+        
+        return {
+            type: "unique-value",
+            field: "date_category",
+            uniqueValueInfos: years.map((year, idx) => ({
+                value: year,
+                symbol: {
+                    type: "simple-marker",
+                    color: [...palette[idx % palette.length], 0.9], // cycle palette if >8 years
+                    size: 6,
+                    outline: { color: [255, 255, 255], width: 1 }
+                }
+            })),
+            defaultSymbol: {
+                type: "simple-marker",
+                color: [255, 255, 255, 0.5],
+                size: 6,
+                outline: { color: [0, 0, 0], width: 1 }
+            }
+        };
+    }
+
     /**
         * Loads Mapillary "Turbo Mode" coverage points into the map view.
         * - Requires zoom >= minTurboZoom (default 16) or it skips loading.
@@ -1701,7 +1763,8 @@ export default class Widget extends React.PureComponent<
             turboFilterUsername,
             turboFilterStartDate,
             turboFilterEndDate,
-            turboFilterIsPano
+            turboFilterIsPano,
+            turboColorByDate
         } = this.state;
 
         if (!jimuMapView) return;
@@ -1725,144 +1788,207 @@ export default class Widget extends React.PureComponent<
         const zoom = 14;
         const tiles = this.bboxToTileRange(bbox, zoom);
 
-        // Prepare base list (id, lon, lat)
+        // Fetch base tile coverage
         const seenIds = new Set<string>();
         const baseFeatureList: { id: string; lon: number; lat: number }[] = [];
 
         for (const [x, y, z] of tiles) {
             const url = `https://tiles.mapillary.com/maps/vtp/mly1_public/2/${z}/${x}/${y}?access_token=${this.accessToken}`;
             try {
-            const resp = await fetch(url);
-            if (!resp.ok) continue;
-            const ab = await resp.arrayBuffer();
-            const tile = new VectorTile(new Pbf(ab));
-            const layer = tile.layers['image'];
-            if (!layer) continue;
+                const resp = await fetch(url);
+                if (!resp.ok) continue;
+                const ab = await resp.arrayBuffer();
+                const tile = new VectorTile(new Pbf(ab));
+                const layer = tile.layers['image'];
+                if (!layer) continue;
 
-            for (let i = 0; i < layer.length; i++) {
-                const feat = layer.feature(i).toGeoJSON(x, y, z);
-                const [lon, lat] = feat.geometry.coordinates;
-                const id = feat.properties.id;
+                for (let i = 0; i < layer.length; i++) {
+                    const feat = layer.feature(i).toGeoJSON(x, y, z);
+                    const [lon, lat] = feat.geometry.coordinates;
+                    const id = feat.properties.id;
 
-                if (
-                !seenIds.has(id) &&
-                lon >= bbox[0] && lon <= bbox[2] &&
-                lat >= bbox[1] && lat <= bbox[3]
-                ) {
-                seenIds.add(id);
-                baseFeatureList.push({ id, lon, lat });
+                    if (
+                        !seenIds.has(id) &&
+                        lon >= bbox[0] && lon <= bbox[2] &&
+                        lat >= bbox[1] && lat <= bbox[3]
+                    ) {
+                        seenIds.add(id);
+                        baseFeatureList.push({ id, lon, lat });
+                    }
                 }
-            }
             } catch (err) {
-            console.warn("Turbo tile fetch error", err);
+                console.warn("Turbo tile fetch error", err);
             }
         }
 
-        // Decide if we need extra Graph API calls
+        // Decide if we need Graph API details
         const needDetails =
+            turboColorByDate ||
             Boolean(turboFilterUsername?.trim()) ||
             Boolean(turboFilterStartDate) ||
             Boolean(turboFilterEndDate) ||
             turboFilterIsPano !== undefined;
 
         let features: any[] = [];
+        const allYears: Set<string> = new Set();
 
         if (!needDetails) {
-            // No filtering → fastest mode
+            // Fast mode (no extra API calls)
             features = baseFeatureList.map(base => ({
-            geometry: webMercatorUtils.geographicToWebMercator({
-                type: "point",
-                x: base.lon,
-                y: base.lat,
-                spatialReference: { wkid: 4326 }
-            }),
-            attributes: { id: base.id }
-            }));
-        } else {
-            // Need details: creator_username + captured_at
-            const idToUser: Record<string, string> = {};
-            const idToSequence: Record<string, string> = {};
-            const idToCapturedAt: Record<string, string> = {};
-            const idToIsPano: Record<string, boolean | null> = {};
-
-            const chunkSize = 100;
-            const chunks: string[][] = [];
-            for (let i = 0; i < baseFeatureList.length; i += chunkSize) {
-            chunks.push(baseFeatureList.slice(i, i + chunkSize).map(f => f.id));
-            }
-
-            await Promise.all(
-            chunks.map(async chunk => {
-                try {
-                const fields = "id,creator.username,sequence,captured_at,is_pano";
-                const apiUrl = `https://graph.mapillary.com/?ids=${chunk.join(",")}&fields=${fields}`;
-                const resp = await fetch(apiUrl, {
-                    headers: { Authorization: `OAuth ${this.accessToken}` }
-                });
-                if (!resp.ok) return;
-                const json = await resp.json();
-                for (const [id, obj] of Object.entries(json)) {
-                    idToUser[id] = (obj as any).creator?.username || "Unknown";
-                    idToSequence[id] = (obj as any).sequence || null;
-                    idToCapturedAt[id] = (obj as any).captured_at || null;
-                    idToIsPano[id] = (obj as any).is_pano ?? null;
-                }
-                } catch (err) {
-                console.warn("Graph API chunk error", err);
-                }
-            })
-            );
-
-            const startTime = turboFilterStartDate ? new Date(turboFilterStartDate).getTime() : null;
-            const endTime = turboFilterEndDate ? new Date(turboFilterEndDate).getTime() : null;
-
-            features = baseFeatureList
-            .filter(base => {
-                const userOk = turboFilterUsername?.trim()
-                ? idToUser[base.id] === turboFilterUsername.trim()
-                : true;
-
-                const dateStr = idToCapturedAt[base.id];
-                let dateOk = true;
-                if (dateStr) {
-                    const t = new Date(dateStr).getTime();
-                    if (startTime && t < startTime) dateOk = false;
-                    if (endTime && t > endTime) dateOk = false;
-                }
-
-                let panoOk = true;
-                if (turboFilterIsPano !== undefined) {
-                    panoOk = idToIsPano[base.id] === turboFilterIsPano;
-                }
-
-                return userOk && dateOk && panoOk;
-            })
-            .map(base => ({
                 geometry: webMercatorUtils.geographicToWebMercator({
                     type: "point",
                     x: base.lon,
                     y: base.lat,
                     spatialReference: { wkid: 4326 }
                 }),
-                attributes: {
-                    id: base.id,
-                    creator_username: idToUser[base.id],
-                    sequence_id: idToSequence[base.id],
-                    captured_at: idToCapturedAt[base.id],
-                    is_pano: idToIsPano[base.id]
-                }
+                attributes: { id: base.id }
             }));
+        } else {
+            // Detail mode
+            const idToUser: Record<string, string> = {};
+            const idToSequence: Record<string, string> = {};
+            const idToCapturedAt: Record<string, string> = {};
+            const idToIsPano: Record<string, boolean | null> = {};
+
+            const chunkSize = 50; 
+            const chunks: string[][] = [];
+            for (let i = 0; i < baseFeatureList.length; i += chunkSize) {
+                chunks.push(baseFeatureList.slice(i, i + chunkSize).map(f => f.id));
+            }
+
+            console.log(`Fetching details for ${baseFeatureList.length} images...`);
+
+            await Promise.all(
+                chunks.map(async chunk => {
+                    try {
+                        const fields = "id,creator.username,sequence,captured_at,is_pano";
+                        const apiUrl = `https://graph.mapillary.com/?ids=${chunk.join(",")}&fields=${fields}`;
+                        const resp = await fetch(apiUrl, {
+                            headers: { Authorization: `OAuth ${this.accessToken}` }
+                        });
+                        if (!resp.ok) return;
+                        const json = await resp.json();
+                        for (const [id, obj] of Object.entries(json)) {
+                            idToUser[id] = (obj as any).creator?.username || "Unknown";
+                            idToSequence[id] = (obj as any).sequence || null;
+                            idToCapturedAt[id] = (obj as any).captured_at || null;
+                            idToIsPano[id] = (obj as any).is_pano ?? null;
+                        }
+                    } catch (err) {
+                        console.warn("Graph API chunk error", err);
+                    }
+                })
+            );
+
+            const startTime = turboFilterStartDate ? new Date(turboFilterStartDate).getTime() : null;
+            const endTime = turboFilterEndDate ? new Date(turboFilterEndDate).getTime() : null;
+
+            features = baseFeatureList
+                .filter(base => {
+                    const userOk = turboFilterUsername?.trim()
+                        ? idToUser[base.id] === turboFilterUsername.trim()
+                        : true;
+
+                    const dateStr = idToCapturedAt[base.id];
+                    let dateOk = true;
+                    if (dateStr) {
+                        const t = new Date(dateStr).getTime();
+                        if (startTime && t < startTime) dateOk = false;
+                        if (endTime && t > endTime) dateOk = false;
+                    }
+
+                    let panoOk = true;
+                    if (turboFilterIsPano !== undefined) {
+                        panoOk = idToIsPano[base.id] === turboFilterIsPano;
+                    }
+
+                    return userOk && dateOk && panoOk;
+                })
+                .map(base => {
+                    let yearCat: string | null = null;
+                    if (turboColorByDate) {
+                        yearCat = this.getDateCategory(idToCapturedAt[base.id]);
+                        if (yearCat && yearCat !== "unknown") {
+                            allYears.add(yearCat);
+                        }
+                    }
+                    return {
+                        geometry: webMercatorUtils.geographicToWebMercator({
+                            type: "point",
+                            x: base.lon,
+                            y: base.lat,
+                            spatialReference: { wkid: 4326 }
+                        }),
+                        attributes: {
+                            id: base.id,
+                            creator_username: idToUser[base.id],
+                            sequence_id: idToSequence[base.id],
+                            captured_at: idToCapturedAt[base.id],
+                            is_pano: idToIsPano[base.id],
+                            date_category: yearCat
+                        }
+                    };
+                });
         }
 
         if (!features.length) {
-            console.warn(
-            "No Turbo coverage matches for filters:",
-            { turboFilterUsername, turboFilterStartDate, turboFilterEndDate }
-            );
+            console.warn("No Turbo coverage matches for filters or date coloring");
             this.setState({ turboLoading: false });
             return;
         }
 
+        // Build renderer
+        let renderer: __esri.Renderer;
+        if (turboColorByDate && needDetails) {
+            const yearList = Array.from(allYears);
+            const yearRenderer = this.createYearBasedRenderer(yearList);
+
+            const palette = [
+                [46, 204, 113],   // green
+                [52, 152, 219],   // blue
+                [241, 196, 15],   // yellow
+                [231, 76, 60],    // red
+                [155, 89, 182],   // purple
+                [26, 188, 156],   // turquoise
+                [230, 126, 34],   // orange
+                [149, 165, 166]   // gray
+            ];
+            const legendMap = yearList.map((year, idx) => ({
+                year: year,
+                color: `rgb(${palette[idx % palette.length].join(",")})`
+            }));
+
+            this.setState({ turboYearLegend: legendMap });
+
+            renderer = yearRenderer;
+        } else {
+            renderer = {
+                type: "simple",
+                symbol: {
+                    type: "simple-marker",
+                    color: [165, 42, 42, 0.9],
+                    size: 6,
+                    outline: { color: [255, 255, 255], width: 1 }
+                }
+            };
+
+            this.setState({ turboYearLegend: [] });
+        }
+
+        // Determine popup enabling logic
+        let enablePopups = needDetails;
+        // Disable if only color/date or pano filter is responsible for detail mode
+        const onlyPanoOrColor =
+            (!turboFilterUsername?.trim() &&
+            !turboFilterStartDate &&
+            !turboFilterEndDate &&
+            (turboFilterIsPano !== undefined || turboColorByDate));
+
+        if (onlyPanoOrColor) {
+            enablePopups = false;
+        }
+
+        // Create and add FeatureLayer
         this.turboCoverageLayer = new FeatureLayer({
             id: "turboCoverage",
             source: features,
@@ -1871,36 +1997,29 @@ export default class Widget extends React.PureComponent<
                 { name: "id", type: "string" },
                 { name: "creator_username", type: "string" },
                 { name: "sequence_id", type: "string" },
-                { name: "captured_at", type: "string" }
+                { name: "captured_at", type: "string" },
+                { name: "date_category", type: "string" }
             ],
             geometryType: "point",
             spatialReference: { wkid: 3857 },
-            renderer: {
-            type: "simple",
-            symbol: {
-                type: "simple-marker",
-                color: [165, 42, 42, 0.9],
-                size: 6,
-                outline: { color: [255, 255, 255, 1], width: 1 }
-            }
-            },
-            popupEnabled: needDetails,
-            popupTemplate: needDetails
-            ? {
-                title: `{creator_username}`,
-                content: `
-                    <b>Image ID:</b> {id}<br>
-                    <b>Creator:</b> {creator_username}<br>
-                    <b>Captured At:</b> {captured_at}<br>
-                    <b>Panorama:</b> {is_pano}
-                `
+            renderer: renderer,
+            popupEnabled: enablePopups,
+            popupTemplate: enablePopups
+                ? {
+                    title: `{creator_username}`,
+                    content: `
+                        <b>Image ID:</b> {id}<br>
+                        <b>Creator:</b> {creator_username}<br>
+                        <b>Captured At:</b> {captured_at}<br>
+                        <b>Panorama:</b> {is_pano}<br>
+                        ${turboColorByDate ? '<b>Year:</b> {date_category}<br>' : ''}
+                    `
                 }
-            : undefined
+                : undefined
         });
 
         jimuMapView.view.map.add(this.turboCoverageLayer);
 
-        // Store LayerView for highlighting
         jimuMapView.view.whenLayerView(this.turboCoverageLayer).then(lv => {
             this.turboCoverageLayerView = lv;
         });
@@ -2286,6 +2405,8 @@ export default class Widget extends React.PureComponent<
                 turboFilterStartDate: "",
                 turboFilterEndDate: "",
                 turboFilterIsPano: undefined,
+                turboColorByDate: false,
+                turboYearLegend: [],
                 showTurboFilterBox: false
             });
 
@@ -3385,6 +3506,24 @@ export default class Widget extends React.PureComponent<
                 )}
 
                 {viewerArea}
+                {this.state.zoomWarningMessage && (
+                    <div style={{
+                        position: "absolute",
+                        top: "25px",
+                        left: "50px",
+                        background: "rgba(255,165,0,0.95)",
+                        color: "#fff",
+                        padding: "6px 10px",
+                        borderRadius: "4px",
+                        fontSize: "10px",
+                        boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
+                        zIndex: 9999,
+                        animation: "fadeIn 0.3s",
+                        maxWidth:"100px"
+                    }}>
+                        ⚠️ {this.state.zoomWarningMessage}
+                    </div>
+                )}
 
                 {/* Revolver-style sequence picker */}
                 {this.state.availableSequences && this.state.availableSequences.length > 1 && (
@@ -3508,9 +3647,7 @@ export default class Widget extends React.PureComponent<
                     )}
                 </div>
                 )}
-
                 
-
                 {/* Info box */}
                 <div
                     style={{
@@ -3520,13 +3657,13 @@ export default class Widget extends React.PureComponent<
                         position: "absolute",
                         top: "10px",
                         right: "10px",
-                        background: "rgba(2, 117, 216, 0.7)",
+                        background: "rgba(2, 117, 216, 0.3)",
                         borderRadius: "4px",
-						maxWidth: "200px" 
+						maxWidth: "56px" 
                     }}
                 >
-                    {this.state.imageId && <>Image ID: {this.state.imageId}<br/></>}
-                    {this.state.sequenceId && <>Sequence ID: {this.state.sequenceId}<br/></>}
+                    {/* {this.state.imageId && <>Image ID: {this.state.imageId}<br/></>}
+                    {this.state.sequenceId && <>Sequence ID: {this.state.sequenceId}<br/></>} */}
                     {/* Lat/Lon */}
                     {(() => {
                         if (this.state.imageId && this.state.sequenceImages.length > 0) {
@@ -3536,7 +3673,7 @@ export default class Widget extends React.PureComponent<
                             if (currentImg) {
                                 return (
                                     <>
-                                        📍{" "}Lat: {currentImg.lat.toFixed(6)}{", "} Lon: {currentImg.lon.toFixed(6)}
+                                        📍{" "}Lat: {currentImg.lat.toFixed(6)}<br/>📍{" "}Lon: {currentImg.lon.toFixed(6)}
                                     </>
                                 );
                             }
@@ -3544,6 +3681,28 @@ export default class Widget extends React.PureComponent<
                         return null;
                     })()}
 					{this.state.address && <><br/>🌎{" "}{this.state.address}</>}
+                    {/* === TURBO YEAR LEGEND === */}
+                    {this.state.turboColorByDate && this.state.turboYearLegend?.length > 0 && (
+                        <div style={{ marginTop: "4px", textAlign: "center" }}>
+                            <div style={{ fontWeight: "bold", fontSize: "10px", marginBottom: "2px" }}>
+                                Legend:
+                            </div>
+                            {this.state.turboYearLegend.map(item => (
+                                <div key={item.year} style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "2px" }}>
+                                    <span style={{
+                                        display: "inline-block",
+                                        width: "10px",
+                                        height: "10px",
+                                        borderRadius: "50%",
+                                        backgroundColor: item.color,
+                                        marginRight: "4px",
+                                        border: "1px solid white"
+                                    }}></span>
+                                    <span style={{ fontSize: "9px" }}>{item.year}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
                 
                 {/* Filter button + optional aux */}
@@ -3697,6 +3856,51 @@ export default class Widget extends React.PureComponent<
                         ×
                         </button>
                     )}
+                    {/* Date-based coloring toggle */}
+                    <span style={{ fontSize: '9px', color: 'black', marginLeft:'5px', fontWeight:'500'}}>
+                        Color by date: 
+                    </span>
+                    
+                    <label style={{ position: 'relative', display: 'inline-block', width: '34px', height: '18px' }}>
+                        <input
+                            type="checkbox"
+                            checked={this.state.turboColorByDate === true}
+                            onChange={(e) => {
+                                const checked = e.target.checked;
+                                this.setState({ turboColorByDate: checked }, () => {
+                                    this.debouncedTurboFilter();
+                                });
+                            }}
+                            style={{ opacity: 0, width: 0, height: 0 }}
+                        />
+                        {/* Slider look */}
+                        <span
+                            style={{
+                                position: 'absolute',
+                                cursor: 'pointer',
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                backgroundColor: this.state.turboColorByDate ? '#4CAF50' : '#ccc',
+                                transition: '0.4s',
+                                borderRadius: '34px'
+                            }}
+                        >
+                            <span
+                                style={{
+                                    position: 'absolute',
+                                    height: '14px',
+                                    width: '14px',
+                                    left: this.state.turboColorByDate ? '18px' : '4px',
+                                    bottom: '2px',
+                                    backgroundColor: 'white',
+                                    transition: '0.4s',
+                                    borderRadius: '50%'
+                                }}
+                            />
+                        </span>
+                    </label>
                     </div>
                 )}
                 </div>
@@ -3730,6 +3934,9 @@ export default class Widget extends React.PureComponent<
                             this.setState({ turboModeActive: next });
 
                             if (next) {
+                                if (this.state.jimuMapView?.view.zoom! < 16) {
+                                    this.showZoomWarning("Zoom in closer (≥ 16) to view Mapillary coverage point features in Turbo Mode.");
+                                }
                                 this.clearSequenceUI();
                                 // First load with NO filter (fastest)
                                 this.enableTurboCoverageLayer(); // no username for speed
@@ -3768,9 +3975,18 @@ export default class Widget extends React.PureComponent<
                                     });
                                 }
                             } else {
-                                this.disableTurboCoverageLayer();
-                                this.setState({ turboFilterUsername: "" }); // reset filter when off
-                            }
+                                        this.disableTurboCoverageLayer();
+                                        this.setState({
+                                            // Reset ALL filter states when Turbo Mode OFF
+                                            turboFilterUsername: "",
+                                            turboFilterStartDate: "",
+                                            turboFilterEndDate: "",
+                                            turboFilterIsPano: undefined,
+                                            turboColorByDate: false,
+                                            turboYearLegend: [],
+                                            showTurboFilterBox: false
+                                        });
+                                    }
                         },
                         title: 'Turbo Mode - Click coverage features directly',
                         bg: 'rgba(255,215,0,0.9)',

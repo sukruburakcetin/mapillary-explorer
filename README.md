@@ -18,10 +18,8 @@ It allows users to click a point on the map and instantly load the corresponding
 6. [Mapillary Explorer Demo Video](#mapillary-explorer-demo-video)
 7. [State Management](#state-management)
 8. [Architecture](#architecture)
-9. [Security Notes](#security-notes)
-10. [How to Contribute](#how-to-contribute)
-11. [Download Release](#-download-built-widget-v140)
-12. [License](#license)
+9. [Download Release](#-download-built-widget-latest-version)
+10. [License](#license)
 
 ---
 
@@ -223,7 +221,6 @@ Below is an example of the `manifest.json` file used for configuration:
 }
 ```
 
-
 ---
 
 ## How It Works
@@ -261,7 +258,7 @@ Below is an example of the `manifest.json` file used for configuration:
 
 ### Mapillary Explorer Demo Video
 
-[![Watch the video](https://img.youtube.com/vi/bX-O5CRUuUY/maxresdefault.jpg)](https://www.youtube.com/watch?v=bX-O5CRUuUY)
+[![Watch the video](https://img.youtube.com/vi/TYrrStp9WU8/maxresdefault.jpg)](https://www.youtube.com/watch?v=TYrrStp9WU8)
 
 
 ## State Management
@@ -295,19 +292,8 @@ The `State` interface keeps track of the widget’s core data and runtime behavi
 
 ---
 
-### Security Notes
-
-Sensitive credentials, such as the Mapillary access token, are never hardcoded.  
-They are stored securely in the widget’s `manifest.json` file under the property:
-
-```json
-"mapillaryAccessToken": "YOUR_MAPILLARY_ACCESS_TOKEN"
-```
-
----
-### 📦 [Download Built Widget(dist) Latest Version)](https://github.com/sukruburakcetin/mapillary-explorer/releases/latest)
+### 📦 [Download Built Widget Latest Version](https://github.com/sukruburakcetin/mapillary-explorer/releases/latest)
 ---
 ### License
 
 This project is licensed under the **MIT License**.
-
