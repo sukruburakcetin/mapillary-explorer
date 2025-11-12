@@ -1,5 +1,6 @@
 <h1 align="center">
-  <img src="https://images2.imgbox.com/88/fe/WenwtUOl_o.jpg"><br/>Mapillary Explorer
+  <img src="https://images2.imgbox.com/ec/73/iwr0gH9D_o.gif" width="250"><br/>
+  Mapillary Explorer
 </h1>
 
 This is a custom **ArcGIS Experience Builder widget** written in **TypeScript + React** that integrates **Mapillary street-level imagery** with an **ArcGIS web map**.
@@ -258,7 +259,7 @@ Below is an example of the `manifest.json` file used for configuration:
 
 ### Mapillary Explorer Demo Video
 
-[![Watch the video](https://img.youtube.com/vi/TYrrStp9WU8/maxresdefault.jpg)](https://www.youtube.com/watch?v=TYrrStp9WU8)
+[![Watch the video](https://img.youtube.com/vi/TYrrStp9WU8/hqdefault.jpg)](https://www.youtube.com/watch?v=TYrrStp9WU8)
 
 
 ## State Management
