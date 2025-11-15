@@ -7,9 +7,7 @@ import Pbf from 'pbf';
 import { VectorTile } from '@mapbox/vector-tile';
 const {loadArcGISJSAPIModules} = require("jimu-arcgis");
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
-import * as projection from "@arcgis/core/geometry/projection";
-import * as geometryEngine from "@arcgis/core/geometry/geometryEngine";
-import SpatialReference from "@arcgis/core/geometry/SpatialReference";
+import Select from 'react-select';
 
 // --- Legend & UI helper styles ---
 const legendContainerStyle: React.CSSProperties = {
@@ -740,18 +738,69 @@ export default class Widget extends React.PureComponent<
         });
     };
 
+        // Helper to load image
+    private loadImage(url: string): Promise<HTMLImageElement> {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous'; // required for canvas on GitHub raw URLs
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = url;
+        });
+    }
+
+    // Helper to crop and get data URL
+    private cropSpriteImage(spriteImg: HTMLImageElement, meta: any): string {
+        const canvas = document.createElement('canvas');
+        canvas.width = meta.width;
+        canvas.height = meta.height;
+        const ctx = canvas.getContext('2d');
+        ctx!.drawImage(
+            spriteImg,
+            meta.x, meta.y, meta.width, meta.height, // source rect
+            0, 0, meta.width, meta.height            // destination rect
+        );
+        return canvas.toDataURL(); // base64 PNG
+    }
+
     private async preloadTrafficSignOptions() {
         try {
-            const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
+            const spriteBaseUrl =
+            "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
+
+            // Load sprite metadata
             const jsonResp = await fetch(`${spriteBaseUrl}.json`);
             if (!jsonResp.ok) throw new Error(`Failed to load traffic signs sprite JSON`);
             const spriteData = await jsonResp.json();
 
-            // Keys are Mapillary codes; we convert to friendly names
+            // Load the sprite sheet image
+            const img = await this.loadImage(`${spriteBaseUrl}.png`);
+
             const codes = Object.keys(spriteData);
-            const names = codes.map(c => this.formatTrafficSignName(c));
-            
-            this.setState({ trafficSignsOptions: ["All traffic signs", ...names] });
+
+            const namesWithIcons = codes.map(code => {
+                const friendlyName = this.formatTrafficSignName(code);
+                const meta = spriteData[code]; 
+                const iconUrl = this.cropSpriteImage(img, meta);
+                return {
+                    value: friendlyName,
+                    label: friendlyName,
+                    iconUrl
+                };
+            });
+
+            // All traffic signs as an object, not string
+            const allOption = { value: "All traffic signs", label: "All traffic signs", iconUrl: null };
+            this.setState({
+                trafficSignsOptions: [allOption, ...namesWithIcons],
+                trafficSignsFilterValue: allOption // not string
+            });
+
+            this.setState({
+                trafficSignsOptions: [allOption, ...namesWithIcons],
+                trafficSignsFilterValue: "All traffic signs"
+            });
+
             console.log("Traffic sign options preloaded:", this.state.trafficSignsOptions);
         } catch (err) {
             console.warn("Failed to preload traffic sign options", err);
@@ -760,17 +809,42 @@ export default class Widget extends React.PureComponent<
 
     private async preloadObjectOptions() {
         try {
-            const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
+            const spriteBaseUrl =
+            "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
+
+            // Load sprite metadata
             const jsonResp = await fetch(`${spriteBaseUrl}.json`);
             if (!jsonResp.ok) throw new Error(`Failed to load objects sprite JSON`);
             const spriteData = await jsonResp.json();
 
-            // Keys are Mapillary codes; convert to friendly names when available
+            // Load sprite sheet image
+            const img = await this.loadImage(`${spriteBaseUrl}.png`);
+
             const codes = Object.keys(spriteData);
-            const names = codes.map(c => this.objectNameMap[c] || c);
-            
-            this.setState({ objectsOptions: ["All points", ...names] });
-            console.log("Object options preloaded:", this.state.objectsOptions);
+
+            const namesWithIcons = codes.map(code => {
+                const friendlyName = this.objectNameMap[code] || code;
+                const meta = spriteData[code];
+                const iconUrl = this.cropSpriteImage(img, meta);
+                return {
+                    value: friendlyName,
+                    label: friendlyName,
+                    iconUrl
+                };
+            });
+
+            const allOption = {
+                value: "All points",
+                label: "All points",
+                iconUrl: null
+            };
+
+            this.setState({
+                objectsOptions: [allOption, ...namesWithIcons],
+                objectsFilterValue: allOption
+            });
+
+            console.log("Objects options preloaded:", this.state.objectsOptions);
         } catch (err) {
             console.warn("Failed to preload object options", err);
         }
@@ -810,16 +884,16 @@ export default class Widget extends React.PureComponent<
     }
 
 
-    private filterObjectsVTLayer(selectedValue: string) {
+    private filterObjectsVTLayer(selectedValue?: string) {
         if (!this.mapillaryObjectsLayer) return;
 
         const styleJson = this.mapillaryObjectsLayer.style;
         const newStyle = JSON.parse(JSON.stringify(styleJson));
-
         const targetLayer = newStyle.layers.find((ly: any) => ly.id === "mapillary-objects-icons");
+
         if (targetLayer) {
-            if (selectedValue === "All points") {
-            delete targetLayer.filter;
+            if (!selectedValue || selectedValue === "All points") {
+            delete targetLayer.filter;  // no filter → show all
             } else {
             targetLayer.filter = ["==", ["get", "value"], selectedValue];
             }
@@ -1731,16 +1805,21 @@ export default class Widget extends React.PureComponent<
                     }
                 });
 
-                // Keep VT filtered
-                const currentFilterName = this.state.objectsFilterValue;
+                // Ensure we unwrap react-select object to its value string
+                const currentFilterName = this.state.objectsFilterValue?.value || "All points";
                 let filterCode = "All points";
+
                 if (currentFilterName !== "All points") {
-                    const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
-                    const jsonResp = await fetch(`${spriteBaseUrl}.json`);
-                    const spriteData = await jsonResp.json();
-                    const code = Object.keys(spriteData).find(c => (this.objectNameMap[c] || c) === currentFilterName);
-                    filterCode = code || currentFilterName;
+                const spriteBaseUrl =
+                    "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
+                const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+                const spriteData = await jsonResp.json();
+                const code = Object.keys(spriteData).find(
+                    c => (this.objectNameMap[c] || c) === currentFilterName
+                );
+                filterCode = code || currentFilterName;
                 }
+
                 this.filterObjectsVTLayer(filterCode);
 
             } else {
@@ -4106,108 +4185,210 @@ export default class Widget extends React.PureComponent<
                     )}
                     {/* Traffic Signs Filter Box */}
                     {this.state.showTrafficSignsFilterBox && (
-                    <div style={{ position: 'relative', display: 'inline-block', background: 'orange', padding: '4px', borderRadius: '6px' }}>
-                       <select
-                            value={this.state.trafficSignsFilterValue}
-                            onChange={async e => {
-                            const newName = e.target.value;
-                            this.setState({ trafficSignsFilterValue: newName }, async () => {
+                    <div style={{
+                        position: 'relative',
+                        display: 'inline-block',
+                        background: 'orange',
+                        padding: '4px',
+                        borderRadius: '6px',
+                        overflow: 'visible' // allow drop-up menu to show
+                    }}>
+                        <Select
+                        value={this.state.trafficSignsOptions.find(opt =>
+                            opt.value === this.state.trafficSignsFilterValue
+                        )}
+                            onChange={(selected) => {
+                            this.setState({ trafficSignsFilterValue: selected }, async () => {
                                 if (!this.state.jimuMapView) return;
 
-                                // Get raw code from name for VT filter
+                                const newName = selected.value; // use .value from the object
                                 let filterCode: string;
                                 if (newName === "All traffic signs") {
                                 filterCode = "All traffic signs";
                                 } else {
-                                const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
+                                const spriteBaseUrl =
+                                    "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
                                 const jsonResp = await fetch(`${spriteBaseUrl}.json`);
                                 const spriteData = await jsonResp.json();
-                                const code = Object.keys(spriteData).find(c => this.formatTrafficSignName(c) === newName);
+                                const code = Object.keys(spriteData).find(
+                                    c => this.formatTrafficSignName(c) === newName
+                                );
                                 filterCode = code || newName;
                                 }
 
-                                // Always filter VT layer
                                 this.filterTrafficSignsVTLayer(filterCode);
 
-                                // Remove stale FeatureLayer immediately when filter changes
-                                if (this.mapillaryTrafficSignsFeatureLayer &&
-                                    this.state.jimuMapView.view.map.layers.includes(this.mapillaryTrafficSignsFeatureLayer)) {
+                            // Remove stale FeatureLayer immediately when filter changes
+                            if (
+                                this.mapillaryTrafficSignsFeatureLayer &&
+                                this.state.jimuMapView.view.map.layers.includes(this.mapillaryTrafficSignsFeatureLayer)
+                            ) {
                                 this.state.jimuMapView.view.map.remove(this.mapillaryTrafficSignsFeatureLayer);
-                                }
-                                this.mapillaryTrafficSignsFeatureLayer = null;
+                            }
+                            this.mapillaryTrafficSignsFeatureLayer = null;
 
-                                // If we're zoomed in >= 16 AND layer active → fetch immediately
-                                if (this.state.trafficSignsActive && this.state.jimuMapView.view.zoom >= 16) {
+                            // If we're zoomed in >= 16 AND layer active → fetch immediately
+                            if (
+                                this.state.trafficSignsActive &&
+                                this.state.jimuMapView.view.zoom >= 16
+                            ) {
                                 this._cancelTrafficSignsFetch = false;
                                 await this.loadMapillaryTrafficSignsFromTilesBBox(true);
                                 if (this.mapillaryTrafficSignsFeatureLayer) {
-                                    this.state.jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
+                                this.state.jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
                                 }
-                                }
+                            }
+
+                            // Simulate a minimal pan to trigger stationary watcher refresh
+                            const view = this.state.jimuMapView.view;
+                            if (view) {
+                                const currentCenter = view.center.clone();
+                                const newCenter = currentCenter.offset(0.0005, 0); // tiny shift east
+                                view.goTo(
+                                {
+                                    center: newCenter,
+                                    zoom: view.zoom
+                                },
+                                { animate: false }
+                                );
+                            }
                             });
-                            }}
+                        }}
+                        options={this.state.trafficSignsOptions}
+                        formatOptionLabel={(option) => (
+                            <div style={{ display: 'flex', alignItems: 'center' }}>
+                            {option.iconUrl && (
+                                <img
+                                src={option.iconUrl}
+                                alt=""
+                                style={{
+                                    width: 20,
+                                    height: 20,
+                                    marginRight: 8,
+                                    objectFit: 'contain'
+                                }}
+                                />
+                            )}
+                            <span
+                                style={{
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                maxWidth: 120
+                                }}
+                                title={option.label} // show full name on hover
                             >
-                            {this.state.trafficSignsOptions.map(opt => (
-                                <option key={opt} value={opt}>{opt}</option>
-                            ))}
-                        </select>
+                                {option.label}
+                            </span>
+                            </div>
+                        )}
+                        menuPlacement="top"  // force drop-up for mobile
+                        styles={{
+                            container: base => ({
+                                ...base,
+                                width: '250px',
+                                fontSize: '10px'
+                            }),
+                            control: base => ({
+                                ...base,
+                                minHeight: '34px',
+                                height: '34px',
+                                fontSize: '10px'
+                            }),
+                            menu: base => ({
+                                ...base,
+                                zIndex: 9999
+                            })
+                        }}
+                        />
                     </div>
                     )}
 
                     {/* Objects Filter Box */}
                     {this.state.showObjectsFilterBox && (
-                    <div style={{ position: 'relative', display: 'inline-block', background: 'red', padding: '4px', borderRadius: '6px' }}>
-                    <select
-                        value={this.state.objectsFilterValue}
-                        onChange={e => {
-                        const newName = e.target.value;
-                        this.setState({ objectsFilterValue: newName }, async () => {
+                    <div style={{
+                        position: 'relative',
+                        display: 'inline-block',
+                        background: 'orange',
+                        padding: '4px',
+                        borderRadius: '6px',
+                        overflow: 'visible'
+                    }}>
+                        <Select
+                        value={this.state.objectsFilterValue}      // object, not string
+                        options={this.state.objectsOptions}        // array of objects
+                        onChange={(selected) => {
+                            this.setState({ objectsFilterValue: selected }, async () => {
                             if (!this.state.jimuMapView) return;
 
-                            // Map friendly name back to raw code for VT filter
+                            const newName = selected.value; // safe: from object
                             let filterCode: string;
                             if (newName === "All points") {
-                            filterCode = "All points";
+                                filterCode = "All points";
                             } else {
-                            const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
-                            const jsonResp = await fetch(`${spriteBaseUrl}.json`);
-                            const spriteData = await jsonResp.json();
-                            const code = Object.keys(spriteData).find(c => (this.objectNameMap[c] || c) === newName);
-                            filterCode = code || newName;
+                                const spriteBaseUrl =
+                                "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
+                                const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+                                const spriteData = await jsonResp.json();
+                                const code = Object.keys(spriteData).find(
+                                c => (this.objectNameMap[c] || c) === newName
+                                );
+                                filterCode = code || newName;
                             }
 
-                            // Always filter VT layer
                             this.filterObjectsVTLayer(filterCode);
 
-                            // If active and zoom ≥ 16, rebuild FL
-                            if (this.state.objectsActive && this.state.jimuMapView.view.zoom >= 16) {
-                            if (this.mapillaryObjectsFeatureLayer &&
-                                this.state.jimuMapView.view.map.layers.includes(this.mapillaryObjectsFeatureLayer)) {
+                            if (
+                                this.state.objectsActive &&
+                                this.state.jimuMapView.view.zoom >= 16
+                            ) {
+                                if (this.mapillaryObjectsFeatureLayer &&
+                                    this.state.jimuMapView.view.map.layers.includes(this.mapillaryObjectsFeatureLayer)) {
                                 this.state.jimuMapView.view.map.remove(this.mapillaryObjectsFeatureLayer);
-                            }
-                            await this.loadMapillaryObjectsFromTilesBBox(true);
-                            if (this.mapillaryObjectsFeatureLayer) {
+                                }
+                                await this.loadMapillaryObjectsFromTilesBBox(true);
+                                if (this.mapillaryObjectsFeatureLayer) {
                                 this.state.jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
-                            }
+                                }
                             }
 
-                            // Simulate a minimal pan in the Map widget
                             const view = this.state.jimuMapView.view;
                             if (view) {
-                            const currentCenter = view.center.clone();
-                            const newCenter = currentCenter.offset(0.0005, 0); // tiny shift east
-                            view.goTo({
-                                center: newCenter,
-                                zoom: view.zoom
-                            }, { animate: false });
+                                const currentCenter = view.center.clone();
+                                const newCenter = currentCenter.offset(0.0005, 0);
+                                view.goTo({ center: newCenter, zoom: view.zoom }, { animate: false });
                             }
-                        });
+                            });
                         }}
-                    >
-                        {this.state.objectsOptions.map(opt => (
-                        <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                    </select>
+                        formatOptionLabel={(option) => (
+                            <div style={{ display: 'flex', alignItems: 'center' }}>
+                            {option.iconUrl && (
+                                <img
+                                src={option.iconUrl}
+                                alt=""
+                                style={{ width: 20, height: 20, marginRight: 8, objectFit: 'contain' }}
+                                />
+                            )}
+                            <span
+                                style={{
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                maxWidth: 120
+                                }}
+                                title={option.label}
+                            >
+                                {option.label}
+                            </span>
+                            </div>
+                        )}
+                        menuPlacement="top"
+                        styles={{
+                            container: base => ({...base, width: '250px', fontSize: '10px'}),
+                            control: base => ({...base, minHeight: '34px', height: '34px', fontSize: '10px'}),
+                            menu: base => ({...base, zIndex: 9999})
+                        }}
+                        />
                     </div>
                     )}
                 </div>
