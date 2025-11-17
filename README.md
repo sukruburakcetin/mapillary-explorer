@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="https://images2.imgbox.com/ec/73/iwr0gH9D_o.gif" width="250"><br/>
+  <img src="https://images2.imgbox.com/d7/93/x4KQaHGa_o.jpg" width="250"><br/>
   Mapillary Explorer
 </h1>
 
@@ -15,99 +15,119 @@ It allows users to click a point on the map and instantly load the corresponding
 2. [Features](#features)
 3. [Setup & Installation](#setup--installation)
 4. [Configuration](#configuration)
-5. [How It Works](#how-it-works)
-6. [Mapillary Explorer Demo Video](#mapillary-explorer-demo-video)
-7. [State Management](#state-management)
-8. [Architecture](#architecture)
-9. [Download Release](#-download-built-widget-latest-version)
-10. [License](#license)
+5. [Mapillary Explorer Demo Video](#mapillary-explorer-demo-video)
+6. [Download Release](#-download-built-widget-latest-version)
+7. [License](#license)
 
 ---
 
 ## Overview
 
-The Mapillary Esri Experience Builder Widget connects ArcGIS web maps with Mapillary’s street-level imagery.  
-Users can explore ground-level images directly from a map by clicking anywhere within the map extent.
+The Mapillary ArcGIS Experience Builder Widget is a comprehensive street-level imagery exploration tool that seamlessly integrates Mapillary’s vast database of geotagged photos with ArcGIS web maps. This advanced widget provides users with multiple ways to discover, visualize, and interact with street-level imagery and detected map objects directly within their ArcGIS Experience Builder applications.
 
-When the user clicks on the map, the widget:
-
-- Finds the nearest Mapillary image to that location.
-- Displays the panorama in an embedded viewer.
-- Draws map graphics to represent:
-  - Red dot → clicked location
-  - Blue dots → other images in the same sequence
-  - Green pulsing dot → current active image
-  - Orange cone → direction the current image was taken
-- Shows address information using reverse geocoding.
-- Supports fullscreen mode, local caching, and automatic cleanup when closed.
+When users interact with the map, the widget intelligently finds and displays the most relevant Mapillary imagery while providing rich visual context through:
+- Smart sequence navigation with color-coded route overlays
+- Interactive map graphics showing clicked locations, active images, and camera viewsheds
+- Multiple exploration modes including Normal Mode for sequence browsing and Turbo Mode for direct coverage exploration
+- Advanced filtering capabilities for traffic signs and map objects with visual icon previews
+- Comprehensive address information through integrated reverse geocoding
 
 ---
 
 ## Features
 
-### ArcGIS Integration
-- Uses `JimuMapViewComponent` (from `jimu-arcgis`) to connect with the active map.
-- Handles map click events (`jmv.view.on("click", ...)`).
-- Draws Esri `Graphics` for points, cones, and polygons representing imagery locations.
+### Core ArcGIS Integration
 
-### Mapillary API Integration
-- Uses the **Mapillary Graph API** to:
-  - Find nearby images (`/images?bbox=...`)
-  - Get sequence information
-  - Retrieve all image coordinates in a sequence
-  - Fetch camera headings (`computed_compass_angle`)
-- Displays imagery using the **Mapillary JS Viewer**.
+- Deep Map Integration: Uses JimuMapViewComponent for seamless connection with active Experience Builder map widgets
+- Advanced Graphics System: Draws sophisticated Esri Graphics including animated pulsing points, directional view cones, sequence polylines, and visual click feedback
+- Multi-Mode Map Interaction: Handles complex click events with hit-testing for multiple layer types and interaction modes
+- Intelligent Sequence Management: Automatically detects and switches between multiple nearby image sequences
 
-### Access Token from Manifest
-The Mapillary access token is loaded directly from the widget’s `manifest.json` file under the property `mapillaryAccessToken`.
+### Comprehensive Mapillary API Integration
 
-In the widget code, the token is accessed like this:
+- Spatial Query Engine: Uses advanced bounding box queries (/images?bbox=...) to find nearby imagery within configurable distance thresholds
+- Sequence Intelligence: Automatically groups images by sequence and retrieves complete coordinate sets for route visualization
+- Batch Data Processing: Efficiently processes image metadata including creator information, capture dates, and panorama detection
+- Smart Caching System: Implements session-based coordinate caching to minimize API calls and improve performance
 
-```this.accessToken = props.manifest?.properties?.mapillaryAccessToken || "";```
-This avoids hardcoding sensitive keys in the source code.
+### Vector Tile Integration
 
-And in the manifest.json:
-```
-"properties": {
-		"useMapWidget": true,
-		"mapillaryAccessToken": "MLY|..."
-	},
-```
-### Reverse Geocoding
-Integrates with the **ArcGIS World Geocoding Service** to display readable address data:
-```https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/reverseGeocode```
+- Real-time Coverage Display: Shows live Mapillary coverage using Vector Tile layers for sequences and individual images
+- Advanced Filtering System: Provides zoom-level-aware filtering with VectorTileLayer for coverage and FeatureLayer for detailed interactions
+- Traffic Signs Layer: Displays comprehensive traffic sign data with custom sprite-based icon rendering
+- Map Objects Layer: Shows detected objects (benches, street lights, traffic cones, etc.) with human-readable names and filtering
+- Turbo Mode: Direct-click coverage exploration with optional user filtering and date-based color coding(works super fast)
 
-### Local Caching
-- Caches the last sequence in `localStorage` under `mapillary_sequence_cache`.
-- Automatically restores the last viewed sequence when the widget reopens.
+## Advanced User Interface Features
 
-### Fullscreen Mode
-- Toggles between embedded and fullscreen modes using React Portals (`ReactDOM.createPortal`).
-- Reinitializes the Mapillary viewer when switching modes.
+### Dual-Mode Operation
 
-### Cleanup & Lifecycle
-Implements `cleanupWidgetEnvironment()` to:
+- Normal Mode: Traditional sequence-based exploration with intelligent sequence switching
+- Turbo Mode: Direct coverage point interaction with advanced filtering (username, date range, panorama type, color-coding by year)
 
-- Stop animations.
-- Clear map graphics.
-- Destroy Mapillary viewer instances.
+### Interactive Controls
 
-Automatically runs cleanup when:
+- Unified Control Panel: Organized button groups for fullscreen, layer toggles, and mode switching
+- Smart Sequence Selector: Revolving carousel showing multiple available sequences with color coding and date information
+- Advanced Filter Dropdowns: React-Select powered filtering with icon previews for traffic signs and objects
+- Dynamic Layer Management: Zoom-level-aware layer activation/deactivation to optimize performance
 
-- The widget becomes invisible.
-- The widget closes (`state === 'CLOSED'`).
-- The component unmounts.
+### Visual Feedback Systems
 
-### Error Handling
-Handles:
+- Animated Graphics: Pulsing active points, ripple click effects, and smooth transitions
+- Camera Viewshed Visualization: Dynamic cone graphics showing camera direction and adjustable zoom levels
+- Color-Coded Legends: Context-sensitive legends for different modes and active layers
+- Progressive Loading Indicators: Multi-stage loading screens with descriptive status messages
 
-- Missing imagery.
-- Viewer load issues.
-- API errors.
-- Reverse geocode failures.
+## Enhanced Data Management
 
-Displays clear fallback messages for missing or unavailable data.
+### Access Token Security
 
+- Manifest Integration: Securely loads Mapillary access tokens from widget manifest properties
+- Centralized Configuration: Single-point token management avoiding hardcoded credentials
+- Displays clear fallback messages for missing or unavailable data.
+
+### Intelligent Caching
+
+- Multi-Level Caching:
+	- Session cache for sequence coordinates to reduce API calls
+
+	- LocalStorage persistence for last-viewed sequence across widget sessions
+
+	- Sprite image caching for traffic sign and object icons
+	
+- Cache Management: User-controlled cache clearing with complete state reset
+
+### Advanced Geocoding
+
+- Integrated Address Resolution: Real-time reverse geocoding using ArcGIS World Geocoding Service
+- Smart Address Display: Contextual address formatting optimized for UI space constraints
+
+## Technical Architecture
+
+### Responsive Design
+
+- Multi-Device Support: CSS injection system for mobile-responsive legends and controls
+- Dynamic Sizing: Adaptive UI elements that scale based on screen size and widget dimensions
+- Touch Optimization: Mobile-friendly interaction patterns with appropriate button sizing
+
+### Performance Optimization
+
+- Debounced Operations: Smart debouncing for API calls, filter updates, and map interactions
+- Zoom-Level Management: Automatic layer activation/deactivation based on zoom thresholds
+- Efficient Graphics Management: Selective graphics clearing and redrawing to minimize map rendering overhead
+
+### Advanced State Management
+
+- Complex State Transitions: Handles multiple simultaneous modes, filters, and interaction states
+- Event-Driven Architecture: Comprehensive event handling for map interactions, viewer changes, and UI updates
+- Lifecycle Management: Proper cleanup of event handlers, graphics, and API resources
+
+### Error Handling & Resilience
+
+- Graceful Degradation: Comprehensive fallback handling for missing imagery, API failures, and network issues
+- User-Friendly Messaging: Clear status indicators and error messages with automatic dismissal
+- Robust Cleanup: Complete resource cleanup on widget close/reopen to prevent memory leaks
 
 ## Setup & Installation
 
@@ -224,72 +244,9 @@ Below is an example of the `manifest.json` file used for configuration:
 
 ---
 
-## How It Works
-
-1. **User Clicks on the Map**  
-   The widget listens for `view.on("click", ...)` events from the connected ArcGIS MapView.
-
-2. **Nearest Mapillary Image Query**  
-   When a click occurs, the widget calls the **Mapillary Graph API** to find the closest image to the clicked coordinates.
-
-3. **Image and Sequence Retrieval**  
-   It fetches image metadata , such as sequence ID, image coordinates, and compass angle , and retrieves all images within that sequence.
-
-4. **Map Visualization**  
-   The widget draws multiple map graphics using the ArcGIS API for JavaScript:
-   - **Red dot** → clicked location  
-   - **Blue dots** → images from the same sequence  
-   - **Green pulsing dot** → currently displayed image  
-   - **Orange cone** → camera direction  
-
-5. **Image Display**  
-   The **Mapillary JS Viewer** is embedded directly in the widget to display the panorama.
-
-6. **Reverse Geocoding**  
-   The widget requests the ArcGIS World Geocoding Service to convert coordinates into human-readable addresses.
-
-7. **State Synchronization**  
-   The widget updates its internal state (sequence ID, coordinates, address, etc.) and saves the session to local storage.
-
-8. **Cleanup**  
-   When the widget is closed or hidden:
-   - Viewer instances are destroyed.
-   - Graphics are cleared.
-   - State is reset to prevent memory leaks.
-
 ### Mapillary Explorer Demo Video
 
 [![Watch the video](https://img.youtube.com/vi/TYrrStp9WU8/hqdefault.jpg)](https://www.youtube.com/watch?v=TYrrStp9WU8)
-
-
-## State Management
-
-The `State` interface keeps track of the widget’s core data and runtime behavior.
-
-| Key | Type | Purpose |
-|-----|------|----------|
-| `jimuMapView` | `JimuMapView` | Link to the active ArcGIS map |
-| `imageId` | `string \| null` | Current Mapillary image ID |
-| `sequenceId` | `string \| null` | Current Mapillary sequence |
-| `sequenceImages` | `Array` | All images in the current sequence |
-| `lon`, `lat` | `number \| null` | Current image coordinates |
-| `isFullscreen` | `boolean` | Fullscreen toggle |
-| `address` | `string \| null` | Reverse geocoded location |
-| `state`, `visible` | `string \| boolean` | Widget lifecycle flags |
-
----
-
-## Architecture
-
-| Component | Purpose |
-|------------|----------|
-| **Widget (React class)** | Main logic and UI |
-| **Mapillary JS Viewer** | Displays street-level imagery |
-| **ArcGIS MapView (via `JimuMapView`)** | Receives user clicks and draws geometry |
-| **ArcGIS Graphics API** | Renders red, blue, and green dots and orange cones |
-| **Local Storage** | Stores the last viewed sequence |
-| **ArcGIS Reverse Geocoding API** | Converts coordinates into readable addresses |
-| **`mapillaryAccessToken` in `manifest.json`** | Securely stores the API key |
 
 ---
 

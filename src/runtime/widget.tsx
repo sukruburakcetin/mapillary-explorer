@@ -9,6 +9,11 @@ const {loadArcGISJSAPIModules} = require("jimu-arcgis");
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import Select from 'react-select';
 
+interface WindowWithMapillary extends Window {
+    mapillary: any;
+    define?: any;
+}
+
 // --- Legend & UI helper styles ---
 const legendContainerStyle: React.CSSProperties = {
     position: "absolute",
@@ -51,11 +56,6 @@ const cacheClearStyle: React.CSSProperties = {
     padding: "2px 4px"
 };
 
-interface WindowWithMapillary extends Window {
-    mapillary: any;
-    define?: any;
-}
-
 declare const window: WindowWithMapillary;
 
 // --- React component state ---
@@ -89,6 +89,8 @@ interface State {
     turboColorByDate?: boolean;
     turboYearLegend?: { year: string, color: string }[];
     zoomWarningMessage?: string;
+    trafficSignsFilterValue: { value: "All traffic signs", label: "All traffic signs", iconUrl: null },
+    objectsFilterValue: { value: "All points", label: "All points", iconUrl: null },
 }
 
 export default class Widget extends React.PureComponent<
@@ -201,10 +203,10 @@ export default class Widget extends React.PureComponent<
         showTurboFilterBox: false,
         turboYearLegend: [],
         showTrafficSignsFilterBox: false,
-        trafficSignsFilterValue: "All traffic signs",
+        trafficSignsFilterValue: { value: "All traffic signs", label: "All traffic signs", iconUrl: null },
         trafficSignsOptions: [],
         showObjectsFilterBox: false,
-        objectsFilterValue: "All points",
+        objectsFilterValue: { value: "All points", label: "All points", iconUrl: null },
         objectsOptions: []
     };
 
@@ -796,11 +798,6 @@ export default class Widget extends React.PureComponent<
                 trafficSignsFilterValue: allOption // not string
             });
 
-            this.setState({
-                trafficSignsOptions: [allOption, ...namesWithIcons],
-                trafficSignsFilterValue: "All traffic signs"
-            });
-
             console.log("Traffic sign options preloaded:", this.state.trafficSignsOptions);
         } catch (err) {
             console.warn("Failed to preload traffic sign options", err);
@@ -861,28 +858,30 @@ export default class Widget extends React.PureComponent<
         const styleJson = this.mapillaryTrafficSignsLayer.style;
         const newStyle = JSON.parse(JSON.stringify(styleJson));
 
-        // Find your VT style layer for icons
         const targetLayer = newStyle.layers.find((ly: any) => ly.id === "traffic-signs-icons");
         if (targetLayer) {
-            if (selectedValue === "All traffic signs") {
-            delete targetLayer.filter; // Show all if "all"
+            if (!selectedValue || selectedValue === "All traffic signs") {
+                delete targetLayer.filter;
             } else {
-            // Filter on the raw "value" property in vector tiles
-            targetLayer.filter = ["==", ["get", "value"], selectedValue];
+                // Ensure proper filter format
+                targetLayer.filter = ["==", ["get", "value"], selectedValue];
             }
         }
 
-        const { VectorTileLayer } = this.ArcGISModules;
-        const filteredLayer = new VectorTileLayer({ style: newStyle });
+        try {
+            const { VectorTileLayer } = this.ArcGISModules;
+            const filteredLayer = new VectorTileLayer({ style: newStyle });
 
-        const { view } = this.state.jimuMapView;
-        if (this.mapillaryTrafficSignsLayer && view.map.layers.includes(this.mapillaryTrafficSignsLayer)) {
-            view.map.remove(this.mapillaryTrafficSignsLayer);
+            const { view } = this.state.jimuMapView;
+            if (this.mapillaryTrafficSignsLayer && view.map.layers.includes(this.mapillaryTrafficSignsLayer)) {
+                view.map.remove(this.mapillaryTrafficSignsLayer);
+            }
+            this.mapillaryTrafficSignsLayer = filteredLayer;
+            view.map.add(this.mapillaryTrafficSignsLayer);
+        } catch (err) {
+            console.error("Error applying traffic signs filter:", err);
         }
-        this.mapillaryTrafficSignsLayer = filteredLayer;
-        view.map.add(this.mapillaryTrafficSignsLayer);
     }
-
 
     private filterObjectsVTLayer(selectedValue?: string) {
         if (!this.mapillaryObjectsLayer) return;
@@ -893,21 +892,25 @@ export default class Widget extends React.PureComponent<
 
         if (targetLayer) {
             if (!selectedValue || selectedValue === "All points") {
-            delete targetLayer.filter;  // no filter → show all
+                delete targetLayer.filter;
             } else {
-            targetLayer.filter = ["==", ["get", "value"], selectedValue];
+                targetLayer.filter = ["==", ["get", "value"], selectedValue];
             }
         }
 
-        const { VectorTileLayer } = this.ArcGISModules;
-        const filteredLayer = new VectorTileLayer({ style: newStyle });
+        try {
+            const { VectorTileLayer } = this.ArcGISModules;
+            const filteredLayer = new VectorTileLayer({ style: newStyle });
 
-        const { view } = this.state.jimuMapView;
-        if (this.mapillaryObjectsLayer && view.map.layers.includes(this.mapillaryObjectsLayer)) {
-            view.map.remove(this.mapillaryObjectsLayer);
+            const { view } = this.state.jimuMapView;
+            if (this.mapillaryObjectsLayer && view.map.layers.includes(this.mapillaryObjectsLayer)) {
+                view.map.remove(this.mapillaryObjectsLayer);
+            }
+            this.mapillaryObjectsLayer = filteredLayer;
+            view.map.add(this.mapillaryObjectsLayer);
+        } catch (err) {
+            console.error("Error applying objects filter:", err);
         }
-        this.mapillaryObjectsLayer = filteredLayer;
-        view.map.add(this.mapillaryObjectsLayer);
     }
 
     /*
@@ -1239,13 +1242,65 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        // Collect unique values from all features (used for dropdown)
-        const uniqueNamesAll = Array.from(new Set(features.map(f => f.attributes.name)));
-        this.setState({ trafficSignsOptions: ["All traffic signs", ...uniqueNamesAll] });
+        // Collect unique values from all features and load their icons
+        const uniqueValuesMap = new Map<string, string>(); // value -> name
+        features.forEach(f => {
+            uniqueValuesMap.set(f.attributes.value, f.attributes.name);
+        });
 
-        // Apply current filter
-        if (this.state.trafficSignsFilterValue !== "All traffic signs") {
-        features = features.filter(f => f.attributes.name === this.state.trafficSignsFilterValue);
+        // Load icons for the unique values
+        const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
+        const optionsWithIcons: Array<{value: string, label: string, iconUrl: string | null}> = [];
+
+        try {
+            const img = await this.loadImage(`${spriteBaseUrl}.png`);
+            const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+            const spriteData = await jsonResp.json();
+            
+            for (const [value, name] of uniqueValuesMap.entries()) {
+                let iconUrl = null;
+                if (spriteData[value]) {
+                    try {
+                        const meta = spriteData[value];
+                        iconUrl = this.cropSpriteImage(img, meta);
+                    } catch (err) {
+                        console.warn(`Failed to crop icon for ${value}`, err);
+                    }
+                }
+                optionsWithIcons.push({ value: name, label: name, iconUrl });
+            }
+        } catch (err) {
+            console.warn("Failed to load traffic sign icons for dropdown", err);
+            // Fallback: create options without icons
+            for (const [value, name] of uniqueValuesMap.entries()) {
+                optionsWithIcons.push({ value: name, label: name, iconUrl: null });
+            }
+        }
+
+        const allOption = { value: "All traffic signs", label: "All traffic signs", iconUrl: null };
+        this.setState({ trafficSignsOptions: [allOption, ...optionsWithIcons] });
+
+        // Apply current filter from state
+        const currentFilterValue = this.state.trafficSignsFilterValue?.value || "All traffic signs";
+        console.log("Applying traffic signs filter:", currentFilterValue);  
+
+        if (currentFilterValue !== "All traffic signs") {
+            // Get the raw code for this friendly name
+            const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
+            try {
+                const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+                const spriteData = await jsonResp.json();
+                const rawCode = Object.keys(spriteData).find(
+                    c => this.formatTrafficSignName(c) === currentFilterValue
+                );
+                
+                if (rawCode) {
+                    features = features.filter(f => f.attributes.value === rawCode);
+                    console.log(`Filtered to ${features.length} features with code: ${rawCode}`);
+                }
+            } catch (err) {
+                console.warn("Failed to get sprite data for filtering", err);
+            }
         }
 
         const [FeatureLayer] = await loadArcGISJSAPIModules(["esri/layers/FeatureLayer"]);
@@ -1407,14 +1462,66 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        // === FILTER BY SELECTED OBJECT NAME BEFORE RENDERING ===
-        if (this.state.objectsFilterValue !== "All points") {
-        features = features.filter(f => f.attributes.name === this.state.objectsFilterValue);
+        // Collect unique values and load their icons
+        const uniqueValuesMap = new Map<string, string>(); // value -> name
+        features.forEach(f => {
+            uniqueValuesMap.set(f.attributes.value, f.attributes.name);
+        });
+
+        // Load icons for the unique values
+        const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
+        const optionsWithIcons: Array<{value: string, label: string, iconUrl: string | null}> = [];
+
+        try {
+            const img = await this.loadImage(`${spriteBaseUrl}.png`);
+            const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+            const spriteData = await jsonResp.json();
+            
+            for (const [value, name] of uniqueValuesMap.entries()) {
+                let iconUrl = null;
+                if (spriteData[value]) {
+                    try {
+                        const meta = spriteData[value];
+                        iconUrl = this.cropSpriteImage(img, meta);
+                    } catch (err) {
+                        console.warn(`Failed to crop icon for ${value}`, err);
+                    }
+                }
+                optionsWithIcons.push({ value: name, label: name, iconUrl });
+            }
+        } catch (err) {
+            console.warn("Failed to load object icons for dropdown", err);
+            // Fallback: create options without icons
+            for (const [value, name] of uniqueValuesMap.entries()) {
+                optionsWithIcons.push({ value: name, label: name, iconUrl: null });
+            }
         }
 
-        // Collect unique values for dropdown
-        const uniqueNames = Array.from(new Set(features.map(f => f.attributes.name)));
-        this.setState({ objectsOptions: ["All points", ...uniqueNames] });
+        const allOption = { value: "All points", label: "All points", iconUrl: null };
+        this.setState({ objectsOptions: [allOption, ...optionsWithIcons] });
+
+        // Apply current filter from state
+        const currentFilterValue = this.state.objectsFilterValue?.value || "All points";
+        console.log("Applying objects filter:", currentFilterValue);  
+
+        if (currentFilterValue !== "All points") {
+            // Get the raw code for this friendly name
+            const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
+            try {
+                const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+                const spriteData = await jsonResp.json();
+                const rawCode = Object.keys(spriteData).find(
+                    c => (this.objectNameMap[c] || c) === currentFilterValue
+                );
+                
+                if (rawCode) {
+                    features = features.filter(f => f.attributes.value === rawCode);
+                    console.log(`Filtered to ${features.length} features with code: ${rawCode}`);
+                }
+            } catch (err) {
+                console.warn("Failed to get sprite data for filtering", err);
+            }
+        }
 
         const [FeatureLayer] = await loadArcGISJSAPIModules(["esri/layers/FeatureLayer"]);
 
@@ -1627,16 +1734,21 @@ export default class Widget extends React.PureComponent<
                 });
 
                 //  Keep VT filtered to dropdown selection
-                const currentFilterName = this.state.trafficSignsFilterValue;
-                let filterCode = "All traffic signs";
+                // Maintain VT filter when zoomed out
+                const currentFilterName = this.state.trafficSignsFilterValue?.value || "All traffic signs";
                 if (currentFilterName !== "All traffic signs") {
                     const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
-                    const jsonResp = await fetch(`${spriteBaseUrl}.json`);
-                    const spriteData = await jsonResp.json();
-                    const code = Object.keys(spriteData).find(c => this.formatTrafficSignName(c) === currentFilterName);
-                    filterCode = code || currentFilterName;
+                    try {
+                        const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+                        const spriteData = await jsonResp.json();
+                        const code = Object.keys(spriteData).find(c => this.formatTrafficSignName(c) === currentFilterName);
+                        if (code) {
+                            this.filterTrafficSignsVTLayer(code);
+                        }
+                    } catch (err) {
+                        console.warn("Failed to maintain filter", err);
+                    }
                 }
-                this.filterTrafficSignsVTLayer(filterCode);
 
             } else {
                 this._cancelTrafficSignsFetch = false;
@@ -1806,22 +1918,23 @@ export default class Widget extends React.PureComponent<
                 });
 
                 // Ensure we unwrap react-select object to its value string
+                // Maintain VT filter when zoomed out
                 const currentFilterName = this.state.objectsFilterValue?.value || "All points";
-                let filterCode = "All points";
-
                 if (currentFilterName !== "All points") {
-                const spriteBaseUrl =
-                    "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
-                const jsonResp = await fetch(`${spriteBaseUrl}.json`);
-                const spriteData = await jsonResp.json();
-                const code = Object.keys(spriteData).find(
-                    c => (this.objectNameMap[c] || c) === currentFilterName
-                );
-                filterCode = code || currentFilterName;
+                    const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
+                    try {
+                        const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+                        const spriteData = await jsonResp.json();
+                        const code = Object.keys(spriteData).find(
+                            c => (this.objectNameMap[c] || c) === currentFilterName
+                        );
+                        if (code) {
+                            this.filterObjectsVTLayer(code);
+                        }
+                    } catch (err) {
+                        console.warn("Failed to maintain objects filter", err);
+                    }
                 }
-
-                this.filterObjectsVTLayer(filterCode);
-
             } else {
                 this._cancelObjectsFetch = false;
 
@@ -2659,6 +2772,20 @@ export default class Widget extends React.PureComponent<
 
         // Preload full object options from sprite JSON
         this.preloadObjectOptions();
+
+        const esriOverrideStyles = `
+                .mobile-panel-content-header {
+                    height: 30px !important;
+                }
+
+                .expand-mobile-panel-touch-container{
+                    height: 30px !important;
+                }
+            `;
+
+            const styleSheet = document.createElement("style");
+            styleSheet.innerText = esriOverrideStyles;
+            document.head.appendChild(styleSheet);
     }
 	
 	componentDidUpdate(prevProps: AllWidgetProps<any>) {
@@ -3545,6 +3672,7 @@ export default class Widget extends React.PureComponent<
         }
     }
     
+    
     // --- Main UI rendering logic ---
     // Contains 3 key zones:
     //   1. Map + Viewer area
@@ -3961,7 +4089,7 @@ export default class Widget extends React.PureComponent<
                         return null;
                     })()}
 					{this.state.address && <><br/>🌎{" "}{this.state.address}</>}
-                    {/* === TURBO YEAR LEGEND === */}
+                    {/*TURBO YEAR LEGEND*/}
                     {this.state.turboColorByDate && this.state.turboYearLegend?.length > 0 && (
                         <div style={{ marginTop: "4px", textAlign: "center" }}>
                             <div style={{ fontWeight: "bold", fontSize: "10px", marginBottom: "2px" }}>
@@ -4189,69 +4317,63 @@ export default class Widget extends React.PureComponent<
                         position: 'relative',
                         display: 'inline-block',
                         background: 'orange',
-                        padding: '4px',
-                        borderRadius: '6px',
+                        padding: '3px',
+                        borderRadius: '4px',
                         overflow: 'visible' // allow drop-up menu to show
                     }}>
                         <Select
-                        value={this.state.trafficSignsOptions.find(opt =>
-                            opt.value === this.state.trafficSignsFilterValue
-                        )}
-                            onChange={(selected) => {
+                        value={this.state.trafficSignsFilterValue} 
+                        onChange={async (selected) => {
                             this.setState({ trafficSignsFilterValue: selected }, async () => {
                                 if (!this.state.jimuMapView) return;
 
                                 const newName = selected.value; // use .value from the object
                                 let filterCode: string;
+                                
                                 if (newName === "All traffic signs") {
-                                filterCode = "All traffic signs";
+                                    filterCode = "All traffic signs";
                                 } else {
-                                const spriteBaseUrl =
+                                    const spriteBaseUrl =
                                     "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
-                                const jsonResp = await fetch(`${spriteBaseUrl}.json`);
-                                const spriteData = await jsonResp.json();
-                                const code = Object.keys(spriteData).find(
-                                    c => this.formatTrafficSignName(c) === newName
-                                );
-                                filterCode = code || newName;
+                                    const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+                                    const spriteData = await jsonResp.json();
+                                    const code = Object.keys(spriteData).find(c => this.formatTrafficSignName(c) === newName
+                                    );
+                                    filterCode = code || newName;
                                 }
 
                                 this.filterTrafficSignsVTLayer(filterCode);
 
-                            // Remove stale FeatureLayer immediately when filter changes
-                            if (
-                                this.mapillaryTrafficSignsFeatureLayer &&
-                                this.state.jimuMapView.view.map.layers.includes(this.mapillaryTrafficSignsFeatureLayer)
-                            ) {
-                                this.state.jimuMapView.view.map.remove(this.mapillaryTrafficSignsFeatureLayer);
-                            }
-                            this.mapillaryTrafficSignsFeatureLayer = null;
-
-                            // If we're zoomed in >= 16 AND layer active → fetch immediately
-                            if (
-                                this.state.trafficSignsActive &&
-                                this.state.jimuMapView.view.zoom >= 16
-                            ) {
-                                this._cancelTrafficSignsFetch = false;
-                                await this.loadMapillaryTrafficSignsFromTilesBBox(true);
-                                if (this.mapillaryTrafficSignsFeatureLayer) {
-                                this.state.jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
+                                // Remove stale FeatureLayer immediately when filter changes
+                                if (this.mapillaryTrafficSignsFeatureLayer && this.state.jimuMapView.view.map.layers.includes(this.mapillaryTrafficSignsFeatureLayer)) {
+                                    this.state.jimuMapView.view.map.remove(this.mapillaryTrafficSignsFeatureLayer);
                                 }
-                            }
+                                this.mapillaryTrafficSignsFeatureLayer = null;
 
-                            // Simulate a minimal pan to trigger stationary watcher refresh
-                            const view = this.state.jimuMapView.view;
-                            if (view) {
-                                const currentCenter = view.center.clone();
-                                const newCenter = currentCenter.offset(0.0005, 0); // tiny shift east
-                                view.goTo(
-                                {
-                                    center: newCenter,
-                                    zoom: view.zoom
-                                },
-                                { animate: false }
-                                );
-                            }
+                                // If we're zoomed in >= 16 AND layer active → fetch immediately
+                                if (
+                                    this.state.trafficSignsActive && this.state.jimuMapView.view.zoom >= 16
+                                ) {
+                                    this._cancelTrafficSignsFetch = false;
+                                    await this.loadMapillaryTrafficSignsFromTilesBBox(true);
+                                    if (this.mapillaryTrafficSignsFeatureLayer) {
+                                        this.state.jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
+                                    }
+                                }
+
+                                // Simulate a minimal pan to trigger stationary watcher refresh
+                                const view = this.state.jimuMapView.view;
+                                if (view) {
+                                    const currentCenter = view.center.clone();
+                                    const newCenter = currentCenter.offset(0.0005, 0); // tiny shift east
+                                    view.goTo(
+                                    {
+                                        center: newCenter,
+                                        zoom: view.zoom
+                                    },
+                                    { animate: false }
+                                    );
+                                }
                             });
                         }}
                         options={this.state.trafficSignsOptions}
@@ -4309,57 +4431,54 @@ export default class Widget extends React.PureComponent<
                     <div style={{
                         position: 'relative',
                         display: 'inline-block',
-                        background: 'orange',
-                        padding: '4px',
-                        borderRadius: '6px',
+                        background: 'red',
+                        padding: '3px',
+                        borderRadius: '4px',
                         overflow: 'visible'
                     }}>
                         <Select
                         value={this.state.objectsFilterValue}      // object, not string
-                        options={this.state.objectsOptions}        // array of objects
-                        onChange={(selected) => {
+                        onChange={async (selected) => {
                             this.setState({ objectsFilterValue: selected }, async () => {
-                            if (!this.state.jimuMapView) return;
+                                if (!this.state.jimuMapView) return;
 
-                            const newName = selected.value; // safe: from object
-                            let filterCode: string;
-                            if (newName === "All points") {
-                                filterCode = "All points";
-                            } else {
-                                const spriteBaseUrl =
-                                "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
-                                const jsonResp = await fetch(`${spriteBaseUrl}.json`);
-                                const spriteData = await jsonResp.json();
-                                const code = Object.keys(spriteData).find(
-                                c => (this.objectNameMap[c] || c) === newName
-                                );
-                                filterCode = code || newName;
-                            }
-
-                            this.filterObjectsVTLayer(filterCode);
-
-                            if (
-                                this.state.objectsActive &&
-                                this.state.jimuMapView.view.zoom >= 16
-                            ) {
-                                if (this.mapillaryObjectsFeatureLayer &&
-                                    this.state.jimuMapView.view.map.layers.includes(this.mapillaryObjectsFeatureLayer)) {
-                                this.state.jimuMapView.view.map.remove(this.mapillaryObjectsFeatureLayer);
+                                const newName = selected.value; // safe: from object
+                                let filterCode: string;
+                                if (newName === "All points") {
+                                    filterCode = "All points";
+                                } else {
+                                    const spriteBaseUrl =
+                                    "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
+                                    const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+                                    const spriteData = await jsonResp.json();
+                                    const code = Object.keys(spriteData).find(c => (this.objectNameMap[c] || c) === newName);
+                                    filterCode = code || newName;
                                 }
-                                await this.loadMapillaryObjectsFromTilesBBox(true);
-                                if (this.mapillaryObjectsFeatureLayer) {
-                                this.state.jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
-                                }
-                            }
 
-                            const view = this.state.jimuMapView.view;
-                            if (view) {
-                                const currentCenter = view.center.clone();
-                                const newCenter = currentCenter.offset(0.0005, 0);
-                                view.goTo({ center: newCenter, zoom: view.zoom }, { animate: false });
-                            }
+                                this.filterObjectsVTLayer(filterCode);
+
+                                if (
+                                    this.state.objectsActive &&
+                                    this.state.jimuMapView.view.zoom >= 16
+                                ) {
+                                    if (this.mapillaryObjectsFeatureLayer && this.state.jimuMapView.view.map.layers.includes(this.mapillaryObjectsFeatureLayer)) {
+                                        this.state.jimuMapView.view.map.remove(this.mapillaryObjectsFeatureLayer);
+                                    }
+                                    await this.loadMapillaryObjectsFromTilesBBox(true);
+                                    if (this.mapillaryObjectsFeatureLayer) {
+                                        this.state.jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
+                                    }
+                                }
+
+                                const view = this.state.jimuMapView.view;
+                                if (view) {
+                                    const currentCenter = view.center.clone();
+                                    const newCenter = currentCenter.offset(0.0005, 0);
+                                    view.goTo({ center: newCenter, zoom: view.zoom }, { animate: false });
+                                }
                             });
                         }}
+                        options={this.state.objectsOptions}  // array of objects
                         formatOptionLabel={(option) => (
                             <div style={{ display: 'flex', alignItems: 'center' }}>
                             {option.iconUrl && (
@@ -4402,192 +4521,352 @@ export default class Widget extends React.PureComponent<
                         zIndex: 10000,
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: '6px',
+                        gap: '3px',
                         background: 'rgba(0, 0, 0, 0.35)',
                         padding: '4px',
                         borderRadius: '8px',
                         boxShadow: '0 2px 6px rgba(0,0,0,0.4)'
                     }}
-                >
-                {[
-                    {
-                        emoji: '🗖', onClick: this.toggleFullscreen, title: 'Maximize/Fullscreen', bg: 'rgba(2, 117, 216, 0.9)', active: this.state.isFullscreen
-                    },
-                    {
-                        emoji: '🗺️', onClick: this.toggleMapillaryTiles, title: 'Toggle Mapillary Layer', bg: 'rgba(53, 175, 109, 0.9)', active: this.state.tilesActive
-                    },
-                    {
-                        emoji: '⚡',
-                        onClick: () => {
-                            const next = !this.state.turboModeActive;
-                            this.setState({ turboModeActive: next });
-
-                            if (next) {
-                                if (this.state.jimuMapView?.view.zoom! < 16) {
-                                    this.showZoomWarning("Zoom in closer (≥ 16) to view Mapillary coverage point features in Turbo Mode.");
-                                }
-                                this.clearSequenceUI();
-                                // First load with NO filter (fastest)
-                                this.enableTurboCoverageLayer(); // no username for speed
-                                
-                                if (this.state.jimuMapView) {
-                                    if (this.turboStationaryHandle) {
-                                        this.turboStationaryHandle.remove();
-                                        this.turboStationaryHandle = null;
-                                    }
-                                    this.turboStationaryHandle = this.state.jimuMapView.view.watch(
-                                        "stationary",
-                                        this.debounce(async (isStationary) => {
-                                            if (isStationary && this.state.turboModeActive) {
-                                                if (this.state.jimuMapView.view.zoom < 16) return;
-                                                // use filter if entered
-                                                const filter = this.state.turboFilterUsername.trim();
-                                                if (filter) {
-                                                    await this.enableTurboCoverageLayer(filter);
-                                                } else {
-                                                    await this.enableTurboCoverageLayer();
-                                                }
-                                            }
-                                        }, 500)
-                                    );
-
-                                    if (this.turboZoomHandle) {
-                                        this.turboZoomHandle.remove();
-                                        this.turboZoomHandle = null;
-                                    }
-
-                                    this.turboZoomHandle = this.state.jimuMapView.view.watch("zoom", (z) => {
-                                        const minTurboZoom = 16;
-                                        if (this.state.turboModeActive && z < minTurboZoom) {
-                                            this.disableTurboCoverageLayer();
-                                        }
-                                    });
-                                }
-                            } else {
-                                    // Turbo Mode OFF logic
-                                    this.disableTurboCoverageLayer();
-
-                                    // Remove any watchers
-                                    if (this.turboStationaryHandle) {
-                                        this.turboStationaryHandle.remove();
-                                        this.turboStationaryHandle = null;
-                                    }
-                                    if (this.turboZoomHandle) {
-                                        this.turboZoomHandle.remove();
-                                        this.turboZoomHandle = null;
-                                    }
-
-                                    // Reset ALL Turbo-related state values
-                                    this.setState({
-                                        turboFilterUsername: "",
-                                        turboFilterStartDate: "",
-                                        turboFilterEndDate: "",
-                                        turboFilterIsPano: undefined,
-                                        turboColorByDate: false,
-                                        turboYearLegend: [],
-                                        showTurboFilterBox: false
-                                    });
-                                }
-                        },
-                        title: 'Turbo Mode - Click coverage features directly',
-                        bg: 'rgba(255,215,0,0.9)',
-                        active: this.state.turboModeActive
-                    },
-                    {
-                        emoji: '🔍',
-                        title: 'Filter Turbo Coverage by Username',
-                        bg: this.state.turboModeActive ? 'rgba(255,215,0,0.9)' : 'rgba(200,200,200,0.5)',
-                        active: this.state.showTurboFilterBox,
-                        onClick: () => {
-                            if (!this.state.turboModeActive) return;
-                            this.setState(prev => ({ showTurboFilterBox: !prev.showTurboFilterBox }));
-                        }
-                    },
-                    {
-                        icon: (
-                            <img
-                            src={`data:image/svg+xml;charset=utf-8,%3Csvg width='16' height='16' 
-                                viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E 
-                                %3Crect width='5' height='7' fill='%23FFC01B'/%3E %3Crect x='4' y='9' 
-                                width='7' height='7' rx='3.5' fill='white'/%3E %3Cpath d='M12.5 0L15.5311 
-                                1.75V5.25L12.5 7L9.46891 5.25V1.75L12.5 0Z' fill='%23FF6D1B'/%3E %3C/svg%3E`}
-                            alt="Traffic Sign Icon"
-                            style={{ width: '16px', height: '16px' }}
-                            />
-                        ),
-                        onClick: this.toggleMapillaryTrafficSigns, title: 'Toggle Traffic Signs Coverage Layer', bg: 'rgba(255, 165, 0, 0.9)', active: this.state.trafficSignsActive
-                    },
-                    {
-                        emoji: '🔍',
-                        title: 'Filter Traffic Signs',
-                        bg: this.state.trafficSignsActive ? 'rgba(255,165,0,0.9)' : 'rgba(200,200,200,0.5)',
-                        active: this.state.showTrafficSignsFilterBox,
-                        onClick: () => {
-                            if (!this.state.trafficSignsActive) return;
-                            this.setState(prev => ({ showTrafficSignsFilterBox: !prev.showTrafficSignsFilterBox }));
-                        }
-                    },
-                    {
-                        icon: (
-                            <img
-                            src={`data:image/svg+xml;charset=utf-8,%3Csvg width='16' height='16' 
-                                viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E 
-                                %3Ccircle cx='3' cy='3' r='3' fill='%2346CDFA'/%3E %3Ccircle cx='13' cy='3
-                                ' r='3' fill='%23FFB81A'/%3E %3Ccircle cx='3' cy='13' r='3'
-                                fill='%23F35700'/%3E %3Ccircle cx='13' cy='13' r='3' fill='%23D99AB9'/%3E
-                                %3Ccircle cx='8' cy='8' r='3' fill='%23D2DCE0'/%3E %3C/svg%3E`}
-                            alt="Map Objects Icon"
-                            style={{ width: '16px', height: '16px' }}
-                            />
-                        ),
-                        onClick: this.toggleMapillaryObjects, title: 'Toggle Mapillary Objects Layer', bg: 'rgba(255, 0, 0, 0.9)', active: this.state.objectsActive
-                    },
-                    {
-                        emoji: '🔍',
-                        title: 'Filter Objects',
-                        bg: this.state.objectsActive ? 'rgba(255,0,0,0.9)' : 'rgba(200,200,200,0.5)',
-                        active: this.state.showObjectsFilterBox,
-                        onClick: () => {
-                            if (!this.state.objectsActive) return;
-                            this.setState(prev => ({ showObjectsFilterBox: !prev.showObjectsFilterBox }));
-                        }
-                    },
-                    ].map((btn, i) => (
-                    <button
-                        key={i}
-                        title={btn.title}
-                        onClick={btn.onClick}
-                        style={{
-                            background: btn.active ? btn.bg : btn.bg.replace('0.9', '0.5'),
-                            color: '#fff',
-                            width: '25px',
-                            height: '25px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: btn.emoji ? '18px' : 'initial', // if emoji, bump font size
-                            borderRadius: '6px',
-                            border: 'none',
-                            cursor: 'pointer',
-                            boxShadow: btn.active
-                            ? '0 0 6px rgba(255,255,255,0.8)' // glow when active
-                            : '0 2px 4px rgba(0,0,0,0.3)',
-                            transform: btn.active ? 'scale(1.1)' : 'scale(1)',
-                            transition:
-                            'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
-                        }}
-                        onMouseEnter={e =>
-                            (e.currentTarget.style.transform = 'scale(1.15)')
-                        }
-                        onMouseLeave={e =>
-                            (e.currentTarget.style.transform = btn.active
-                            ? 'scale(1.1)'
-                            : 'scale(1)')
-                        }
                     >
-                    {btn.emoji || btn.icon}
-                    </button>
-                ))}
+                    {/* Individual buttons (no grouping) */}
+                    {[
+                        {
+                            emoji: '🗖', 
+                            onClick: this.toggleFullscreen, 
+                            title: 'Maximize/Fullscreen', 
+                            bg: 'rgba(2, 117, 216, 0.9)', 
+                            active: this.state.isFullscreen
+                        },
+                        {
+                            emoji: '🗺️', 
+                            onClick: this.toggleMapillaryTiles, 
+                            title: 'Toggle Mapillary Layer', 
+                            bg: 'rgba(53, 175, 109, 0.9)', 
+                            active: this.state.tilesActive
+                        }
+                    ].map((btn, i) => (
+                        <button
+                            key={i}
+                            title={btn.title}
+                            onClick={btn.onClick}
+                            style={{
+                                background: btn.active ? btn.bg : btn.bg.replace('0.9', '0.5'),
+                                color: '#fff',
+                                width: '26px',
+                                height: '26px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '18px',
+                                borderRadius: '6px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                boxShadow: btn.active
+                                    ? '0 0 6px rgba(255,255,255,0.8)'
+                                    : '0 2px 4px rgba(0,0,0,0.3)',
+                                transform: btn.active ? 'scale(1.1)' : 'scale(1)',
+                                transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                            onMouseLeave={e => (e.currentTarget.style.transform = btn.active ? 'scale(1.1)' : 'scale(1)')}
+                        >
+                            {btn.emoji}
+                        </button>
+                    ))}
+
+                    {/* Turbo Mode Group */}
+                    <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '2px',
+                        borderRadius: '6px',
+                        background: this.state.turboModeActive ? 'rgba(255,215,0,0.2)' : 'rgba(100,100,100,0.1)',
+                        border: this.state.turboModeActive ? '1px solid rgba(255,215,0,0.4)' : '1px solid transparent'
+                    }}>
+                        {/* Main Turbo Button */}
+                        <button
+                            title="Turbo Mode - Click coverage features directly"
+                            onClick={() => {
+                                const next = !this.state.turboModeActive;
+                                this.setState({ turboModeActive: next });
+
+                                if (next) {
+                                    if (this.state.jimuMapView?.view.zoom! < 16) {
+                                        this.showZoomWarning("Zoom in closer (≥ 16) to view Mapillary coverage point features in Turbo Mode.");
+                                    }
+                                    this.clearSequenceUI();
+                                    this.enableTurboCoverageLayer();
+
+                                    if (this.state.jimuMapView) {
+                                        if (this.turboStationaryHandle) {
+                                            this.turboStationaryHandle.remove();
+                                            this.turboStationaryHandle = null;
+                                        }
+                                        this.turboStationaryHandle = this.state.jimuMapView.view.watch(
+                                            "stationary",
+                                            this.debounce(async (isStationary) => {
+                                                if (isStationary && this.state.turboModeActive) {
+                                                    if (this.state.jimuMapView.view.zoom < 16) return;
+                                                    // use filter if entered
+                                                    const filter = this.state.turboFilterUsername.trim();
+                                                    if (filter) {
+                                                        await this.enableTurboCoverageLayer(filter);
+                                                    } else {
+                                                        await this.enableTurboCoverageLayer();
+                                                    }
+                                                }
+                                            }, 500)
+                                        );
+
+                                        if (this.turboZoomHandle) {
+                                            this.turboZoomHandle.remove();
+                                            this.turboZoomHandle = null;
+                                        }
+
+                                        this.turboZoomHandle = this.state.jimuMapView.view.watch("zoom", (z) => {
+                                            const minTurboZoom = 16;
+                                            if (this.state.turboModeActive && z < minTurboZoom) {
+                                                this.disableTurboCoverageLayer();
+                                            }
+                                        });
+                                    }
+                                } else {
+                                    this.disableTurboCoverageLayer();
+                                    // Remove any watchers
+                                                    if (this.turboStationaryHandle) {
+                                                        this.turboStationaryHandle.remove();
+                                                        this.turboStationaryHandle = null;
+                                                    }
+                                                    if (this.turboZoomHandle) {
+                                                        this.turboZoomHandle.remove();
+                                                        this.turboZoomHandle = null;
+                                                    }
+
+                                                    // Reset ALL Turbo-related state values
+                                                    this.setState({
+                                                        turboFilterUsername: "",
+                                                        turboFilterStartDate: "",
+                                                        turboFilterEndDate: "",
+                                                        turboFilterIsPano: undefined,
+                                                        turboColorByDate: false,
+                                                        turboYearLegend: [],
+                                                        showTurboFilterBox: false
+                                                    });
+                                }
+                            }}
+                            style={{
+                                background: this.state.turboModeActive ? 'rgba(255,215,0,0.9)' : 'rgba(255,215,0,0.5)',
+                                color: '#fff',
+                                width: '25px',
+                                height: '25px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '18px',
+                                borderRadius: '6px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                boxShadow: this.state.turboModeActive
+                                    ? '0 0 6px rgba(255,255,255,0.8)'
+                                    : '0 2px 4px rgba(0,0,0,0.3)',
+                                transform: this.state.turboModeActive ? 'scale(1.1)' : 'scale(1)',
+                                transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                            onMouseLeave={e => (e.currentTarget.style.transform = this.state.turboModeActive ? 'scale(1.1)' : 'scale(1)')}
+                        >
+                            ⚡
+                        </button>
+
+                        {/* Turbo Filter Button */}
+                        <button
+                            title="Filter Turbo Coverage by Username"
+                            onClick={() => {
+                                if (!this.state.turboModeActive) return;
+                                this.setState(prev => ({ showTurboFilterBox: !prev.showTurboFilterBox }));
+                            }}
+                            style={{
+                                background: this.state.turboModeActive 
+                                    ? (this.state.showTurboFilterBox ? 'rgba(255,215,0,0.9)' : 'rgba(255,215,0,0.7)')
+                                    : 'rgba(200,200,200,0.3)',
+                                color: '#fff',
+                                width: '20px',
+                                height: '20px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                borderRadius: '4px',
+                                border: 'none',
+                                cursor: this.state.turboModeActive ? 'pointer' : 'not-allowed',
+                                opacity: this.state.turboModeActive ? 1 : 0.5,
+                                boxShadow: this.state.showTurboFilterBox
+                                    ? '0 0 4px rgba(255,255,255,0.6)'
+                                    : '0 1px 2px rgba(0,0,0,0.2)',
+                                transition: 'all 0.15s ease'
+                            }}
+                        >
+                            <img
+                                src={`data:image/svg+xml;utf8,
+                                <svg width='14' height='14' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+                                    <path d='M3 4h18L14 12v7l-4 2v-9L3 4z' fill='%23fff'/>
+                                </svg>`}
+                                style={{ width: 14, height: 14 }}
+                            />
+                        </button>
+                    </div>
+
+                    {/* Traffic Signs Group */}
+                    <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '2px',
+                        borderRadius: '6px',
+                        background: this.state.trafficSignsActive ? 'rgba(255,165,0,0.2)' : 'rgba(100,100,100,0.1)',
+                        border: this.state.trafficSignsActive ? '1px solid rgba(255,165,0,0.4)' : '1px solid transparent'
+                    }}>
+                        {/* Main Traffic Signs Button */}
+                        <button
+                            title="Toggle Traffic Signs Coverage Layer"
+                            onClick={this.toggleMapillaryTrafficSigns}
+                            style={{
+                                background: this.state.trafficSignsActive ? 'rgba(255, 165, 0, 0.9)' : 'rgba(255, 165, 0, 0.5)',
+                                color: '#fff',
+                                width: '25px',
+                                height: '25px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                borderRadius: '6px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                boxShadow: this.state.trafficSignsActive
+                                    ? '0 0 6px rgba(255,255,255,0.8)'
+                                    : '0 2px 4px rgba(0,0,0,0.3)',
+                                transform: this.state.trafficSignsActive ? 'scale(1.1)' : 'scale(1)',
+                                transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                            onMouseLeave={e => (e.currentTarget.style.transform = this.state.trafficSignsActive ? 'scale(1.1)' : 'scale(1)')}
+                        >
+                            <img
+                                src={`data:image/svg+xml;charset=utf-8,%3Csvg width='16' height='16' 
+                                    viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E 
+                                    %3Crect width='5' height='7' fill='%23FFC01B'/%3E %3Crect x='4' y='9' 
+                                    width='7' height='7' rx='3.5' fill='white'/%3E %3Cpath d='M12.5 0L15.5311 
+                                    1.75V5.25L12.5 7L9.46891 5.25V1.75L12.5 0Z' fill='%23FF6D1B'/%3E %3C/svg%3E`}
+                                alt="Traffic Sign Icon"
+                                style={{ width: '16px', height: '16px' }}
+                            />
+                        </button>
+
+                        {/* Traffic Signs Filter Button */}
+                        <button
+                            title="Filter Traffic Signs"
+                            onClick={() => {
+                                if (!this.state.trafficSignsActive) return;
+                                this.setState(prev => ({ showTrafficSignsFilterBox: !prev.showTrafficSignsFilterBox }));
+                            }}
+                            style={{
+                                background: this.state.trafficSignsActive 
+                                    ? (this.state.showTrafficSignsFilterBox ? 'rgba(255,165,0,0.9)' : 'rgba(255,165,0,0.3)')
+                                    : 'rgba(200,200,200,0.3)',
+                                color: '#fff',
+                                width: '20px',
+                                height: '20px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '14px',
+                                borderRadius: '4px',
+                                border: 'none',
+                                cursor: this.state.trafficSignsActive ? 'pointer' : 'not-allowed',
+                                opacity: this.state.trafficSignsActive ? 1 : 0.5,
+                                boxShadow: this.state.showTrafficSignsFilterBox
+                                    ? '0 0 4px rgba(255,255,255,0.6)'
+                                    : '0 1px 2px rgba(0,0,0,0.2)',
+                                transition: 'all 0.15s ease'
+                            }}
+                        >
+                            🔍
+                        </button>
+                    </div>
+
+                    {/* Objects Group */}
+                    <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '2px',
+                        borderRadius: '6px',
+                        background: this.state.objectsActive ? 'rgba(255,0,0,0.2)' : 'rgba(100,100,100,0.1)',
+                        border: this.state.objectsActive ? '1px solid rgba(255,0,0,0.4)' : '1px solid transparent'
+                    }}>
+                        {/* Main Objects Button */}
+                        <button
+                            title="Toggle Mapillary Objects Layer"
+                            onClick={this.toggleMapillaryObjects}
+                            style={{
+                                background: this.state.objectsActive ? 'rgba(255, 0, 0, 0.9)' : 'rgba(255, 0, 0, 0.5)',
+                                color: '#fff',
+                                width: '25px',
+                                height: '25px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                borderRadius: '6px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                boxShadow: this.state.objectsActive
+                                    ? '0 0 6px rgba(255,255,255,0.8)'
+                                    : '0 2px 4px rgba(0,0,0,0.3)',
+                                transform: this.state.objectsActive ? 'scale(1.1)' : 'scale(1)',
+                                transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
+                            }}
+                            onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                            onMouseLeave={e => (e.currentTarget.style.transform = this.state.objectsActive ? 'scale(1.1)' : 'scale(1)')}
+                        >
+                            <img
+                                src={`data:image/svg+xml;charset=utf-8,%3Csvg width='16' height='16' 
+                                    viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E 
+                                    %3Ccircle cx='3' cy='3' r='3' fill='%2346CDFA'/%3E %3Ccircle cx='13' cy='3
+                                    ' r='3' fill='%23FFB81A'/%3E %3Ccircle cx='3' cy='13' r='3'
+                                    fill='%23F35700'/%3E %3Ccircle cx='13' cy='13' r='3' fill='%23D99AB9'/%3E
+                                    %3Ccircle cx='8' cy='8' r='3' fill='%23D2DCE0'/%3E %3C/svg%3E`}
+                                alt="Map Objects Icon"
+                                style={{ width: '16px', height: '16px' }}
+                            />
+                        </button>
+
+                        {/* Objects Filter Button */}
+                        <button
+                            title="Filter Objects"
+                            onClick={() => {
+                                if (!this.state.objectsActive) return;
+                                this.setState(prev => ({ showObjectsFilterBox: !prev.showObjectsFilterBox }));
+                            }}
+                            style={{
+                                background: this.state.objectsActive 
+                                    ? (this.state.showObjectsFilterBox ? 'rgba(255,0,0,0.9)' : 'rgba(255,0,0,0.3)')
+                                    : 'rgba(200,200,200,0.3)',
+                                color: '#fff',
+                                width: '20px',
+                                height: '20px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '14px',
+                                borderRadius: '4px',
+                                border: 'none',
+                                cursor: this.state.objectsActive ? 'pointer' : 'not-allowed',
+                                opacity: this.state.objectsActive ? 1 : 0.5,
+                                boxShadow: this.state.showObjectsFilterBox
+                                    ? '0 0 4px rgba(255,255,255,0.6)'
+                                    : '0 1px 2px rgba(0,0,0,0.2)',
+                                transition: 'all 0.15s ease'
+                            }}
+                        >
+                            🔍
+                        </button>
+                    </div>
                 </div>
             </div>
         );
