@@ -10,53 +10,13 @@ import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import Select from 'react-select';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
+import { objectNameMap } from "../helpers/mapillaryObjectNameMap";
+import { legendCircleStyle, legendRowStyle, mobileOverrideStyles} from "../helpers/styles";
 
 interface WindowWithMapillary extends Window {
     mapillary: any;
     define?: any;
 }
-
-// --- Legend & UI helper styles ---
-const legendContainerStyle: React.CSSProperties = {
-    position: "absolute",
-    bottom: "10px",               // inside viewer relative position
-    left: "10px",
-    background: "rgba(255,255,255,0.3)",
-    padding: "4px 8px",
-    borderRadius: "4px",
-    boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
-    fontSize: "9px",
-    fontWeight: "500",
-    display: "flex",
-    flexDirection: "column",       // vertical layout
-    gap: "4px",                    // vertical space between each legend row
-    maxWidth: "160px"              // optional width cap if text long
-};
-
-const legendRowStyle: React.CSSProperties = {
-    display: "flex",
-    alignItems: "center",
-    marginBottom: "4px"
-};
-
-const legendCircleStyle = (color: string): React.CSSProperties => ({
-    display: "inline-block",
-    width: "12px",
-    height: "12px",
-    borderRadius: "50%",
-    backgroundColor: color,
-    marginRight: "6px",
-    border: "1px solid #ccc"
-});
-
-const cacheClearStyle: React.CSSProperties = {
-    background: "#d9534f",
-    color: "#fff",
-    borderRadius: "3px",
-    cursor: "pointer",
-    fontSize: "10px",
-    padding: "2px 4px"
-};
 
 declare const window: WindowWithMapillary;
 
@@ -135,50 +95,7 @@ export default class Widget extends React.PureComponent<
         * This is used in {@link loadMapillaryObjectsFromTilesBBox} to set the `name` attribute
         * for each object feature before creating the ArcGIS FeatureLayer.
     */
-    private objectNameMap: Record<string, string> = {
-        "construction--barrier--temporary": "Temporary Barrier",
-        "construction--flat--crosswalk-plain": "Crosswalk - Plain",
-        "construction--flat--driveway": "Driveway",
-        "marking--discrete--arrow--left": "Lane Marking - Arrow (Left)",
-        "marking--discrete--arrow--right": "Lane Marking - Arrow (Right)",
-        "marking--discrete--arrow--split-left-or-straight": "Lane Marking - Arrow (Split Left or Straight)",
-        "marking--discrete--arrow--split-right-or-straight": "Lane Marking - Arrow (Split Right or Straight)",
-        "marking--discrete--arrow--straight": "Lane Marking - Arrow (Straight)",
-        "marking--discrete--crosswalk-zebra": "Lane Marking - Crosswalk",
-        "marking--discrete--give-way-row": "Lane Marking - Give Way (Row)",
-        "marking--discrete--give-way-single": "Lane Marking - Give Way (Single)",
-        "marking--discrete--other-marking": "Lane Marking - Other",
-        "marking--discrete--stop-line": "Lane Marking - Stop Line",
-        "marking--discrete--symbol--bicycle": "Lane Marking - Symbol (Bicycle)",
-        "marking--discrete--text": "Lane Marking - Text",
-        "object--banner": "Banner",
-        "object--bench": "Bench",
-        "object--bike-rack": "Bike Rack",
-        "object--catch-basin": "Catch Basin",
-        "object--cctv-camera": "CCTV Camera",
-        "object--fire-hydrant": "Fire Hydrant",
-        "object--junction-box": "Junction Box",
-        "object--mailbox": "Mailbox",
-        "object--manhole": "Manhole",
-        "object--parking-meter": "Parking Meter",
-        "object--phone-booth": "Phone Booth",
-        "object--sign--advertisement": "Signage - Advertisement",
-        "object--sign--information": "Signage - Information",
-        "object--sign--store": "Signage - Store",
-        "object--street-light": "Street Light",
-        "object--support--pole": "Pole",
-        "object--support--traffic-sign-frame": "Traffic Sign Frame",
-        "object--support--utility-pole": "Utility Pole",
-        "object--traffic-cone": "Traffic Cone",
-        "object--traffic-light--cyclists": "Traffic Light - Cyclists",
-        "object--traffic-light--general-horizontal": "Traffic Light - General (Horizontal)",
-        "object--traffic-light--general-single": "Traffic Light - General (Single)",
-        "object--traffic-light--general-upright": "Traffic Light - General (Upright)",
-        "object--traffic-light--other": "Traffic Light - Other",
-        "object--traffic-light--pedestrians": "Traffic Light - Pedestrians",
-        "object--trash-can": "Trash Can",
-        "object--water-valve": "Water Valve"
-    };
+    private objectNameMap = objectNameMap;
 
     state: State = {
         jimuMapView: null,
@@ -1241,15 +1158,15 @@ export default class Widget extends React.PureComponent<
                             spatialReference: { wkid: 4326 }
                         });
                         features.push({
-                        geometry: wmPoint,
-                        attributes: {
-                            id: feat.properties.id,
-                            value: feat.properties.value,
-                            name: this.formatTrafficSignName(feat.properties.value),
-                            first_seen_at: feat.properties.first_seen_at,
-                            last_seen_at: feat.properties.last_seen_at
-                        }
-        });
+                            geometry: wmPoint,
+                            attributes: {
+                                id: feat.properties.id,
+                                value: feat.properties.value,
+                                name: this.formatTrafficSignName(feat.properties.value),
+                                first_seen_at: feat.properties.first_seen_at,
+                                last_seen_at: feat.properties.last_seen_at
+                            }
+                        });
                     }
                 } catch (err) {
                     console.warn("Feature parse error", err);
@@ -2761,66 +2678,8 @@ export default class Widget extends React.PureComponent<
         // Preload full object options from sprite JSON
         this.preloadObjectOptions();
         
-        // for mobile version adjust ui to make ux better for users
-        const esriMobileOverrideStyles = `
-                .mobile-panel-content-header {
-                    height: 30px !important;
-                }
-                .expand-mobile-panel-touch-container{
-                    height: 30px !important;
-                }
-                .expand-mobile-panel[style*="height: 150px"] {
-                    height: 280px !important;
-                }
-
-                @media (max-width: 768px) {
-                    .widget-mapillary input[type="date"]::-webkit-datetime-edit {
-                        display: none !important;
-                    }
-                    .show-panorama-only-filter {
-                        font-size: 0 !important;
-                    }
-                    .show-panorama-only-filter::after {
-                        content: "Panoramas:";
-                        font-size: 9px !important;
-                    }
-                    .show-color-by-date-filter {
-                        font-size: 0 !important;
-                    }
-                    .show-color-by-date-filter::after {
-                        content: "CBD:";
-                        font-size: 9px !important;
-                    }
-                    .react-datepicker {
-                        transform: scale(0.6);
-                    }
-                    .react-datepicker-popper {
-                        height: 230px;
-                    }
-                    .unified-control-buttons{
-                        height: 20px !important;
-                        width: 20px !important;
-                        font-size: 12px !important;
-                    }
-                    .unified-control-buttons-mapped{
-                        height: 21px !important;
-                        width: 21px !important;
-                        font-size: 12px !important;
-                    }
-                    .unified-control-buttons-filters{
-                        height: 16px !important;
-                        width: 16px !important;
-                        font-size: 10px !important;
-                    }
-                    .unified-button-controls-svg-icons{
-                        height: 12px !important;
-                        width: 12px !important;
-                    }
-                }
-                
-            `;
         const styleSheet = document.createElement("style");
-        styleSheet.innerText = esriMobileOverrideStyles;
+        styleSheet.innerText = mobileOverrideStyles;
         document.head.appendChild(styleSheet);
     }
 	
@@ -3742,8 +3601,7 @@ export default class Widget extends React.PureComponent<
                     border: "1px solid #ccc",
                     position: "relative",
                     background: "#000"
-                }}
-            >
+                }}>
                 {/* This empty div is controlled by Mapillary, React will never touch its internals */}
                 <div
                     ref={this.viewerContainer}
@@ -3751,33 +3609,47 @@ export default class Widget extends React.PureComponent<
                 />
                 {/* Legend only show if user clicked & image loaded */}
                 {this.state.imageId && (
-                    <div style={legendContainerStyle}>
+                    <div className="legend-container" style={{
+                                position: "absolute",
+                                bottom: "10px",
+                                left: "10px",
+                                background: "rgba(255,255,255,0.3)",
+                                padding: "4px 8px",
+                                borderRadius: "4px",
+                                boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
+                                fontSize: "9px",
+                                fontWeight: "500",
+                                display: "flex",
+                                flexDirection: "column",  
+                                gap: "4px",
+                                maxWidth: "160px"
+                            }}>
                         {this.state.turboModeActive ? (
                             // Turbo Mode Legend
-                            <>
-                                <div style={legendRowStyle}>
+                            <div className="legend-container-turbo-inner" style={{marginBottom: "4px"}}>
+                                <div className="legend-container-turbo-inner-cell">
                                     <span style={legendCircleStyle('green')}></span>
                                     Active frame
                                 </div>
-                                <div style={legendRowStyle}>
+                                <div className="legend-container-turbo-inner-cell">
                                     <span style={legendCircleStyle('blue')}></span>
                                     Active sequence images
                                 </div>
-                                <div style={legendRowStyle}>
+                                <div className="legend-container-turbo-inner-cell">
                                     <span style={legendCircleStyle('brown')}></span>
-                                    All Mapillary coverage points
+                                    All Mapillary coverage
                                 </div>
-                                <div style={legendRowStyle}>
+                                <div className="legend-container-turbo-inner-cell">
                                     <span style={{
                                         ...legendCircleStyle('transparent'),
                                         border: '2px solid cyan'
                                     }}></span>
                                     Highlighted feature
                                 </div>
-                            </>
+                            </div>
                         ) : (
                             // Normal Mode Legend
-                            <>
+                            <div className="legend-container-normal-inner">
                                 <div style={legendRowStyle}>
                                     <span style={legendCircleStyle('red')}></span>
                                     Clicked location
@@ -3788,16 +3660,25 @@ export default class Widget extends React.PureComponent<
                                 </div>
                                 <div style={legendRowStyle}>
                                     <span style={legendCircleStyle('blue')}></span>
-                                    Active sequence images
+                                    Active sequence
                                 </div>
-                            </>
-                        )}
-
-                        {/* Cache Clear Button */}
-                        {!this.state.turboModeActive && (
-                            <button style={cacheClearStyle} onClick={this.clearSequenceCache}>
-                                Clear Sequence Cache
-                            </button>
+                                {/* Cache Clear Button */}
+                                {!this.state.turboModeActive && (
+                                    <button className="legend-container-normal-button" style={{
+                                            background: "#d9534f",
+                                            color: "#fff",
+                                            borderRadius: "3px",
+                                            cursor: "pointer",
+                                            fontSize: "10px",
+                                            padding: "2px 4px",
+                                            height: "fit-content"
+                                        }} 
+                                        onClick={this.clearSequenceCache}>
+                                            <span style={{display:"inline"}} className="desktop-text">Clear Sequence Cache</span>
+                                            <span style={{display:"none"}} className="mobile-text">Clear</span>
+                                    </button>
+                                )}
+                            </div>
                         )}
                     </div>
                 )}
@@ -4103,7 +3984,7 @@ export default class Widget extends React.PureComponent<
                 )}
 
                 {/* Info box */}
-                <div
+                <div className= "info-box"
                     style={{
                         padding: "4px",
                         fontSize: "9px",
@@ -4113,7 +3994,8 @@ export default class Widget extends React.PureComponent<
                         right: "10px",
                         background: "rgba(2, 117, 216, 0.3)",
                         borderRadius: "4px",
-						maxWidth: "56px" 
+						maxWidth: "80px",
+                        textAlign: "center"
                     }}
                 >
                     {/* {this.state.imageId && <>Image ID: {this.state.imageId}<br/></>}
@@ -4126,25 +4008,25 @@ export default class Widget extends React.PureComponent<
                             );
                             if (currentImg) {
                                 return (
-                                    <>
+                                    <div>
                                         📍{" "}Lat: {currentImg.lat.toFixed(6)}<br/>📍{" "}Lon: {currentImg.lon.toFixed(6)}
-                                    </>
+                                        {this.state.address && <><br/>🌎{" "}{this.state.address}</>}
+                                    </div>
                                 );
                             }
                         }
                         return null;
-                    })()}
-					{this.state.address && <><br/>🌎{" "}{this.state.address}</>}
+                    })()}					
 
                     {/*TURBO YEAR LEGEND*/}
                     {this.state.turboColorByDate && this.state.turboYearLegend?.length > 0 && (
                         <div style={{ marginTop: "4px", textAlign: "center" }}>
-                            <div style={{ fontWeight: "bold", fontSize: "10px", marginBottom: "2px" }}>
-                                Legend:
+                            <div className="turbo-legend-cbd-title" style={{ fontWeight: "bold", fontSize: "10px", marginBottom: "2px" }}>
+                                Date Legend:
                             </div>
                             {this.state.turboYearLegend.map(item => (
                                 <div key={item.year} style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "2px" }}>
-                                    <span style={{
+                                    <span className="turbo-legend-cbd-circles" style={{
                                         display: "inline-block",
                                         width: "10px",
                                         height: "10px",
@@ -4153,7 +4035,7 @@ export default class Widget extends React.PureComponent<
                                         marginRight: "4px",
                                         border: "1px solid white"
                                     }}></span>
-                                    <span style={{ fontSize: "9px" }}>{item.year}</span>
+                                    <span className="turbo-legend-cbd-date-title" style={{ fontSize: "9px" }}>{item.year}</span>
                                 </div>
                             ))}
                         </div>
@@ -4652,34 +4534,35 @@ export default class Widget extends React.PureComponent<
                             active: this.state.tilesActive
                         }
                     ].map((btn, i) => (
-                        <button className="unified-control-buttons-mapped"
-                            key={i}
-                            title={btn.title}
-                            onClick={btn.onClick}
-                            style={{
-                                background: btn.active ? btn.bg : btn.bg.replace('0.9', '0.5'),
-                                color: '#fff',
-                                width: '26px',
-                                height: '26px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '18px',
-                                borderRadius: '6px',
-                                border: 'none',
-                                cursor: 'pointer',
-                                boxShadow: btn.active
-                                    ? '0 0 6px rgba(255,255,255,0.8)'
-                                    : '0 2px 4px rgba(0,0,0,0.3)',
-                                transform: btn.active ? 'scale(1.1)' : 'scale(1)',
-                                transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
-                            }}
-                            onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
-                            onMouseLeave={e => (e.currentTarget.style.transform = btn.active ? 'scale(1.1)' : 'scale(1)')}
-                        >
-                            {btn.emoji}
-                        </button>
-                    ))}
+                            <button className="unified-control-buttons-mapped"
+                                key={i}
+                                title={btn.title}
+                                onClick={btn.onClick}
+                                style={{
+                                    background: btn.active ? btn.bg : btn.bg.replace('0.9', '0.5'),
+                                    color: '#fff',
+                                    width: '26px',
+                                    height: '26px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '18px',
+                                    borderRadius: '6px',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    boxShadow: btn.active
+                                        ? '0 0 6px rgba(255,255,255,0.8)'
+                                        : '0 2px 4px rgba(0,0,0,0.3)',
+                                    transform: btn.active ? 'scale(1.1)' : 'scale(1)',
+                                    transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
+                                }}
+                                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                                onMouseLeave={e => (e.currentTarget.style.transform = btn.active ? 'scale(1.1)' : 'scale(1)')}
+                            >
+                                {btn.emoji}
+                            </button>
+                        ))
+                    }
 
                     {/* Turbo Mode Group */}
                     <div style={{
@@ -4693,15 +4576,22 @@ export default class Widget extends React.PureComponent<
                         {/* Main Turbo Button */}
                         <button className="unified-control-buttons"
                             title="Turbo Mode - Click coverage features directly"
-                            onClick={() => {
+                            onClick={async () => {
                                 const next = !this.state.turboModeActive;
                                 this.setState({ turboModeActive: next });
 
                                 if (next) {
+                                    const view = this.state.jimuMapView?.view;
                                     if (this.state.jimuMapView?.view.zoom! < 16) {
                                         this.showZoomWarning("Zoom in closer (≥ 16) to view Mapillary coverage point features in Turbo Mode.");
                                     }
                                     this.clearSequenceUI();
+                                    if (view) {
+                                        // wait until view is stable (critical for correct tile fetching)
+                                        await view.when();
+                                        await view.when(() => view.stationary === true);
+                                    }
+                                    // now extent is correct, first coverage load will be immediate
                                     this.enableTurboCoverageLayer();
 
                                     if (this.state.jimuMapView) {
@@ -4740,25 +4630,25 @@ export default class Widget extends React.PureComponent<
                                 } else {
                                     this.disableTurboCoverageLayer();
                                     // Remove any watchers
-                                                    if (this.turboStationaryHandle) {
-                                                        this.turboStationaryHandle.remove();
-                                                        this.turboStationaryHandle = null;
-                                                    }
-                                                    if (this.turboZoomHandle) {
-                                                        this.turboZoomHandle.remove();
-                                                        this.turboZoomHandle = null;
-                                                    }
+                                    if (this.turboStationaryHandle) {
+                                        this.turboStationaryHandle.remove();
+                                        this.turboStationaryHandle = null;
+                                    }
+                                    if (this.turboZoomHandle) {
+                                        this.turboZoomHandle.remove();
+                                        this.turboZoomHandle = null;
+                                    }
 
-                                                    // Reset ALL Turbo-related state values
-                                                    this.setState({
-                                                        turboFilterUsername: "",
-                                                        turboFilterStartDate: "",
-                                                        turboFilterEndDate: "",
-                                                        turboFilterIsPano: undefined,
-                                                        turboColorByDate: false,
-                                                        turboYearLegend: [],
-                                                        showTurboFilterBox: false
-                                                    });
+                                    // Reset ALL Turbo-related state values
+                                    this.setState({
+                                        turboFilterUsername: "",
+                                        turboFilterStartDate: "",
+                                        turboFilterEndDate: "",
+                                        turboFilterIsPano: undefined,
+                                        turboColorByDate: false,
+                                        turboYearLegend: [],
+                                        showTurboFilterBox: false
+                                    });
                                 }
                             }}
                             style={{
@@ -4794,7 +4684,7 @@ export default class Widget extends React.PureComponent<
                             }}
                             style={{
                                 background: this.state.turboModeActive 
-                                    ? (this.state.showTurboFilterBox ? 'rgba(255,215,0,0.9)' : 'rgba(255,215,0,0.7)')
+                                    ? (this.state.showTurboFilterBox ? 'rgba(255,215,0,0.9)' : 'rgba(255,215,0,0.3)')
                                     : 'rgba(200,200,200,0.3)',
                                 color: '#fff',
                                 width: '20px',
