@@ -725,7 +725,6 @@ export default class Widget extends React.PureComponent<
         try {
             const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
             
-            // 1. Fetch Data
             const [jsonResp, img] = await Promise.all([
                 fetch(`${spriteBaseUrl}.json`).then(r => r.json()),
                 this.loadImage(`${spriteBaseUrl}.png`)
@@ -733,24 +732,31 @@ export default class Widget extends React.PureComponent<
 
             const codes = Object.keys(jsonResp);
 
-            // 2. Process in Chunks (Non-blocking)
             this.processInChunks(
                 codes, 
-                20, // Process 20 icons at a time
+                20, 
                 (code) => {
-                    // The heavy lifting
                     const friendlyName = this.formatTrafficSignName(code);
                     const meta = jsonResp[code];
+                    
+                    // 1. Define the variable
                     const iconUrl = this.cropSpriteImage(img, meta);
+                    
+                    // 2. Check if it is valid (Must be done AFTER definition)
+                    if (!iconUrl) return null; 
+
                     return { value: friendlyName, label: friendlyName, iconUrl };
                 },
                 (results) => {
-                    // 3. Update State when done
                     const allOption = { value: "All traffic signs", label: "All traffic signs", iconUrl: null };
+                    // Store full list
+                    const fullList = [allOption, ...results];
+                    this._fullTrafficSignsOptions = fullList;
+
                     this.setState({
-                        trafficSignsOptions: [allOption, ...results],
+                        trafficSignsOptions: fullList,
                         trafficSignsFilterValue: allOption
-                    }, () => this.checkFiltersLoaded()); // Check if both are done
+                    }, () => this.checkFiltersLoaded()); 
                 }
             );
         } catch (err) {
@@ -779,13 +785,23 @@ export default class Widget extends React.PureComponent<
                 (code) => {
                     const friendlyName = this.objectNameMap[code] || code;
                     const meta = jsonResp[code];
+                    
+                    // 1. Define
                     const iconUrl = this.cropSpriteImage(img, meta);
+
+                    // 2. Check
+                    if (!iconUrl) return null;
+
                     return { value: friendlyName, label: friendlyName, iconUrl };
                 },
                 (results) => {
                     const allOption = { value: "All points", label: "All points", iconUrl: null };
+                    // Store full list
+                    const fullList = [allOption, ...results];
+                    this._fullObjectsOptions = fullList;
+
                     this.setState({
-                        objectsOptions: [allOption, ...results],
+                        objectsOptions: fullList,
                         objectsFilterValue: allOption
                     }, () => this.checkFiltersLoaded());
                 }
@@ -1235,14 +1251,17 @@ export default class Widget extends React.PureComponent<
                         console.warn(`Failed to crop icon for ${value}`, err);
                     }
                 }
-                optionsWithIcons.push({ value: name, label: name, iconUrl });
+                // STRICT CHECK - Only add if iconUrl exists
+                if (iconUrl) {
+                    optionsWithIcons.push({ value: name, label: name, iconUrl });
+                }
             }
         } catch (err) {
             console.warn("Failed to load traffic sign icons for dropdown", err);
             // Fallback: create options without icons
-            for (const [value, name] of uniqueValuesMap.entries()) {
-                optionsWithIcons.push({ value: name, label: name, iconUrl: null });
-            }
+            // for (const [value, name] of uniqueValuesMap.entries()) {
+            //     optionsWithIcons.push({ value: name, label: name, iconUrl: null });
+            // }
         }
 
         const allOption = { value: "All traffic signs", label: "All traffic signs", iconUrl: null };
@@ -1473,14 +1492,17 @@ export default class Widget extends React.PureComponent<
                         console.warn(`Failed to crop icon for ${value}`, err);
                     }
                 }
-                optionsWithIcons.push({ value: name, label: name, iconUrl });
+                // STRICT CHECK - Only add if iconUrl exists
+                if (iconUrl) {
+                    optionsWithIcons.push({ value: name, label: name, iconUrl });
+                }
             }
         } catch (err) {
             console.warn("Failed to load object icons for dropdown", err);
             // Fallback: create options without icons
-            for (const [value, name] of uniqueValuesMap.entries()) {
-                optionsWithIcons.push({ value: name, label: name, iconUrl: null });
-            }
+            // for (const [value, name] of uniqueValuesMap.entries()) {
+            //     optionsWithIcons.push({ value: name, label: name, iconUrl: null });
+            // }
         }
 
         const allOption = { value: "All points", label: "All points", iconUrl: null };
@@ -1646,6 +1668,21 @@ export default class Widget extends React.PureComponent<
         } else {
             jimuMapView.view.map.add(this.mapillaryVTLayer);
             this.setState({ tilesActive: true });
+
+            // Ensure Turbo Coverage layer stays on top
+            // Since .add() puts the tiles at the top, we must move the Turbo layer 
+            // to the very end of the array (topmost index) if it exists.
+            if (this.turboCoverageLayer && layers.includes(this.turboCoverageLayer)) {
+                jimuMapView.view.map.reorder(this.turboCoverageLayer, layers.length - 1);
+            }
+
+            // (Optional) Also re-raise interactive feature layers for Objects/Signs if they are active
+            if (this.mapillaryObjectsFeatureLayer && layers.includes(this.mapillaryObjectsFeatureLayer)) {
+                jimuMapView.view.map.reorder(this.mapillaryObjectsFeatureLayer, layers.length - 1);
+            }
+            if (this.mapillaryTrafficSignsFeatureLayer && layers.includes(this.mapillaryTrafficSignsFeatureLayer)) {
+                jimuMapView.view.map.reorder(this.mapillaryTrafficSignsFeatureLayer, layers.length - 1);
+            }
         }
     };
 
@@ -1741,6 +1778,11 @@ export default class Widget extends React.PureComponent<
                         jimuMapView.view.map.remove(layer);
                     }
                 });
+
+                // Restore full dropdown list when zoomed out
+                if (this._fullTrafficSignsOptions.length > 0) {
+                     this.setState({ trafficSignsOptions: this._fullTrafficSignsOptions });
+                }
 
                 //  Keep VT filtered to dropdown selection
                 // Maintain VT filter when zoomed out
@@ -1902,14 +1944,15 @@ export default class Widget extends React.PureComponent<
 
                 // 3. Fallback Sweep
                 jimuMapView.view.map.layers.forEach(layer => {
-                    if (layer.type === "feature" && 
-                       (layer as any).fields?.some((f: any) => f.name === "value") && 
-                       (layer as any).fields?.some((f: any) => f.name === "name") &&
-                       layer.title !== "turboCoverage"
-                    ) {
+                    if (layer.type === "feature" && (layer as any).fields?.some((f: any) => f.name === "value") && (layer as any).fields?.some((f: any) => f.name === "name") && layer.title !== "turboCoverage") {
                         jimuMapView.view.map.remove(layer);
                     }
                 });
+
+                // Restore full dropdown list when zoomed out
+                if (this._fullObjectsOptions.length > 0) {
+                    this.setState({ objectsOptions: this._fullObjectsOptions });
+                }
 
                 // Ensure we unwrap react-select object to its value string
                 // Maintain VT filter when zoomed out
@@ -4159,6 +4202,7 @@ export default class Widget extends React.PureComponent<
                                         this.debouncedTurboFilter();
                                     });
                                 }}
+                                isClearable
                                 dateFormat="yyyy-MM-dd"
                                 placeholderText="Select start date"
                                 popperPlacement="top"
@@ -4207,6 +4251,7 @@ export default class Widget extends React.PureComponent<
                                         this.debouncedTurboFilter();
                                     });
                                 }}
+                                isClearable
                                 dateFormat="yyyy-MM-dd"
                                 placeholderText="Select end date"
                                 popperPlacement="top"
