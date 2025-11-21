@@ -55,5 +55,9 @@ export const mobileOverrideStyles = `
     .desktop-text { display: none !important; }
     .mobile-text { display: inline !important; }
     .legend-container-normal-button{ margin-top: 4px !important; }
+	.esri-popup__main-container { width: 250px !important; top: 8% !important; left: 17% !important; max-height:42% !important; }
+	.splash-screen-spinner { width: 25px !important; height: 25px !important; }
+	.splash-screen-logo { margin-bottom: 15px !important; }
+	.splash-screen-text { font-size: 10px !important; }
 }
 `;

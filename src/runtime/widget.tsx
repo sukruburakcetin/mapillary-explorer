@@ -53,6 +53,8 @@ interface State {
     zoomWarningMessage?: string;
     trafficSignsFilterValue: { value: "All traffic signs", label: "All traffic signs", iconUrl: null },
     objectsFilterValue: { value: "All points", label: "All points", iconUrl: null },
+    filtersLoaded: boolean;
+    showIntro: boolean;
 }
 
 export default class Widget extends React.PureComponent<
@@ -126,7 +128,9 @@ export default class Widget extends React.PureComponent<
         trafficSignsOptions: [],
         showObjectsFilterBox: false,
         objectsFilterValue: { value: "All points", label: "All points", iconUrl: null },
-        objectsOptions: []
+        objectsOptions: [],
+        filtersLoaded: false,
+        showIntro: true
     };
 
     constructor(props: AllWidgetProps<any>) {
@@ -588,11 +592,11 @@ export default class Widget extends React.PureComponent<
                 tilesActive: false,
                 trafficSignsActive: false,
                 objectsActive: false,
-                availableSequences: [],      // Clear sequence list
-                selectedSequenceId: null,    // Reset active sequence
-                noImageMessageVisible: false // Hide "no image" banner if it was showing
-                turboModeActive: false,      //  ensure turbo mode is OFF
-                turboFilterUsername: "",     // clear filter
+                availableSequences: [],       // Clear sequence list
+                selectedSequenceId: null,     // Reset active sequence
+                noImageMessageVisible: false, // Hide "no image" banner if it was showing
+                turboModeActive: false,       //  ensure turbo mode is OFF
+                turboFilterUsername: "",      // clear filter
                 turboFilterStartDate: "",
                 turboFilterEndDate: "",
                 turboFilterIsPano: undefined,
@@ -684,44 +688,71 @@ export default class Widget extends React.PureComponent<
         return canvas.toDataURL(); // base64 PNG
     }
 
+    // Helper: Processes an array in chunks to avoid freezing the UI
+    private async processInChunks<T, R>(
+        items: T[], 
+        chunkSize: number, 
+        iterator: (item: T) => Promise<R> | R,
+        onComplete: (results: R[]) => void
+    ) {
+        let index = 0;
+        const results: R[] = [];
+
+        const nextChunk = async () => {
+            const end = Math.min(index + chunkSize, items.length);
+            for (let i = index; i < end; i++) {
+                const res = await iterator(items[i]);
+                if (res) results.push(res);
+            }
+            index = end;
+
+            if (index < items.length) {
+                // Yield to main thread (allows UI to render/animate), then continue
+                setTimeout(nextChunk, 0);
+            } else {
+                onComplete(results);
+            }
+        };
+        
+        nextChunk();
+    }
+
     /**
         * Loads traffic sign filter options with icons from Mapillary sprite repository.
         * Sets up dropdown options and initializes filter state to "All traffic signs".
     */
     private async preloadTrafficSignOptions() {
         try {
-            const spriteBaseUrl =
-            "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
+            const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
+            
+            // 1. Fetch Data
+            const [jsonResp, img] = await Promise.all([
+                fetch(`${spriteBaseUrl}.json`).then(r => r.json()),
+                this.loadImage(`${spriteBaseUrl}.png`)
+            ]);
 
-            // Load sprite metadata
-            const jsonResp = await fetch(`${spriteBaseUrl}.json`);
-            if (!jsonResp.ok) throw new Error(`Failed to load traffic signs sprite JSON`);
-            const spriteData = await jsonResp.json();
+            const codes = Object.keys(jsonResp);
 
-            // Load the sprite sheet image
-            const img = await this.loadImage(`${spriteBaseUrl}.png`);
-
-            const codes = Object.keys(spriteData);
-
-            const namesWithIcons = codes.map(code => {
-                const friendlyName = this.formatTrafficSignName(code);
-                const meta = spriteData[code]; 
-                const iconUrl = this.cropSpriteImage(img, meta);
-                return {
-                    value: friendlyName,
-                    label: friendlyName,
-                    iconUrl
-                };
-            });
-
-            // All traffic signs as an object, not string
-            const allOption = { value: "All traffic signs", label: "All traffic signs", iconUrl: null };
-            this.setState({
-                trafficSignsOptions: [allOption, ...namesWithIcons],
-                trafficSignsFilterValue: allOption // not string
-            });
-
-            console.log("Traffic sign options preloaded:", this.state.trafficSignsOptions);
+            // 2. Process in Chunks (Non-blocking)
+            this.processInChunks(
+                codes, 
+                20, // Process 20 icons at a time
+                (code) => {
+                    // The heavy lifting
+                    const friendlyName = this.formatTrafficSignName(code);
+                    const meta = jsonResp[code];
+                    const iconUrl = this.cropSpriteImage(img, meta);
+                    return { value: friendlyName, label: friendlyName, iconUrl };
+                },
+                (results) => {
+                    // 3. Update State when done
+                    const allOption = { value: "All traffic signs", label: "All traffic signs", iconUrl: null };
+                    this.setState({
+                        trafficSignsOptions: [allOption, ...results],
+                        trafficSignsFilterValue: allOption
+                    }, () => this.checkFiltersLoaded()); // Check if both are done
+                }
+            );
         } catch (err) {
             console.warn("Failed to preload traffic sign options", err);
         }
@@ -733,44 +764,49 @@ export default class Widget extends React.PureComponent<
     */
     private async preloadObjectOptions() {
         try {
-            const spriteBaseUrl =
-            "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
+            const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
 
-            // Load sprite metadata
-            const jsonResp = await fetch(`${spriteBaseUrl}.json`);
-            if (!jsonResp.ok) throw new Error(`Failed to load objects sprite JSON`);
-            const spriteData = await jsonResp.json();
+            const [jsonResp, img] = await Promise.all([
+                fetch(`${spriteBaseUrl}.json`).then(r => r.json()),
+                this.loadImage(`${spriteBaseUrl}.png`)
+            ]);
 
-            // Load sprite sheet image
-            const img = await this.loadImage(`${spriteBaseUrl}.png`);
+            const codes = Object.keys(jsonResp);
 
-            const codes = Object.keys(spriteData);
-
-            const namesWithIcons = codes.map(code => {
-                const friendlyName = this.objectNameMap[code] || code;
-                const meta = spriteData[code];
-                const iconUrl = this.cropSpriteImage(img, meta);
-                return {
-                    value: friendlyName,
-                    label: friendlyName,
-                    iconUrl
-                };
-            });
-
-            const allOption = {
-                value: "All points",
-                label: "All points",
-                iconUrl: null
-            };
-
-            this.setState({
-                objectsOptions: [allOption, ...namesWithIcons],
-                objectsFilterValue: allOption
-            });
-
-            console.log("Objects options preloaded:", this.state.objectsOptions);
+            this.processInChunks(
+                codes, 
+                20, 
+                (code) => {
+                    const friendlyName = this.objectNameMap[code] || code;
+                    const meta = jsonResp[code];
+                    const iconUrl = this.cropSpriteImage(img, meta);
+                    return { value: friendlyName, label: friendlyName, iconUrl };
+                },
+                (results) => {
+                    const allOption = { value: "All points", label: "All points", iconUrl: null };
+                    this.setState({
+                        objectsOptions: [allOption, ...results],
+                        objectsFilterValue: allOption
+                    }, () => this.checkFiltersLoaded());
+                }
+            );
         } catch (err) {
             console.warn("Failed to preload object options", err);
+        }
+    }
+
+    // Helper to set loaded flag
+    private checkFiltersLoaded() {
+        // Check if both drop-downs have been populated (length > 1 means data added to default "All" option)
+        if (this.state.trafficSignsOptions.length > 1 && this.state.objectsOptions.length > 1) {
+            
+            // 1. Mark logic as ready (Triggers CSS fade-out via opacity)
+            this.setState({ filtersLoaded: true });
+
+            // 2. Wait for the fade-out animation to finish, then remove from DOM
+            setTimeout(() => {
+                this.setState({ showIntro: false });
+            }, 800); // 800ms delay (matches CSS transition)
         }
     }
 
@@ -939,7 +975,7 @@ export default class Widget extends React.PureComponent<
                         // Assuming the Mapillary vector tile property for sign ID is called "value"
                         // This should match the keys in your package_signs.json (e.g., warning--yield-ahead--g3)
                         "icon-image": ["get", "value"],
-                        "icon-size": 1 // adjust if needed
+                        "icon-size": 0.8 // adjust if needed
                     }
                 }
             ]
@@ -981,7 +1017,7 @@ export default class Widget extends React.PureComponent<
                     type: "symbol",
                     layout: {
                         "icon-image": ["get", "value"], // matches sprite keys
-                        "icon-size": 1
+                        "icon-size": 0.8
                     }
                 }
             ]
@@ -1214,7 +1250,7 @@ export default class Widget extends React.PureComponent<
 
         // Apply current filter from state
         const currentFilterValue = this.state.trafficSignsFilterValue?.value || "All traffic signs";
-        console.log("Applying traffic signs filter:", currentFilterValue);  
+        // console.log("Applying traffic signs filter:", currentFilterValue);  
 
         if (currentFilterValue !== "All traffic signs") {
             // Get the raw code for this friendly name
@@ -1288,6 +1324,7 @@ export default class Widget extends React.PureComponent<
         }
 
         const layer = new FeatureLayer({
+            id: "mapillary-traffic-signs-fl", // <--- 1. Explicit ID
             source: features,
             fields,
             objectIdField: "id",
@@ -1302,7 +1339,24 @@ export default class Widget extends React.PureComponent<
                 <b>Last Seen:</b> {last_seen_at}`
             }
         });
+
+                // 2. "Last Second" Check: Before adding, ensure we are still allowed to 
+        if (this._cancelTrafficSignsFetch || jimuMapView.view.zoom < 16) {
+            console.log("Fetch finished, but zoom too low or cancelled. Discarding layer.");
+            return;
+        }
+
+        // Remove any existing layer with this ID first to prevent duplicates
+        const existingLayer = jimuMapView.view.map.findLayerById("mapillary-traffic-signs-fl");
+        if (existingLayer) {
+            jimuMapView.view.map.remove(existingLayer);
+        }
+
         this.mapillaryTrafficSignsFeatureLayer = layer;
+        // Only add if we are still active
+        if(this.state.trafficSignsActive) {
+            jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
+        }
     }
 
     /**
@@ -1434,7 +1488,7 @@ export default class Widget extends React.PureComponent<
 
         // Apply current filter from state
         const currentFilterValue = this.state.objectsFilterValue?.value || "All points";
-        console.log("Applying objects filter:", currentFilterValue);  
+        // console.log("Applying objects filter:", currentFilterValue); 
 
         if (currentFilterValue !== "All points") {
             // Get the raw code for this friendly name
@@ -1516,6 +1570,7 @@ export default class Widget extends React.PureComponent<
         }
 
         const layer = new FeatureLayer({
+            id: "mapillary-objects-fl", // <--- Explicit ID
             source: features,
             fields,
             objectIdField: "id",
@@ -1532,7 +1587,21 @@ export default class Widget extends React.PureComponent<
                 `
             }
         });
+        // "Last Second" Check
+        if (this._cancelObjectsFetch || jimuMapView.view.zoom < 16) {
+            return;
+        }
+
+        // Remove existing by ID
+        const existingLayer = jimuMapView.view.map.findLayerById("mapillary-objects-fl");
+        if (existingLayer) {
+            jimuMapView.view.map.remove(existingLayer);
+        }
+
         this.mapillaryObjectsFeatureLayer = layer;
+        if(this.state.objectsActive) {
+            jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
+        }
     }
 
     /**
@@ -1650,15 +1719,25 @@ export default class Widget extends React.PureComponent<
             if (currentZoom < 16) {
                 this._cancelTrafficSignsFetch = true;
 
-                // Direct removal using reference
+                // 1. Remove by Specific ID
+                const specificLayer = jimuMapView.view.map.findLayerById("mapillary-traffic-signs-fl");
+                if (specificLayer) {
+                    jimuMapView.view.map.remove(specificLayer);
+                }
+
+                // 2. Remove by Class Reference
                 if (this.mapillaryTrafficSignsFeatureLayer && jimuMapView.view.map.layers.includes(this.mapillaryTrafficSignsFeatureLayer)) {
                     jimuMapView.view.map.remove(this.mapillaryTrafficSignsFeatureLayer);
                 }
                 this.mapillaryTrafficSignsFeatureLayer = null;
 
-                // Optionally still sweep for any stray traffic sign FL:
+                // 3. Fallback Sweep (Keep this for safety)
                 jimuMapView.view.map.layers.forEach(layer => {
-                    if (layer.type === "feature" && (layer as any).fields?.some((f: any) => f.name === "value") && (layer as any).fields?.some((f: any) => f.name === "name")) {
+                    if (layer.type === "feature" && 
+                       (layer as any).fields?.some((f: any) => f.name === "value") && 
+                       (layer as any).fields?.some((f: any) => f.name === "name") &&
+                       layer.title !== "turboCoverage" // Ensure we don't remove turbo layer
+                    ) {
                         jimuMapView.view.map.remove(layer);
                     }
                 });
@@ -1681,21 +1760,9 @@ export default class Widget extends React.PureComponent<
                 }
 
             } else {
+                // If zoom >= 16, just allow fetching, BUT DO NOT CALL LOAD HERE.
+                // Let the 'stationary' watcher handle the load when zooming stops.
                 this._cancelTrafficSignsFetch = false;
-
-                if (this.state.trafficSignsActive) {
-                    // Remove any stale FL
-                    jimuMapView.view.map.layers.forEach(layer => {
-                        if (layer.type === "feature" && (layer as any).fields?.some((f: any) => f.name === "value") && (layer as any).fields?.some((f: any) => f.name === "name")) {
-                            jimuMapView.view.map.remove(layer);
-                        }
-                    });
-
-                    await this.loadMapillaryTrafficSignsFromTilesBBox(true);
-                    if (this.mapillaryTrafficSignsFeatureLayer) {
-                        jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
-                    }
-                }
             }
         });
 
@@ -1729,21 +1796,20 @@ export default class Widget extends React.PureComponent<
 
         // Stationary watcher
         this.trafficSignsStationaryHandle = jimuMapView.view.watch("stationary", (isStationary) => {
+            // If map is moving, or cancelled, do nothing
             if (!isStationary) return;
-            if (this._cancelTrafficSignsFetch) return;
-
+            
+            // If we are zoomed out, ensure cleanup is done
             if (jimuMapView.view.zoom < 16) {
-                // Remove only FeatureLayers, KEEP VT layer
-                jimuMapView.view.map.layers.forEach((layer) => {
-                    if (
-                        layer.type === "feature" && (layer as any).fields?.some((f: any) => f.name === "value") && (layer as any).fields?.some((f: any) => f.name === "name")
-                    ) {
-                        jimuMapView.view.map.remove(layer);
-                    }
-                });
-                return;
+                 // (Optional: redundancy cleanup can go here)
+                 return;
             }
-            debouncedRefresh();
+
+            // If we are stationary AND zoomed in, Load/Refresh the layer now.
+            // This prevents the "reject" error because the view is stable.
+            if (!this._cancelTrafficSignsFetch) {
+                debouncedRefresh();
+            }
         });
 
         // Save zoom handle for cleanup
@@ -1822,15 +1888,25 @@ export default class Widget extends React.PureComponent<
             if (currentZoom < 16) {
                 this._cancelObjectsFetch = true;
 
-                // Remove via reference
+                 // 1. Remove by ID
+                const specificLayer = jimuMapView.view.map.findLayerById("mapillary-objects-fl");
+                if (specificLayer) {
+                    jimuMapView.view.map.remove(specificLayer);
+                }
+
+                // 2. Remove by Reference
                 if (this.mapillaryObjectsFeatureLayer && jimuMapView.view.map.layers.includes(this.mapillaryObjectsFeatureLayer)) {
                     jimuMapView.view.map.remove(this.mapillaryObjectsFeatureLayer);
                 }
                 this.mapillaryObjectsFeatureLayer = null;
 
-                // fallback sweep
+                // 3. Fallback Sweep
                 jimuMapView.view.map.layers.forEach(layer => {
-                    if (layer.type === "feature" && (layer as any).fields?.some((f: any) => f.name === "value") && (layer as any).fields?.some((f: any) => f.name === "name")) {
+                    if (layer.type === "feature" && 
+                       (layer as any).fields?.some((f: any) => f.name === "value") && 
+                       (layer as any).fields?.some((f: any) => f.name === "name") &&
+                       layer.title !== "turboCoverage"
+                    ) {
                         jimuMapView.view.map.remove(layer);
                     }
                 });
@@ -1855,20 +1931,9 @@ export default class Widget extends React.PureComponent<
                 }
             } else 
                 {
+                    // Zoom >= 16: Just enable the flag. 
+                    // Do NOT call loadMapillaryObjectsFromTilesBBox here.
                     this._cancelObjectsFetch = false;
-                    if (this.state.objectsActive) {
-                        // Remove stale FL
-                        jimuMapView.view.map.layers.forEach(layer => {
-                            if (layer.type === "feature" && (layer as any).fields?.some((f: any) => f.name === "value") && (layer as any).fields?.some((f: any) => f.name === "name")) {
-                                jimuMapView.view.map.remove(layer);
-                            }
-                        });
-
-                        await this.loadMapillaryObjectsFromTilesBBox(true);
-                        if (this.mapillaryObjectsFeatureLayer) {
-                            jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
-                        }
-                    }
                 }
         });
 
@@ -1904,19 +1969,15 @@ export default class Widget extends React.PureComponent<
         // Stationary watcher
         this.objectsStationaryHandle = jimuMapView.view.watch("stationary", (isStationary) => {
             if (!isStationary) return;
-            if (this._cancelObjectsFetch) return;
 
             if (jimuMapView.view.zoom < 16) {
-                // Remove any object FeatureLayers, KEEP vector tile coverage layer
-                jimuMapView.view.map.layers.forEach((layer) => {
-                    if (layer.type === "feature" && (layer as any).fields?.some((f: any) => f.name === "value") && (layer as any).fields?.some((f: any) => f.name === "name")) {
-                        jimuMapView.view.map.remove(layer);
-                    }
-                });
                 return;
             }
 
-            debouncedRefresh();
+            // Load only when the view is stable
+            if (!this._cancelObjectsFetch) {
+                debouncedRefresh();
+            }
         });
 
         this.objectsZoomHandle = zoomHandle;
@@ -2672,11 +2733,11 @@ export default class Widget extends React.PureComponent<
         });
         document.body.appendChild(this.tooltipDiv);
 
-        // Preload full traffic sign options from sprite JSON
-        this.preloadTrafficSignOptions();
-
-        // Preload full object options from sprite JSON
-        this.preloadObjectOptions();
+        // Defer the heavy processing by 500ms to let the Map widget render first
+        setTimeout(() => {
+            this.preloadTrafficSignOptions();
+            this.preloadObjectOptions();
+        }, 500);
         
         const styleSheet = document.createElement("style");
         styleSheet.innerText = mobileOverrideStyles;
@@ -3612,7 +3673,7 @@ export default class Widget extends React.PureComponent<
                     <div className="legend-container" style={{
                                 position: "absolute",
                                 bottom: "10px",
-                                left: "10px",
+                                left: "6px",
                                 background: "rgba(255,255,255,0.3)",
                                 padding: "4px 8px",
                                 borderRadius: "4px",
@@ -3953,7 +4014,7 @@ export default class Widget extends React.PureComponent<
                             />
                             {/* Label */}
                             <span style={{ whiteSpace: "nowrap", fontSize:"10px" }}>
-                                {seqIndex + 1}. {seq.sequenceId.slice(0, 3)}… ({date})
+                                {seqIndex + 1}. ({date})
                             </span>
                             </div>
                         );
@@ -4370,22 +4431,17 @@ export default class Widget extends React.PureComponent<
                             <div style={{ display: 'flex', alignItems: 'center' }}>
                                 {option.iconUrl && (
                                     <img
-                                    src={option.iconUrl}
-                                    alt=""
-                                    style={{
-                                            width: 20,
-                                            height: 20,
-                                            marginRight: 8,
-                                            objectFit: 'contain'
-                                        }}
+                                        src={option.iconUrl}
+                                        alt=""
+                                        style={{width: 20, height: 20, marginRight: 8, objectFit: 'contain'}}
                                     />
                                 )}
                                 <span
                                     style={{
-                                    whiteSpace: 'nowrap',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    maxWidth: 120
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        maxWidth: 120
                                     }}
                                     title={option.label} // show full name on hover
                                 >
@@ -4395,20 +4451,16 @@ export default class Widget extends React.PureComponent<
                         )}
                         menuPlacement="top"  // force drop-up for mobile
                         styles={{
-                            container: base => ({
-                                ...base,
-                                width: '250px',
-                                fontSize: '10px'
-                            }),
-                            control: base => ({
-                                ...base,
-                                minHeight: '34px',
-                                height: '34px',
-                                fontSize: '10px'
-                            }),
-                            menu: base => ({
-                                ...base,
-                                zIndex: 9999
+                            container: base => ({...base, width: '150px', fontSize: '9px'}),
+                            control: base => ({...base, minHeight: '34px', height: '34px', fontSize: '9px'}),
+                            menu: base => ({...base, zIndex: 9999}),
+                            menuList: base => ({
+                                ...base, 
+                                maxHeight: '250px', 
+                                // Mobile override
+                                '@media only screen and (max-width: 768px)': {
+                                    maxHeight: '180px' 
+                                }
                             })
                         }}
                         />
@@ -4474,15 +4526,15 @@ export default class Widget extends React.PureComponent<
                                 <img
                                 src={option.iconUrl}
                                 alt=""
-                                style={{ width: 20, height: 20, marginRight: 8, objectFit: 'contain' }}
+                                style={{ width: 20, height: 20, marginRight: 8, objectFit: 'contain'}}
                                 />
                             )}
                             <span
                                 style={{
-                                whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                maxWidth: 120
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    maxWidth: 120
                                 }}
                                 title={option.label}
                             >
@@ -4492,14 +4544,87 @@ export default class Widget extends React.PureComponent<
                         )}
                         menuPlacement="top"
                         styles={{
-                            container: base => ({...base, width: '250px', fontSize: '10px'}),
-                            control: base => ({...base, minHeight: '34px', height: '34px', fontSize: '10px'}),
-                            menu: base => ({...base, zIndex: 9999})
+                            container: base => ({...base, width: '150px', fontSize: '9px'}),
+                            control: base => ({...base, minHeight: '34px', height: '34px', fontSize: '9px'}),
+                            menu: base => ({...base, zIndex: 9999}),
+                            menuList: base => ({
+                                ...base,
+                                maxHeight: '250px', 
+                                '@media only screen and (max-width: 768px)': {
+                                    maxHeight: '180px' 
+                                }
+                            })
                         }}
                         />
                     </div>
                     )}
                 </div>
+
+                {/* Splash(Intro) Screen */}
+                {this.state.showIntro && (
+                    <div style={{
+                        position: "absolute",
+                        top: 0, left: 0, width: "100%", height: "100%",
+                        background: "rgba(0,0,0,0.9)", 
+                        zIndex: 20000,
+                        display: "flex",
+                        flexDirection: "column", // Stacks Logo -> Spinner -> Text
+                        justifyContent: "center", // Centers vertically
+                        alignItems: "center",     // Centers horizontally
+                        color: "white",
+                        backdropFilter: "blur(5px)",
+                        opacity: this.state.filtersLoaded ? 0 : 1, 
+                        transition: "opacity 0.8s ease-in-out", 
+                        pointerEvents: "none" 
+                    }}>
+                        {/* --- LOGO --- */}
+                        <img className="splash-screen-logo"
+                            src="https://images2.imgbox.com/ec/73/iwr0gH9D_o.gif" 
+                            alt="Logo"
+                            style={{
+                                width: "120px",       // Adjust size as needed
+                                height: "auto",       // Maintains aspect ratio
+                                marginBottom: "30px", // Space between logo and spinner
+                                objectFit: "contain",  // Prevents stretching
+                                borderRadius: "50%"
+                            }}
+                        />
+
+                        {/* Spinner */}
+                        <div className="splash-screen-spinner" style={{
+                            width: "50px", height: "50px",
+                            border: "4px solid rgba(255,255,255,0.2)",
+                            borderTop: "4px solid #35AF6D", 
+                            borderRadius: "50%",
+                            animation: "spin 1s linear infinite",
+                            marginBottom: "20px"
+                        }} />
+                        
+                        {/* Text */}
+                        <div className="splash-screen-text" style={{ 
+                            fontWeight: "700", 
+                            fontSize: "18px", 
+                            letterSpacing: "1px",
+                        }}>
+                            MAPILLARY EXPLORER
+                        </div>
+                        <div style={{ 
+                            fontSize: "11px", 
+                            opacity: 0.7, 
+                            marginTop: "6px", 
+                            fontStyle: "italic" 
+                        }}>
+                            Preparing assets...
+                        </div>
+
+                        <style>{`
+                            @keyframes spin { 
+                                0% { transform: rotate(0deg); } 
+                                100% { transform: rotate(360deg); } 
+                            }
+                        `}</style>
+                    </div>
+                )}
 
                 {/* Unified control buttons container */}
                 <div
