@@ -43,7 +43,7 @@ By default, this is located under:
 ```bash
 cd <experience-builder-root>/server
 npm install      # install dependencies (only needed the first time)
-npm install pbf @mapbox/vector-tile
+npm install pbf @mapbox/vector-tile react-select react-datepicker
 npm start        # start the server
  ```
 2. Go to the server directory of Experience Builder, and start the Experience Builder Client:
