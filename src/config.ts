@@ -1,7 +1,11 @@
-import { ImmutableObject } from 'seamless-immutable'
+import { ImmutableObject } from 'jimu-core';
 
 export interface Config {
-  exampleConfigProperty: string
+  mapillaryAccessToken?: string;
+  // New settings
+  enableTrafficSigns: boolean;
+  enableMapillaryObjects: boolean;
+  turboModeOnly: boolean;
 }
 
-export type IMConfig = ImmutableObject<Config>
+export type IMConfig = ImmutableObject<Config>;
