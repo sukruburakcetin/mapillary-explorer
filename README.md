@@ -3,131 +3,64 @@
   Mapillary Explorer
 </h1>
 
-This is a custom **ArcGIS Experience Builder widget** written in **TypeScript + React** that integrates **Mapillary street-level imagery** with an **ArcGIS web map**.
+![Version](https://img.shields.io/badge/version-2.5.0-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+![ArcGIS](https://img.shields.io/badge/ArcGIS-Experience%20Builder-007AC2)
+![React](https://img.shields.io/badge/React-17+-61DAFB)
 
-It allows users to click a point on the map and instantly load the corresponding Mapillary panorama, complete with visual map markers, sequence tracking, and geocoded information.
-
----
+A high-performance custom widget for **ArcGIS Experience Builder** that seamlessly integrates Mapillary street-level imagery with ArcGIS maps. Designed for speed and interactivity, this widget allows users to explore image sequences, visualize high-volume coverage data in real-time ("Turbo Mode"), and interact with detected map features like traffic signs and infrastructure assets.
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Features](#features)
-3. [Setup & Installation](#setup--installation)
-4. [Configuration](#configuration)
-5. [Mapillary Explorer Demo Video](#mapillary-explorer-demo-video)
-6. [Download Release](#-download-built-widget-latest-version)
-7. [License](#license)
+1. [Key Features](#key-features)
+2. [Setup & Installation](#setup--installation)
+3. [Configuration](#configuration)
+4. [Mapillary Explorer Demo Video](#mapillary-explorer-demo-video)
+5. [Download Release](#-download-built-widget-latest-version)
+6. [License](#license)
+   
+## Key Features
+
+### Deep Map Integration
+*   **Interactive Viewer:** Full synchronization between the Mapillary viewer and the ArcGIS map. Features a dynamic camera bearing cone, pulsing location markers, and "click-to-move" functionality.
+*   **Smart Geocoding:** Real-time reverse geocoding using the ArcGIS World Geocoding Service to display contextual address data.
+*   **Advanced Graphics:** Uses the ArcGIS Maps SDK to draw animated pulsing points, directional cones, and sequence polylines with smooth visual feedback.
+
+### Turbo Mode (High-Speed Coverage)
+*   **Vector Tile Rendering:** Renders millions of coverage points efficiently using **PBF decoding** and **Mapbox Vector Tiles**.
+*   **Advanced Filtering:** Filter coverage in real-time by:
+    *   Creator Username
+    *   Date Range (Start/End)
+    *   Panorama (360°) status
+*   **Date-Based Visualization:** Optional color-coding of coverage points by year for temporal analysis.
+
+### Feature Recognition Layers
+*   **Traffic Signs & Objects:** Toggleable layers displaying detected assets (benches, manholes, signs) using custom sprite-based icons.
+*   **Zoom-Aware:** Automatically manages layer visibility based on zoom levels to optimize performance.
+*   **Interactive Popups:** Detailed metadata display for every detected feature.
+
+### Smart Navigation & UI
+*   **Sequence "Revolver":** An intelligent carousel selector to switch between multiple overlapping image sequences at the same location.
+*   **Fullscreen Minimap:** A secondary map panel within fullscreen mode that allows users to track their route and "click-to-jump" to any frame in the sequence.
+*   **Responsive Design:** Adaptive UI that scales from desktop to mobile, with touch-optimized controls and layout injection.
 
 ---
 
-## Overview
+## Performance & Architecture
 
-The Mapillary ArcGIS Experience Builder Widget is a comprehensive street-level imagery exploration tool that seamlessly integrates Mapillary’s vast database of geotagged photos with ArcGIS web maps. This advanced widget provides users with multiple ways to discover, visualize, and interact with street-level imagery and detected map objects directly within their ArcGIS Experience Builder applications.
+*   **Intelligent Caching:** Implements multi-level caching (Session & LocalStorage) for sequence coordinates and sprite assets to minimize API calls.
+*   **Optimized Rendering:** Uses **debouncing** for hover effects/API queries and handles complex state transitions to ensure smooth 60fps map interaction.
+*   **Robust Error Handling:** Graceful degradation for missing imagery or network issues, with user-friendly status messages.
+*   **Secure Configuration:** Centralized token management via the widget manifest to avoid hardcoded credentials.
 
-When users interact with the map, the widget intelligently finds and displays the most relevant Mapillary imagery while providing rich visual context through:
-- Smart sequence navigation with color-coded route overlays
-- Interactive map graphics showing clicked locations, active images, and camera viewsheds
-- Multiple exploration modes including Normal Mode for sequence browsing and Turbo Mode for direct coverage exploration
-- Advanced filtering capabilities for traffic signs and map objects with visual icon previews
-- Comprehensive address information through integrated reverse geocoding
+## Technical Stack
 
----
-
-## Features
-
-### Core ArcGIS Integration
-
-- Deep Map Integration: Uses JimuMapViewComponent for seamless connection with active Experience Builder map widgets
-- Advanced Graphics System: Draws sophisticated Esri Graphics including animated pulsing points, directional view cones, sequence polylines, and visual click feedback
-- Multi-Mode Map Interaction: Handles complex click events with hit-testing for multiple layer types and interaction modes
-- Intelligent Sequence Management: Automatically detects and switches between multiple nearby image sequences
-
-### Comprehensive Mapillary API Integration
-
-- Spatial Query Engine: Uses advanced bounding box queries (/images?bbox=...) to find nearby imagery within configurable distance thresholds
-- Sequence Intelligence: Automatically groups images by sequence and retrieves complete coordinate sets for route visualization
-- Batch Data Processing: Efficiently processes image metadata including creator information, capture dates, and panorama detection
-- Smart Caching System: Implements session-based coordinate caching to minimize API calls and improve performance
-
-### Vector Tile Integration
-
-- Real-time Coverage Display: Shows live Mapillary coverage using Vector Tile layers for sequences and individual images
-- Advanced Filtering System: Provides zoom-level-aware filtering with VectorTileLayer for coverage and FeatureLayer for detailed interactions
-- Traffic Signs Layer: Displays comprehensive traffic sign data with custom sprite-based icon rendering
-- Map Objects Layer: Shows detected objects (benches, street lights, traffic cones, etc.) with human-readable names and filtering
-- Turbo Mode: Direct-click coverage exploration with optional user filtering and date-based color coding(works super fast)
-
-## Advanced User Interface Features
-
-### Dual-Mode Operation
-
-- Normal Mode: Traditional sequence-based exploration with intelligent sequence switching
-- Turbo Mode: Direct coverage point interaction with advanced filtering (username, date range, panorama type, color-coding by year)
-
-### Interactive Controls
-
-- Unified Control Panel: Organized button groups for fullscreen, layer toggles, and mode switching
-- Smart Sequence Selector: Revolving carousel showing multiple available sequences with color coding and date information
-- Advanced Filter Dropdowns: React-Select powered filtering with icon previews for traffic signs and objects
-- Dynamic Layer Management: Zoom-level-aware layer activation/deactivation to optimize performance
-
-### Visual Feedback Systems
-
-- Animated Graphics: Pulsing active points, ripple click effects, and smooth transitions
-- Camera Viewshed Visualization: Dynamic cone graphics showing camera direction and adjustable zoom levels
-- Color-Coded Legends: Context-sensitive legends for different modes and active layers
-- Progressive Loading Indicators: Multi-stage loading screens with descriptive status messages
-
-## Enhanced Data Management
-
-### Access Token Security
-
-- Manifest Integration: Securely loads Mapillary access tokens from widget manifest properties
-- Centralized Configuration: Single-point token management avoiding hardcoded credentials
-- Displays clear fallback messages for missing or unavailable data.
-
-### Intelligent Caching
-
-- Multi-Level Caching:
-	- Session cache for sequence coordinates to reduce API calls
-
-	- LocalStorage persistence for last-viewed sequence across widget sessions
-
-	- Sprite image caching for traffic sign and object icons
-	
-- Cache Management: User-controlled cache clearing with complete state reset
-
-### Advanced Geocoding
-
-- Integrated Address Resolution: Real-time reverse geocoding using ArcGIS World Geocoding Service
-- Smart Address Display: Contextual address formatting optimized for UI space constraints
-
-## Technical Architecture
-
-### Responsive Design
-
-- Multi-Device Support: CSS injection system for mobile-responsive legends and controls
-- Dynamic Sizing: Adaptive UI elements that scale based on screen size and widget dimensions
-- Touch Optimization: Mobile-friendly interaction patterns with appropriate button sizing
-
-### Performance Optimization
-
-- Debounced Operations: Smart debouncing for API calls, filter updates, and map interactions
-- Zoom-Level Management: Automatic layer activation/deactivation based on zoom thresholds
-- Efficient Graphics Management: Selective graphics clearing and redrawing to minimize map rendering overhead
-
-### Advanced State Management
-
-- Complex State Transitions: Handles multiple simultaneous modes, filters, and interaction states
-- Event-Driven Architecture: Comprehensive event handling for map interactions, viewer changes, and UI updates
-- Lifecycle Management: Proper cleanup of event handlers, graphics, and API resources
-
-### Error Handling & Resilience
-
-- Graceful Degradation: Comprehensive fallback handling for missing imagery, API failures, and network issues
-- User-Friendly Messaging: Clear status indicators and error messages with automatic dismissal
-- Robust Cleanup: Complete resource cleanup on widget close/reopen to prevent memory leaks
+| Category | Technologies |
+|----------|--------------|
+| **Framework** | ArcGIS Experience Builder (React-based) |
+| **Mapping** | ArcGIS Maps SDK for JavaScript (`@arcgis/core`), MapillaryJS |
+| **Data Parsing** | Mapbox Vector Tiles, PBF decoding |
+| **UI Components** | React-Select, React-Datepicker |
 
 ## Setup & Installation
 
@@ -138,7 +71,7 @@ You do **not** need ArcGIS Experience Builder Developer Edition to use it, only 
 
 ### 1. Prepare the Widget Folder
 
-1.1. Copy the exported widget folder (e.g., `mapillary-explorer`) to your web server or IIS directory.  
+1.1. Copy the exported release version of the widget folder (e.g., `mapillary-explorer`) to your web server or IIS directory.  
    Example path:
    ```
    C:\inetpub\wwwroot\mapillary-explorer\
@@ -148,9 +81,9 @@ You do **not** need ArcGIS Experience Builder Developer Edition to use it, only 
 ```text
 mapillary-explorer/
 ├── dist/
-├── manifest.json
 ├── config.json
-└── README.md
+├── icon.svg
+└── manifest.json
 ```
 1.3. Verify that the `manifest.json` file includes your **Mapillary access token**:
 ```json
@@ -162,6 +95,7 @@ mapillary-explorer/
 }
 ```
 1.4. You can get your Mapillary Access Token https://www.mapillary.com/dashboard/developers here for free.
+
 ### 2. Host the Widget on a Web Server
 Make sure your web server (IIS, Nginx, Apache, etc.) can serve the `mapillary-explorer` folder publicly.  
 You should be able to access the manifest file from a browser, for example:
@@ -219,7 +153,7 @@ Below is an example of the `manifest.json` file used for configuration:
   "name": "mapillary-explorer",
   "label": "Mapillary Explorer",
   "type": "widget",
-  "version": "1.0.0",
+  "version": "2.5.0",
   "exbVersion": "1.18.0",
   "author": "Sukru Burak Cetin",
   "description": "Mapillary Explorer is a custom ArcGIS Experience Builder widget that brings street-level Mapillary imagery directly into your web maps.",
