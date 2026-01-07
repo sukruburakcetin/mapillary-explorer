@@ -2211,11 +2211,9 @@ export default class Widget extends React.PureComponent<
             this.showZoomWarning("Zoom in closer (≥ 16) to view clickable traffic sign features.");
         }
 
-        // Check if VT layer exists by ID
-        const existingVTLayer = jimuMapView.view.map.findLayerById("mapillary-traffic-signs-vt");
-
         // === Turn OFF ===
         if (this.state.trafficSignsActive) {
+            // 1. Remove event watchers first
             if (this.trafficSignsStationaryHandle) {
                 this.trafficSignsStationaryHandle.remove();
                 this.trafficSignsStationaryHandle = null;
@@ -2225,28 +2223,66 @@ export default class Widget extends React.PureComponent<
                 this.trafficSignsZoomHandle = null;
             }
 
+            // 2. Cancel any ongoing fetch operations
             this._cancelTrafficSignsFetch = true;
 
-            // Remove the VectorTileLayer (coverage) by ID
+            // 3. Remove VectorTileLayer (coverage) by ID
+            const existingVTLayer = jimuMapView.view.map.findLayerById("mapillary-traffic-signs-vt");
             if (existingVTLayer) {
                 jimuMapView.view.map.remove(existingVTLayer);
+                console.log("Removed traffic signs VectorTileLayer");
             }
 
-            // Remove the FeatureLayer by ID
+            // 4. Remove FeatureLayer (interactive features) by ID
             const existingFL = jimuMapView.view.map.findLayerById("mapillary-traffic-signs-fl");
             if (existingFL) {
                 jimuMapView.view.map.remove(existingFL);
+                console.log("Removed traffic signs FeatureLayer");
             }
 
+            // 5. Destroy layer instances to release resources
+            if (this.mapillaryTrafficSignsLayer) {
+                try {
+                    this.mapillaryTrafficSignsLayer.destroy();
+                } catch (err) {
+                    console.warn("Error destroying traffic signs VT layer:", err);
+                }
+            }
+            
+            if (this.mapillaryTrafficSignsFeatureLayer) {
+                try {
+                    this.mapillaryTrafficSignsFeatureLayer.destroy();
+                } catch (err) {
+                    console.warn("Error destroying traffic signs feature layer:", err);
+                }
+            }
+
+            // 6. Nullify all references
             this.mapillaryTrafficSignsLayer = null;
             this.mapillaryTrafficSignsFeatureLayer = null;
 
-            this.setState({ trafficSignsActive: false, showTrafficSignsFilterBox: false });
+            // 7. Reset filter to default and update state
+            const defaultTrafficSignsFilter = { 
+                value: "All traffic signs", 
+                label: "All traffic signs", 
+                iconUrl: null 
+            };
+            
+            this.setState({ 
+                trafficSignsActive: false, 
+                showTrafficSignsFilterBox: false,
+                trafficSignsFilterValue: defaultTrafficSignsFilter
+            });
+            
+            console.log("Traffic signs layers completely removed and filter reset");
             return;
         }
 
         // === Turn ON ===
         this._cancelTrafficSignsFetch = false;
+        
+        // Check if VT layer exists by ID
+        const existingVTLayer = jimuMapView.view.map.findLayerById("mapillary-traffic-signs-vt");
         
         // Ensure VT layer is present
         if (!existingVTLayer) {
@@ -2261,40 +2297,31 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        // ... (Keep the rest of the watcher logic exactly as it is in your code) ...
+        // Set up zoom watcher
         const zoomHandle = jimuMapView.view.watch("zoom", async (currentZoom) => {
-             // ... existing watcher code ...
-             // (Copy the rest of the existing watcher logic here)
-             if (currentZoom < 16) {
+            if (currentZoom < 16) {
                 this._cancelTrafficSignsFetch = true;
                 const specificLayer = jimuMapView.view.map.findLayerById("mapillary-traffic-signs-fl");
                 if (specificLayer) jimuMapView.view.map.remove(specificLayer);
-                
-                // ... rest of zoom out logic ...
-             } else {
+            } else {
                 this._cancelTrafficSignsFetch = false;
-             }
+            }
         });
         
-        // ... (Keep debounced refresh and stationary watcher logic) ...
+        // Set up debounced refresh on stationary
         const debouncedRefresh = this.debounce(async () => { 
-            /* ... existing logic ... */ 
-            // Fetch and add FeatureLayer if zoom >= 16
             await this.loadMapillaryTrafficSignsFromTilesBBox(true);
             if (this.mapillaryTrafficSignsFeatureLayer) {
-                // Ensure we remove old one by ID first
                 const oldFL = jimuMapView.view.map.findLayerById("mapillary-traffic-signs-fl");
                 if (oldFL) jimuMapView.view.map.remove(oldFL);
-                
                 jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
             }
         }, 500);
 
         this.trafficSignsStationaryHandle = jimuMapView.view.watch("stationary", (isStationary) => {
-             /* ... existing logic ... */
-             if (!isStationary) return;
-             if (jimuMapView.view.zoom < 16) return;
-             if (!this._cancelTrafficSignsFetch) debouncedRefresh();
+            if (!isStationary) return;
+            if (jimuMapView.view.zoom < 16) return;
+            if (!this._cancelTrafficSignsFetch) debouncedRefresh();
         });
 
         this.trafficSignsZoomHandle = zoomHandle;
@@ -2320,10 +2347,9 @@ export default class Widget extends React.PureComponent<
             this.showZoomWarning("Zoom in closer (≥ 16) to view clickable object features.");
         }
 
-        const existingVTLayer = jimuMapView.view.map.findLayerById("mapillary-objects-vt");
-
         // === Turn OFF ===
         if (this.state.objectsActive) {
+            // 1. Remove event watchers first
             if (this.objectsStationaryHandle) {
                 this.objectsStationaryHandle.remove();
                 this.objectsStationaryHandle = null;
@@ -2333,28 +2359,65 @@ export default class Widget extends React.PureComponent<
                 this.objectsZoomHandle = null;
             }
 
+            // 2. Cancel any ongoing fetch operations
             this._cancelObjectsFetch = true;
 
-            // Remove VTL by ID
+            // 3. Remove VectorTileLayer (coverage) by ID
+            const existingVTLayer = jimuMapView.view.map.findLayerById("mapillary-objects-vt");
             if (existingVTLayer) {
                 jimuMapView.view.map.remove(existingVTLayer);
+                console.log("Removed objects VectorTileLayer");
             }
 
-            // Remove FL by ID
+            // 4. Remove FeatureLayer (interactive features) by ID
             const existingFL = jimuMapView.view.map.findLayerById("mapillary-objects-fl");
             if (existingFL) {
                 jimuMapView.view.map.remove(existingFL);
+                console.log("Removed objects FeatureLayer");
             }
 
+            // 5. Destroy layer instances to release resources
+            if (this.mapillaryObjectsLayer) {
+                try {
+                    this.mapillaryObjectsLayer.destroy();
+                } catch (err) {
+                    console.warn("Error destroying objects VT layer:", err);
+                }
+            }
+            
+            if (this.mapillaryObjectsFeatureLayer) {
+                try {
+                    this.mapillaryObjectsFeatureLayer.destroy();
+                } catch (err) {
+                    console.warn("Error destroying objects feature layer:", err);
+                }
+            }
+
+            // 6. Nullify all references
             this.mapillaryObjectsLayer = null;
             this.mapillaryObjectsFeatureLayer = null;
 
-            this.setState({ objectsActive: false, showObjectsFilterBox: false });
+            // 7. Reset filter to default and update state
+            const defaultObjectsFilter = { 
+                value: "All points", 
+                label: "All points", 
+                iconUrl: null 
+            };
+            
+            this.setState({ 
+                objectsActive: false, 
+                showObjectsFilterBox: false,
+                objectsFilterValue: defaultObjectsFilter
+            });
+            
+            console.log("Objects layers completely removed and filter reset");
             return;
         }
 
         // === Turn ON ===
         this._cancelObjectsFetch = false;
+
+        const existingVTLayer = jimuMapView.view.map.findLayerById("mapillary-objects-vt");
 
         if (!existingVTLayer) {
             this.initMapillaryObjectsLayer();
@@ -2368,27 +2431,24 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        // ... (Keep the rest of the watcher logic exactly as it is) ...
+        // Set up zoom watcher
         const zoomHandle = jimuMapView.view.watch("zoom", async (currentZoom) => {
-            /* ... existing logic ... */
             if (currentZoom < 16) {
                 this._cancelObjectsFetch = true;
                 const specificLayer = jimuMapView.view.map.findLayerById("mapillary-objects-fl");
                 if (specificLayer) jimuMapView.view.map.remove(specificLayer);
-                // ... rest of logic
             } else {
                 this._cancelObjectsFetch = false;
             }
         });
 
         const debouncedRefresh = this.debounce(async () => {
-             /* ... existing logic ... */
-             await this.loadMapillaryObjectsFromTilesBBox(true);
-             if (this.mapillaryObjectsFeatureLayer) {
-                 const oldFL = jimuMapView.view.map.findLayerById("mapillary-objects-fl");
-                 if (oldFL) jimuMapView.view.map.remove(oldFL);
-                 jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
-             }
+            await this.loadMapillaryObjectsFromTilesBBox(true);
+            if (this.mapillaryObjectsFeatureLayer) {
+                const oldFL = jimuMapView.view.map.findLayerById("mapillary-objects-fl");
+                if (oldFL) jimuMapView.view.map.remove(oldFL);
+                jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
+            }
         }, 500);
 
         this.objectsStationaryHandle = jimuMapView.view.watch("stationary", (isStationary) => {
