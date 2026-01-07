@@ -5019,36 +5019,21 @@ export default class Widget extends React.PureComponent<
 
                                 this.filterTrafficSignsVTLayer(filterCode);
 
-                                // Remove stale FeatureLayer immediately when filter changes
-                                if (this.mapillaryTrafficSignsFeatureLayer && this.state.jimuMapView.view.map.layers.includes(this.mapillaryTrafficSignsFeatureLayer)) {
-                                    this.state.jimuMapView.view.map.remove(this.mapillaryTrafficSignsFeatureLayer);
-                                }
-                                this.mapillaryTrafficSignsFeatureLayer = null;
+                                // 2. Reload the FeatureLayer if zoomed in and layer is active
+                                if (this.state.trafficSignsActive && this.state.jimuMapView.view.zoom >= 16) {
+                                    // Remove old FeatureLayer
+                                    if (this.mapillaryTrafficSignsFeatureLayer && this.state.jimuMapView.view.map.layers.includes(this.mapillaryTrafficSignsFeatureLayer)) {
+                                        this.state.jimuMapView.view.map.remove(this.mapillaryTrafficSignsFeatureLayer);
+                                    }
+                                    this.mapillaryTrafficSignsFeatureLayer = null;
 
-                                // If we're zoomed in >= 16 AND layer active → fetch immediately
-                                if (
-                                    this.state.trafficSignsActive && this.state.jimuMapView.view.zoom >= 16
-                                ) {
+                                    // Reload with new filter
                                     this._cancelTrafficSignsFetch = false;
                                     await this.loadMapillaryTrafficSignsFromTilesBBox(true);
                                     if (this.mapillaryTrafficSignsFeatureLayer) {
                                         this.state.jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
                                     }
                                 }
-
-                                // // Simulate a minimal pan to trigger stationary watcher refresh
-                                // const view = this.state.jimuMapView.view;
-                                // if (view) {
-                                //     const currentCenter = view.center.clone();
-                                //     const newCenter = currentCenter.offset(0.0005, 0); // tiny shift east
-                                //     view.goTo(
-                                //         {
-                                //             center: newCenter,
-                                //             zoom: view.zoom
-                                //         },
-                                //         { animate: false }
-                                //     );
-                                // }
                             });
                         }}
                         options={this.state.trafficSignsOptions}
@@ -5124,25 +5109,21 @@ export default class Widget extends React.PureComponent<
 
                                 this.filterObjectsVTLayer(filterCode);
 
-                                if (
-                                    this.state.objectsActive &&
-                                    this.state.jimuMapView.view.zoom >= 16
-                                ) {
+                                // 2. Reload the FeatureLayer if zoomed in and layer is active
+                                if (this.state.objectsActive && this.state.jimuMapView.view.zoom >= 16) {
+                                    // Remove old FeatureLayer
                                     if (this.mapillaryObjectsFeatureLayer && this.state.jimuMapView.view.map.layers.includes(this.mapillaryObjectsFeatureLayer)) {
                                         this.state.jimuMapView.view.map.remove(this.mapillaryObjectsFeatureLayer);
                                     }
+                                    this.mapillaryObjectsFeatureLayer = null;
+
+                                    // Reload with new filter
+                                    this._cancelObjectsFetch = false;
                                     await this.loadMapillaryObjectsFromTilesBBox(true);
                                     if (this.mapillaryObjectsFeatureLayer) {
                                         this.state.jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
                                     }
                                 }
-
-                                // const view = this.state.jimuMapView.view;
-                                // if (view) {
-                                //     const currentCenter = view.center.clone();
-                                //     const newCenter = currentCenter.offset(0.0005, 0);
-                                //     view.goTo({ center: newCenter, zoom: view.zoom }, { animate: false });
-                                // }
                             });
                         }}
                         options={this.state.objectsOptions}  // array of objects
