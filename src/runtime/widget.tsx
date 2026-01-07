@@ -3342,6 +3342,16 @@ export default class Widget extends React.PureComponent<
                 
                 // If Turbo Only mode is ON, and we didn't hit a point, STOP.
                 if (this.props.config.turboModeOnly && !imageHit) {
+                    // 1. Draw orange warning ripple at click location
+                    this.drawWarningRipple(point.longitude, point.latitude);
+                    
+                    // 2. Show warning message
+                    this.showZoomWarning(
+                        "Turbo Mode: Please click directly on a brown coverage point to load imagery.", 
+                        3000 // Show for 3 seconds
+                    );
+                    
+                    console.log("Turbo Mode Only: Background clicks disabled. Click on a coverage point (brown dot).");
                     return; 
                 }
 
@@ -3497,7 +3507,7 @@ export default class Widget extends React.PureComponent<
                                 if (this.tooltipDiv) this.tooltipDiv.innerHTML = `<div>Error loading details</div>`;
                             }
                         }
-                    }, 100); // Wait 100ms before showing tooltip
+                    }, 500); // Wait 100ms before showing tooltip
                 } else {
                     // SAME FEATURE - Just update tooltip position without restarting timer
                     if (this.tooltipDiv.style.display === "block") {
@@ -5026,19 +5036,19 @@ export default class Widget extends React.PureComponent<
                                     }
                                 }
 
-                                // Simulate a minimal pan to trigger stationary watcher refresh
-                                const view = this.state.jimuMapView.view;
-                                if (view) {
-                                    const currentCenter = view.center.clone();
-                                    const newCenter = currentCenter.offset(0.0005, 0); // tiny shift east
-                                    view.goTo(
-                                        {
-                                            center: newCenter,
-                                            zoom: view.zoom
-                                        },
-                                        { animate: false }
-                                    );
-                                }
+                                // // Simulate a minimal pan to trigger stationary watcher refresh
+                                // const view = this.state.jimuMapView.view;
+                                // if (view) {
+                                //     const currentCenter = view.center.clone();
+                                //     const newCenter = currentCenter.offset(0.0005, 0); // tiny shift east
+                                //     view.goTo(
+                                //         {
+                                //             center: newCenter,
+                                //             zoom: view.zoom
+                                //         },
+                                //         { animate: false }
+                                //     );
+                                // }
                             });
                         }}
                         options={this.state.trafficSignsOptions}
@@ -5127,12 +5137,12 @@ export default class Widget extends React.PureComponent<
                                     }
                                 }
 
-                                const view = this.state.jimuMapView.view;
-                                if (view) {
-                                    const currentCenter = view.center.clone();
-                                    const newCenter = currentCenter.offset(0.0005, 0);
-                                    view.goTo({ center: newCenter, zoom: view.zoom }, { animate: false });
-                                }
+                                // const view = this.state.jimuMapView.view;
+                                // if (view) {
+                                //     const currentCenter = view.center.clone();
+                                //     const newCenter = currentCenter.offset(0.0005, 0);
+                                //     view.goTo({ center: newCenter, zoom: view.zoom }, { animate: false });
+                                // }
                             });
                         }}
                         options={this.state.objectsOptions}  // array of objects
