@@ -93,6 +93,7 @@ export default class Widget extends React.PureComponent<
     private minimapWatchHandle: __esri.WatchHandle | null = null;
     private _hoverTimeout: any = null;
     private _zoomWarningTimeout: any = null;
+    private _currentHoveredFeatureId: string | null = null;
 
     /**
         * Human‑readable names for Mapillary object classification codes.
@@ -3374,6 +3375,25 @@ export default class Widget extends React.PureComponent<
                     await this.loadSequenceById(seqId, imageId);
                     return; 
                 }
+                else {
+                    // Block background clicks in Turbo Mode =====
+                    // User clicked on empty map space in Turbo Mode - NOT ALLOWED
+                    // In Turbo Mode, only direct clicks on coverage points are allowed
+                    // User clicked on empty map space - show ripple and warning
+
+                    // 1. Draw orange warning ripple at click location
+                    this.drawWarningRipple(point.longitude, point.latitude);
+                    
+                    // 2. Show warning message
+                    this.showZoomWarning(
+                        "Turbo Mode: Please click directly on a brown coverage point to load imagery.", 
+                        3000 // Show for 3 seconds
+                    );
+                    
+                    console.log("Turbo Mode: Background clicks disabled. Click on a coverage point (brown dot).");
+                    return; // Stop processing - do NOT call handleMapClick
+
+                }
             }
 
             // --- PRIORITY 4: Normal Mode Background Click (API Search) ---
@@ -3382,99 +3402,116 @@ export default class Widget extends React.PureComponent<
         });
 
         this.pointerMoveHandle = jmv.view.on("pointer-move", async (evt) => {
-            // 1. Always clear any pending hover timer immediately when mouse moves
-            if (this._hoverTimeout) {
-                clearTimeout(this._hoverTimeout);
-                this._hoverTimeout = null;
-            }
-
             const hit = await jmv.view.hitTest(evt);
 
             // Guard: Check if tooltipDiv is valid
             if (!this.tooltipDiv) return;
 
-            // === TURBO MODE HOVER ===
+            // === TURBO MODE HOVER (FIXED) ===
             const turboHit = hit.results.find(r =>
                 r.graphic?.layer?.id === "turboCoverage"
             );
 
             if (turboHit) {
-                // 2. Start a new timer (Debounce). 
-                // Logic runs only if user stays on this point for 70ms.
-                this._hoverTimeout = setTimeout(async () => {
-                    if (!this.tooltipDiv) return; // Re-check validity inside async
+                const attrs = turboHit.graphic.attributes;
+                const featureId = attrs.id;
 
-                    const attrs = turboHit.graphic.attributes;
-
-                    // A. If we have detailed attributes already → show immediately
-                    if (attrs.creator_username) {
-                        const dateStr = attrs.captured_at ? new Date(attrs.captured_at).toLocaleString() : "Unknown date";
-                        const thumbHtml = attrs.thumb_url
-                            ? `<img src="${attrs.thumb_url}" style="max-width:150px;border-radius:3px;margin-top:4px" />`
-                            : "";
-
-                        this.tooltipDiv.innerHTML = `
-                            <div><b>${attrs.creator_username}</b></div>
-                            <div>${dateStr}</div>
-                            ${thumbHtml}
-                        `;
-                        this.tooltipDiv.style.left = `${evt.x + 15}px`;
-                        this.tooltipDiv.style.top = `${evt.y + 15}px`;
-                        this.tooltipDiv.style.display = "block";
-                    } 
-                    // B. If missing details → Fetch from API
-                    else {
-                        this.tooltipDiv.innerHTML = `<div>Loading details…</div>`;
-                        this.tooltipDiv.style.left = `${evt.x + 15}px`;
-                        this.tooltipDiv.style.top = `${evt.y + 15}px`;
-                        this.tooltipDiv.style.display = "block";
-
-                        try {
-                            const imgId = attrs.id;
-                            const url = `https://graph.mapillary.com/${imgId}?fields=id,sequence,creator.username,captured_at,thumb_256_url`;
-                            const resp = await fetch(url, {
-                                headers: { Authorization: `OAuth ${this.accessToken}` }
-                            });
-
-                            if (!this.tooltipDiv) return;
-                            
-                            if (resp.ok) {
-                                const data = await resp.json();
-                                if (!this.tooltipDiv) return;
-
-                                // Update the feature's attributes in the layer cache
-                                const updatedAttrs = {
-                                    ...attrs,
-                                    sequence_id: data.sequence || null,
-                                    captured_at: data.captured_at ? new Date(data.captured_at).getTime() : null,
-                                    creator_username: data.creator?.username || null,
-                                    thumb_url: data.thumb_256_url || null
-                                };
-                                turboHit.graphic.attributes = updatedAttrs;
-
-                                const dateStr = updatedAttrs.captured_at
-                                    ? new Date(updatedAttrs.captured_at).toLocaleString()
-                                    : "Unknown date";
-                                const thumbHtml = updatedAttrs.thumb_url
-                                    ? `<img src="${updatedAttrs.thumb_url}" style="max-width:150px;border-radius:3px;margin-top:4px" />`
-                                    : "";
-
-                                this.tooltipDiv.innerHTML = `
-                                    <div><b>${updatedAttrs.creator_username || "Unknown User"}</b></div>
-                                    <div>${dateStr}</div>
-                                    ${thumbHtml}
-                                `;
-                            } else {
-                                this.tooltipDiv.innerHTML = `<div>Failed to load details</div>`;
-                            }
-                        } catch (err) {
-                            console.warn("Turbo hover fetch error", err);
-                            if (this.tooltipDiv) this.tooltipDiv.innerHTML = `<div>Error loading details</div>`;
-                        }
+                // Check if we're hovering over a DIFFERENT feature
+                if (this._currentHoveredFeatureId !== featureId) {
+                    // NEW FEATURE - Clear old timeout and start fresh
+                    if (this._hoverTimeout) {
+                        clearTimeout(this._hoverTimeout);
+                        this._hoverTimeout = null;
                     }
-                }, 70); // <--- Wait 70ms before running the logic above
+
+                    // Update the tracked feature ID
+                    this._currentHoveredFeatureId = featureId;
+
+                    // Start new timer (Debounce)
+                    this._hoverTimeout = setTimeout(async () => {
+                        if (!this.tooltipDiv) return;
+
+                        // A. If we have detailed attributes already → show immediately
+                        if (attrs.creator_username) {
+                            const dateStr = attrs.captured_at ? new Date(attrs.captured_at).toLocaleString() : "Unknown date";
+                            const thumbHtml = attrs.thumb_url
+                                ? `<img src="${attrs.thumb_url}" style="max-width:150px;border-radius:3px;margin-top:4px" />`
+                                : "";
+
+                            this.tooltipDiv.innerHTML = `
+                                <div><b>${attrs.creator_username}</b></div>
+                                <div>${dateStr}</div>
+                                ${thumbHtml}
+                            `;
+                            this.tooltipDiv.style.left = `${evt.x + 15}px`;
+                            this.tooltipDiv.style.top = `${evt.y + 15}px`;
+                            this.tooltipDiv.style.display = "block";
+                        } 
+                        // B. If missing details → Fetch from API
+                        else {
+                            this.tooltipDiv.innerHTML = `<div>Loading details…</div>`;
+                            this.tooltipDiv.style.left = `${evt.x + 15}px`;
+                            this.tooltipDiv.style.top = `${evt.y + 15}px`;
+                            this.tooltipDiv.style.display = "block";
+
+                            try {
+                                const imgId = attrs.id;
+                                const url = `https://graph.mapillary.com/${imgId}?fields=id,sequence,creator.username,captured_at,thumb_256_url`;
+                                const resp = await fetch(url, {
+                                    headers: { Authorization: `OAuth ${this.accessToken}` }
+                                });
+
+                                if (!this.tooltipDiv) return;
+                                
+                                if (resp.ok) {
+                                    const data = await resp.json();
+                                    if (!this.tooltipDiv) return;
+
+                                    // Update the feature's attributes in the layer cache
+                                    const updatedAttrs = {
+                                        ...attrs,
+                                        sequence_id: data.sequence || null,
+                                        captured_at: data.captured_at ? new Date(data.captured_at).getTime() : null,
+                                        creator_username: data.creator?.username || null,
+                                        thumb_url: data.thumb_256_url || null
+                                    };
+                                    turboHit.graphic.attributes = updatedAttrs;
+
+                                    const dateStr = updatedAttrs.captured_at
+                                        ? new Date(updatedAttrs.captured_at).toLocaleString()
+                                        : "Unknown date";
+                                    const thumbHtml = updatedAttrs.thumb_url
+                                        ? `<img src="${updatedAttrs.thumb_url}" style="max-width:150px;border-radius:3px;margin-top:4px" />`
+                                        : "";
+
+                                    this.tooltipDiv.innerHTML = `
+                                        <div><b>${updatedAttrs.creator_username || "Unknown User"}</b></div>
+                                        <div>${dateStr}</div>
+                                        ${thumbHtml}
+                                    `;
+                                } else {
+                                    this.tooltipDiv.innerHTML = `<div>Failed to load details</div>`;
+                                }
+                            } catch (err) {
+                                console.warn("Turbo hover fetch error", err);
+                                if (this.tooltipDiv) this.tooltipDiv.innerHTML = `<div>Error loading details</div>`;
+                            }
+                        }
+                    }, 100); // Wait 100ms before showing tooltip
+                } else {
+                    // SAME FEATURE - Just update tooltip position without restarting timer
+                    if (this.tooltipDiv.style.display === "block") {
+                        this.tooltipDiv.style.left = `${evt.x + 15}px`;
+                        this.tooltipDiv.style.top = `${evt.y + 15}px`;
+                    }
+                }
             } else {
-                // 3. No hit? Hide tooltip immediately
+                // No turbo hit - clear everything
+                if (this._hoverTimeout) {
+                    clearTimeout(this._hoverTimeout);
+                    this._hoverTimeout = null;
+                }
+                this._currentHoveredFeatureId = null;
                 this.tooltipDiv.style.display = "none";
             }
 
@@ -3664,6 +3701,57 @@ export default class Widget extends React.PureComponent<
                 color: [255, 0, 0, Math.max(alpha, 0)],
                 size: size,
                 outline: { color: [255, 0, 0, Math.max(alpha, 0)], width: 1 }
+            };
+
+            // When invisible, cleanup
+            if (alpha <= 0) {
+                clearInterval(rippleInterval);
+                jimuMapView.view.graphics.remove(rippleGraphic);
+            }
+        }, 30);
+    }
+
+    /**
+        * Draws an orange warning ripple animation at the given coordinates
+        * to indicate an invalid click action in Turbo Mode.
+    */
+    private drawWarningRipple(lon: number, lat: number) {
+        const { jimuMapView } = this.state;
+        if (!jimuMapView || !this.ArcGISModules) return;
+
+        const { Graphic } = this.ArcGISModules;
+
+        let size = 0; // Start small
+        let alpha = 0.6; // Start more opaque than normal ripple
+
+        const rippleGraphic = new Graphic({
+            geometry: {
+                type: "point",
+                longitude: lon,
+                latitude: lat,
+                spatialReference: { wkid: 4326 }
+            },
+            symbol: {
+                type: "simple-marker",
+                style: "circle",
+                color: [255, 140, 0, alpha], // Orange color for warning
+                size: size,
+                outline: { color: [255, 140, 0, alpha], width: 2 }
+            }
+        });
+
+        jimuMapView.view.graphics.add(rippleGraphic);
+
+        const rippleInterval = setInterval(() => {
+            size += 3; // Grow faster for more noticeable effect
+            alpha -= 0.04; // Fade out
+
+            rippleGraphic.symbol = {
+                type: "simple-marker",
+                style: "circle",
+                color: [255, 140, 0, Math.max(alpha, 0)], // Orange
+                size: size,
+                outline: { color: [255, 140, 0, Math.max(alpha, 0)], width: 2 }
             };
 
             // When invisible, cleanup
