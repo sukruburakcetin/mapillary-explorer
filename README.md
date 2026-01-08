@@ -26,6 +26,12 @@ A high-performance custom widget for **ArcGIS Experience Builder** that seamless
 *   **Smart Geocoding:** Real-time reverse geocoding using the ArcGIS World Geocoding Service to display contextual address data.
 *   **Advanced Graphics:** Uses the ArcGIS Maps SDK to draw animated pulsing points, directional cones, and sequence polylines with smooth visual feedback.
 
+### New Settings Panel Capabilities:
+*  **Turbo Mode Only:** Lock the widget into coverage analysis mode and disable standard navigation.
+*  **Default Creator:** Pre-fill the username filter to load specific user data on startup automatically.
+*  **Force Coverage Layer:** Keep the Mapillary street geometry layer always visible.
+*  **UI Customization:** Hide the "Traffic Signs" or "Mapillary Objects" buttons to declutter the interface.
+
 ### Turbo Mode (High-Speed Coverage)
 *   **Vector Tile Rendering:** Renders millions of coverage points efficiently using **PBF decoding** and **Mapbox Vector Tiles**.
 *   **Advanced Filtering:** Filter coverage in real-time by:
