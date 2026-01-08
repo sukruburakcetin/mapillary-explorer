@@ -5,6 +5,7 @@ import { SettingSection, SettingRow } from 'jimu-ui/advanced/setting-components'
 import { MapWidgetSelector } from 'jimu-ui/advanced/setting-components';
 import { Switch } from 'jimu-ui';
 import { IMConfig } from '../config';
+import { TextInput } from 'jimu-ui';
 
 export default class Setting extends React.PureComponent<AllWidgetSettingProps<IMConfig>, any> {
 
@@ -37,6 +38,21 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     });
   }
 
+  onToggleCoverageAlwaysOn = (evt: React.ChangeEvent<HTMLInputElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('coverageLayerAlwaysOn', evt.target.checked)
+    });
+  }
+
+  // Handle Creator Input
+  onCreatorChange = (evt: React.ChangeEvent<HTMLInputElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('turboCreator', evt.target.value)
+    });
+  }
+
   render() {
     const config = this.props.config;
 
@@ -55,41 +71,66 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
           </SettingRow>
         </SettingSection>
 		
-		<SettingSection title="General Settings">
-           <SettingRow label="Turbo Mode Only">
-            <Switch 
-              checked={config.turboModeOnly === true} 
-              onChange={this.onToggleTurboModeOnly} 
-            />
-          </SettingRow>
-          <SettingRow>
-            <span className="text-muted" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px' }}>
-              Forces the turbo coverage layer to always be active and hides the toggle. Disables "Normal Mode" (nearest image search), restricting interaction to clicking directly on visible coverage points.
-            </span>
-          </SettingRow>
+        <SettingSection title="General Settings">
+            <SettingRow label="Mapillary Coverage" style={{marginTop: '5px'}}>
+                  <Switch 
+                    checked={config.coverageLayerAlwaysOn === true} 
+                    onChange={this.onToggleCoverageAlwaysOn} 
+                  />
+            </SettingRow>
+            <SettingRow>
+                  <span className="text-muted" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px' }}>
+                    Forces the standard Mapillary vector tiles (green lines & blue images) to always be visible. Hides the map toggle button.
+                  </span>
+            </SettingRow>
+            <SettingRow label="Turbo Mode Only">
+                <Switch 
+                  checked={config.turboModeOnly === true} 
+                  onChange={this.onToggleTurboModeOnly} 
+                />
+            </SettingRow>
+            <SettingRow>
+                <span className="text-muted" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px' }}>
+                  Forces the turbo coverage layer to always be active and hides the toggle. Disables "Normal Mode" (nearest image search), restricting interaction to clicking directly on visible coverage points.
+                </span>
+            </SettingRow>
+            {/*Default Creator Field */}
+            <SettingRow flow="wrap">
+              <div style={{ width: '100%' }}>
+                <div style={{ marginBottom: '5px', fontWeight: 500 }}>
+                  Default Creator (Turbo Mode Only)
+                </div>
+                <TextInput 
+                  className="w-100" 
+                  placeholder="e.g. mapillary_user" 
+                  value={config.turboCreator || ''} 
+                  onChange={this.onCreatorChange} 
+                />
+              </div>
+            </SettingRow>
         </SettingSection>
 
         <SettingSection title="Feature Detection Layers">
-          <SettingRow label="Enable Traffic Signs">
-            <Switch 
-              checked={config.enableTrafficSigns !== false} 
-              onChange={this.onToggleTrafficSigns} 
-            />
-          </SettingRow>
+              <SettingRow label="Enable Traffic Signs">
+                <Switch 
+                  checked={config.enableTrafficSigns !== false} 
+                  onChange={this.onToggleTrafficSigns} 
+                />
+              </SettingRow>
 
-          <SettingRow label="Enable Mapillary Objects">
-            <Switch 
-              checked={config.enableMapillaryObjects !== false} 
-              onChange={this.onToggleObjects} 
-            />
-          </SettingRow>
+              <SettingRow label="Enable Mapillary Objects">
+                <Switch 
+                  checked={config.enableMapillaryObjects !== false} 
+                  onChange={this.onToggleObjects} 
+                />
+              </SettingRow>
 
-          <SettingRow>
-            <span className="text-muted" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px' }}>
-              Disabling these will hide the sign and object layer toggle buttons in the widget interface.
-            </span>
-          </SettingRow>
-        </SettingSection>
+              <SettingRow>
+                <span className="text-muted" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px' }}>
+                  Disabling these will hide the sign and object layer toggle buttons in the widget interface.
+                </span>
+              </SettingRow>
+            </SettingSection>
         
       </div>
     );
