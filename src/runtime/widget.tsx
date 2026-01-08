@@ -2802,6 +2802,10 @@ export default class Widget extends React.PureComponent<
         }
 
         if (!features.length) {
+            this.showZoomWarning(
+                "No Turbo coverage matches for filters or date coloring", 
+                3000 // Show for 3 seconds
+            );
             console.warn("No Turbo coverage matches for filters or date coloring");
             this.setState({ turboLoading: false });
             return;
@@ -3121,11 +3125,29 @@ export default class Widget extends React.PureComponent<
         styleSheet.innerText = mobileOverrideStyles;
         document.head.appendChild(styleSheet);
 
+        if (this.props.config.turboCreator) {
+            this.setState({ turboFilterUsername: this.props.config.turboCreator });
+        }
+
         // Check if Turbo Mode Only is enabled in config
         // Just set the state here. The watchers will be attached 
         // as soon as the map loads via onActiveViewChange.
         if (this.props.config.turboModeOnly) {
             this.setState({ turboModeActive: true });
+        }
+
+        // --- FIX: Check if we need to add the "Always On" layer now ---
+        // If the MapView loaded BEFORE these modules, onActiveViewChange skipped the add.
+        // We must do it here now that modules (and the layer object) are ready.
+        if (this.props.config.coverageLayerAlwaysOn && this.state.jimuMapView) {
+            const view = this.state.jimuMapView.view;
+            const existingLayer = view.map.findLayerById("mapillary-vector-tiles");
+            
+            if (!existingLayer && this.mapillaryVTLayer) {
+                view.map.add(this.mapillaryVTLayer);
+                this.setState({ tilesActive: true });
+                console.log("Coverage layer added from componentDidMount (deferred load)");
+            }
         }
     }
 	
@@ -3187,7 +3209,18 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        // 3. Handle Turbo Mode Only config change
+        // 3. Handle Creator Config Change
+        if (prevProps.config.turboCreator !== this.props.config.turboCreator) {
+            const newCreator = this.props.config.turboCreator || "";
+            this.setState({ turboFilterUsername: newCreator }, () => {
+                // If turbo mode is active, reload the layer immediately with the new filter
+                if (this.state.turboModeActive) {
+                    this.enableTurboCoverageLayer();
+                }
+            });
+        }
+
+        // 4. Handle Turbo Mode Only config change
         if (prevProps.config.turboModeOnly !== this.props.config.turboModeOnly) {
             const isTurboOnly = this.props.config.turboModeOnly;
             if (isTurboOnly) {
@@ -3199,6 +3232,32 @@ export default class Widget extends React.PureComponent<
                 // Turned OFF: Just disable the flag, let user toggle manually.
                 // We don't necessarily have to turn off the layer, just allow the button to appear again.
                 // Optionally: this.disableTurboCoverageLayer(); this.setState({ turboModeActive: false });
+            }
+        }
+
+        // 5. Handle Coverage Layer Always On config change
+        if (prevProps.config.coverageLayerAlwaysOn !== this.props.config.coverageLayerAlwaysOn) {
+            if (this.props.config.coverageLayerAlwaysOn) {
+                // Turned ON: Force add layer
+                this.setState({ tilesActive: true });
+                if (this.state.jimuMapView && this.mapillaryVTLayer) {
+                     const existingLayer = this.state.jimuMapView.view.map.findLayerById("mapillary-vector-tiles");
+                     if (!existingLayer) {
+                         this.state.jimuMapView.view.map.add(this.mapillaryVTLayer);
+                     }
+                }
+            } else {
+                // Turned OFF: 
+                // 1. Reset state so the button appears "Unpressed"
+                this.setState({ tilesActive: false });
+
+                // 2. Remove the layer from the map so the visual matches the state
+                if (this.state.jimuMapView) {
+                    const existingLayer = this.state.jimuMapView.view.map.findLayerById("mapillary-vector-tiles");
+                    if (existingLayer) {
+                        this.state.jimuMapView.view.map.remove(existingLayer);
+                    }
+                }
             }
         }
 	}
@@ -3563,33 +3622,60 @@ export default class Widget extends React.PureComponent<
                         }
                     }
                 }, 500)
-            );
+        );
 
-            if (this.turboZoomHandle) { this.turboZoomHandle.remove(); }
+        if (this.turboZoomHandle) { this.turboZoomHandle.remove(); }
 
-            this.turboZoomHandle = jmv.view.watch("zoom", (z) => {
-                const minTurboZoom = 16;
-                
-                if (this.state.turboModeActive) {
-                    if (z < minTurboZoom) {
-                        // 1. Zoomed OUT too far: Disable layer AND Show persistent warning
-                        this.disableTurboCoverageLayer();
-                        this.showZoomWarning("Turbo Mode active: Zoom in closer (≥ 16) to view data.", 0); // 0 = Infinite
-                    } else {
-                        // 2. Zoomed IN enough: Clear warning
-                        this.clearZoomWarning();
-                        // (The stationary watcher will handle loading the data once zooming stops)
+        this.turboZoomHandle = jmv.view.watch("zoom", (z) => {
+                    const minTurboZoom = 16;
+                    
+                    if (this.state.turboModeActive) {
+                        if (z < minTurboZoom) {
+                            // 1. Zoomed OUT too far: Disable layer AND Show persistent warning
+                            this.disableTurboCoverageLayer();
+                            this.showZoomWarning("Turbo Mode active: Zoom in closer (≥ 16) to view data.", 0); // 0 = Infinite
+                        } else {
+                            // 2. Zoomed IN enough: Clear warning
+                            this.clearZoomWarning();
+                            // (The stationary watcher will handle loading the data once zooming stops)
+                        }
                     }
-                }
-            });
+        });
 
-            // --- UPDATED INITIAL CHECK ---
-            if (jmv.view.zoom >= 16) {
+        // --- UPDATED INITIAL CHECK ---
+        if (jmv.view.zoom >= 16) {
                 this.enableTurboCoverageLayer();
                 this.clearZoomWarning(); // Ensure no leftover warnings
             } else {
                 // Start with persistent warning if initial view is too far out
                 this.showZoomWarning("Turbo Mode active: Zoom in closer (≥ 16) to view data.", 0);
+            }
+        }
+
+        // Force Add Coverage Layer if Config is ON
+        if (this.props.config.coverageLayerAlwaysOn) {
+            this.setState({ tilesActive: true });
+            
+            // FIX: Only initialize/add if Modules are already loaded.
+            // If modules aren't loaded yet (null), componentDidMount will handle the add.
+            if (this.ArcGISModules) {
+                // Check if layer is initialized
+                if (!this.mapillaryVTLayer) {
+                    this.initMapillaryLayer();
+                }
+
+                // Add to map if not present
+                const existingLayer = jmv.view.map.findLayerById("mapillary-vector-tiles");
+                if (!existingLayer && this.mapillaryVTLayer) {
+                    jmv.view.map.add(this.mapillaryVTLayer);
+                    
+                    // Optional: Ensure it's ordered correctly relative to Turbo
+                    if (this.turboCoverageLayer && jmv.view.map.layers.includes(this.turboCoverageLayer)) {
+                        jmv.view.map.reorder(this.turboCoverageLayer, jmv.view.map.layers.length - 1);
+                    }
+                }
+            } else {
+                console.log("Map ready but modules pending. Layer add deferred to componentDidMount.");
             }
         }
     }
@@ -4676,7 +4762,7 @@ export default class Widget extends React.PureComponent<
                         position: "absolute",
                         top: "10px",
                         right: "10px",
-                        background: "rgba(2, 117, 216, 0.3)",
+                        background: "rgba(2, 117, 216, 0.6)",
                         borderRadius: "4px",
 						maxWidth: "80px",
                         textAlign: "center"
@@ -4693,7 +4779,7 @@ export default class Widget extends React.PureComponent<
                             if (currentImg) {
                                 return (
                                     <div>
-                                        📍{" "}Lat: {currentImg.lat.toFixed(6)}<br/>📍{" "}Lon: {currentImg.lon.toFixed(6)}
+                                        📍{" "}Latitude: {currentImg.lat.toFixed(6)}<br/>📍{" "}Longitude: {currentImg.lon.toFixed(6)}
                                         {this.state.address && <><br/>🌎{" "}{this.state.address}</>}
                                     </div>
                                 );
@@ -5264,9 +5350,20 @@ export default class Widget extends React.PureComponent<
                             onClick: this.toggleMapillaryTiles, 
                             title: 'Toggle Mapillary Layer', 
                             bg: 'rgba(53, 175, 109, 0.9)', 
-                            active: this.state.tilesActive
+                            active: this.state.tilesActive,
+                            id: 'coverage_toggle' 
                         }
-                    ].map((btn, i) => (
+                    ]
+
+                    // FILTER: If coverageLayerAlwaysOn is true, hide the coverage_toggle button
+                    .filter(btn => {
+                        if (btn.id === 'coverage_toggle' && this.props.config.coverageLayerAlwaysOn) {
+                            return false;
+                        }
+                        return true;
+                    })
+                    
+                    .map((btn, i) => (
                             <button className="unified-control-buttons-mapped"
                                 key={i}
                                 title={btn.title}

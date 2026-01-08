@@ -6,6 +6,8 @@ export interface Config {
   enableTrafficSigns: boolean;
   enableMapillaryObjects: boolean;
   turboModeOnly: boolean;
+  coverageLayerAlwaysOn: boolean;
+  turboCreator?: string; 
 }
 
 export type IMConfig = ImmutableObject<Config>;
