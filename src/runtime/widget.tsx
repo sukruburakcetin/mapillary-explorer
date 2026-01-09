@@ -4820,6 +4820,8 @@ export default class Widget extends React.PureComponent<
                         <input
                             type="text"
                             placeholder="Creator username…"
+                            // Disable input if config is set
+                            disabled={!!this.props.config.turboCreator}
                             value={this.state.turboFilterUsername}
                             onChange={(e) => {
                                 const val = e.target.value;
@@ -4851,10 +4853,13 @@ export default class Widget extends React.PureComponent<
                                 width: '100px',
                                 boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
                                 transition: 'all 0.2s ease-in-out',
-                                boxSizing: 'border-box'
+                                boxSizing: 'border-box',
+                                opacity: this.props.config.turboCreator ? 0.7 : 1,
+                                cursor: this.props.config.turboCreator ? 'not-allowed' : 'text',
+                                color: this.props.config.turboCreator ? '#555' : 'inherit'
                             }}
-                            autoFocus
-                            title="Enter a Mapillary creator username to filter coverage points"
+                            autoFocus={!this.props.config.turboCreator} // Don't autofocus if locked
+                            title={this.props.config.turboCreator ? "Locked by widget settings" : "Enter a Mapillary creator username"}
                         />
 
                         {/* Date range filter */}
@@ -5001,7 +5006,7 @@ export default class Widget extends React.PureComponent<
                             </span>
                         </label>
 
-                        {this.state.turboFilterUsername && (
+                        {!this.props.config.turboCreator && this.state.turboFilterUsername && (
                             <button
                             onClick={() => {
                                 this.setState({ turboFilterUsername: "" }, () => {
@@ -5512,7 +5517,7 @@ export default class Widget extends React.PureComponent<
 
                         {/* Turbo Filter Button */}
                         <button className="unified-control-buttons-filters"
-                            title="Filter Turbo Coverage by Username"
+                            title="Filter Turbo Coverage"
                             onClick={() => {
                                 if (!this.state.turboModeActive) return;
                                 this.setState(prev => ({ showTurboFilterBox: !prev.showTurboFilterBox }));
