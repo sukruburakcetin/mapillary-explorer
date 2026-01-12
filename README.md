@@ -7,6 +7,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![ArcGIS](https://img.shields.io/badge/ArcGIS-Experience%20Builder-007AC2)
 ![React](https://img.shields.io/badge/React-17+-61DAFB)
+![Esri Enterprise](https://img.shields.io/badge/Esri-Enterprise_12.2+-61DAFB)
 
 A high-performance custom widget for **ArcGIS Experience Builder** that seamlessly integrates Mapillary street-level imagery with ArcGIS maps. Designed for speed and interactivity, this widget allows users to explore image sequences, visualize high-volume coverage data in real-time ("Turbo Mode"), and interact with detected map features like traffic signs and infrastructure assets.
 
@@ -186,7 +187,7 @@ Below is an example of the `manifest.json` file used for configuration:
 
 ### Mapillary Explorer Demo Video
 
-[![Watch the video](https://img.youtube.com/vi/TYrrStp9WU8/hqdefault.jpg)](https://www.youtube.com/watch?v=TYrrStp9WU8)
+[![Watch the video](https://img.youtube.com/vi/ypu2tmyYTMg/hqdefault.jpg)](https://www.youtube.com/watch?v=ypu2tmyYTMg)
 
 ---
 
