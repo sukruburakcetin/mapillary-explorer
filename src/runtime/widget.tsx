@@ -268,13 +268,94 @@ export default class Widget extends React.PureComponent<
         // 3. Image Change Event
         this.mapillaryViewer.on("image", async (event: any) => {
             const newId = event.image.id;
-            const newImg = this.state.sequenceImages.find(s => s.id === newId);
-            if (!newImg) return;
             const view = this.state.jimuMapView?.view;
             if (!view) return;
 
-            // Turn previous active into static blue point ONLY if it's different
-            if (this.state.imageId && this.state.imageId !== newId) {
+            // Check if this image is in our current sequence
+            let newImg = this.state.sequenceImages.find(s => s.id === newId);
+            let didLateralJump = false; // Track if we jumped to a new sequence
+            
+            // If not found (lateral movement to different sequence), fetch the new sequence
+            if (!newImg) {
+                console.log("Image not in current sequence, fetching new sequence data...");
+                didLateralJump = true; // Mark that we're doing a lateral jump
+                
+                try {
+                    // Fetch the sequence ID for this image
+                    const resp = await fetch(`https://graph.mapillary.com/${newId}?fields=sequence,geometry`, {
+                        headers: { Authorization: `OAuth ${this.accessToken}` }
+                    });
+                    
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        const newSeqId = data.sequence;
+                        const coords = data.geometry?.coordinates;
+                        
+                        if (newSeqId && coords) {
+                            // Fetch full sequence coordinates
+                            const newSequenceImages = await this.getSequenceWithCoords(newSeqId, this.accessToken);
+                            
+                            // Update state with new sequence
+                            this.setState({
+                                sequenceId: newSeqId,
+                                selectedSequenceId: newSeqId,
+                                sequenceImages: newSequenceImages
+                            });
+                            
+                            // Save to cache
+                            this.saveSequenceCache(newSeqId, newSequenceImages);
+                            
+                            // Find the new image in the updated sequence
+                            newImg = newSequenceImages.find(s => s.id === newId);
+                            
+                            // Redraw sequence graphics
+                            if (newImg) {
+                                // Clear green pulse first
+                                this.clearGreenPulse();
+                                
+                                // Clear ALL old graphics (including old sequence overlay)
+                                const toRemove: __esri.Graphic[] = [];
+                                view.graphics.forEach(g => {
+                                    toRemove.push(g);
+                                });
+                                toRemove.forEach(g => view.graphics.remove(g));
+                                
+                                // Draw new sequence polyline
+                                if (newSequenceImages.length > 1) {
+                                    const { Graphic } = this.ArcGISModules;
+                                    const paths = newSequenceImages.map(img => [img.lon, img.lat]);
+                                    
+                                    const polylineGraphic = new Graphic({
+                                        geometry: { type: "polyline", paths: [paths], spatialReference: { wkid: 4326 } },
+                                        symbol: { type: "simple-line", color: [0, 0, 255, 0.8], width: 3 },
+                                        attributes: { sequenceId: newSeqId }
+                                    });
+                                    (polylineGraphic as any).__isSequenceOverlay = true;
+                                    view.graphics.add(polylineGraphic);
+                                }
+                                
+                                // Draw new sequence points
+                                newSequenceImages.forEach(img => {
+                                    if (img.id !== newId) {
+                                        this.drawPointWithoutRemoving(img.lon, img.lat, [0, 0, 255, 1]);
+                                    }
+                                });
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error("Failed to fetch lateral sequence:", err);
+                    return; // Exit if we can't load the new sequence
+                }
+            }
+            
+            if (!newImg) {
+                console.warn("Could not locate image coordinates");
+                return;
+            }
+
+            // Turn previous active into static blue point ONLY if staying in same sequence
+            if (this.state.imageId && this.state.imageId !== newId && !didLateralJump) {
                 const prevImg = this.state.sequenceImages.find(s => s.id === this.state.imageId);
                 if (prevImg) {
                     this.clearGreenPulse();
@@ -1113,7 +1194,7 @@ export default class Widget extends React.PureComponent<
                     imageId: currentImageId,
                     component: {
                         zoom: true,       
-                        direction: false,  
+                        direction: true,  
                         cover: false
                     }
                 });
@@ -1449,8 +1530,8 @@ export default class Widget extends React.PureComponent<
                     "source-layer": "image",
                     "type": "circle",
                     "paint": {
-                        "circle-radius": 3,
-                    //  "circle-color": "#3388ff",
+                        "circle-radius": 2,
+                        "circle-opacity": 0.3,
                         "circle-color": "#33c2ffff",
                         "circle-stroke-color": "#ffffff",
                         "circle-stroke-width": 1
@@ -1461,7 +1542,7 @@ export default class Widget extends React.PureComponent<
 
         // Store the VectorTileLayer instance so we can toggle it later
         this.mapillaryVTLayer = new VectorTileLayer({
-            id: "mapillary-vector-tiles", // <--- ADD THIS FIXED ID
+            id: "mapillary-vector-tiles",
             style: minimalStyle
         })
     }
@@ -2841,13 +2922,13 @@ export default class Widget extends React.PureComponent<
             this.setState({ turboYearLegend: [] });
         }
 
-        let enablePopups = needDetails;
-        const onlyPanoOrColor =
-            (!turboFilterUsername?.trim() &&
-            !turboFilterStartDate &&
-            !turboFilterEndDate &&
-            (turboFilterIsPano !== undefined || turboColorByDate));
-        if (onlyPanoOrColor) enablePopups = false;
+        // let enablePopups = needDetails;
+        // const onlyPanoOrColor =
+        //     (!turboFilterUsername?.trim() &&
+        //     !turboFilterStartDate &&
+        //     !turboFilterEndDate &&
+        //     (turboFilterIsPano !== undefined || turboColorByDate));
+        // if (onlyPanoOrColor) enablePopups = false;
 
         this.turboCoverageLayer = new FeatureLayer({
             id: "turboCoverage",
@@ -2863,19 +2944,19 @@ export default class Widget extends React.PureComponent<
             geometryType: "point",
             spatialReference: { wkid: 3857 },
             renderer,
-            popupEnabled: enablePopups,
-            popupTemplate: enablePopups
-            ? {
-                title: `{creator_username}`,
-                content: `
-                    <b>Image ID:</b> {id}<br>
-                    <b>Creator:</b> {creator_username}<br>
-                    <b>Captured At:</b> {captured_at}<br>
-                    <b>Panorama:</b> {is_pano}<br>
-                    ${turboColorByDate ? "<b>Year:</b> {date_category}<br>" : ""}
-                `
-                }
-            : undefined
+            popupEnabled: false
+            // popupTemplate: enablePopups
+            // ? {
+            //     title: `{creator_username}`,
+            //     content: `
+            //         <b>Image ID:</b> {id}<br>
+            //         <b>Creator:</b> {creator_username}<br>
+            //         <b>Captured At:</b> {captured_at}<br>
+            //         <b>Panorama:</b> {is_pano}<br>
+            //         ${turboColorByDate ? "<b>Year:</b> {date_category}<br>" : ""}
+            //     `
+            //     }
+            // : undefined
         });
 
         jimuMapView.view.map.add(this.turboCoverageLayer);
@@ -2959,7 +3040,7 @@ export default class Widget extends React.PureComponent<
                     imageId: startImageId,
                     component: {
                         zoom: true,       
-                        direction: false,  
+                        // direction: false,  
                         cover: false
                     }
                 });
@@ -3136,7 +3217,7 @@ export default class Widget extends React.PureComponent<
             this.setState({ turboModeActive: true });
         }
 
-        // --- FIX: Check if we need to add the "Always On" layer now ---
+        // --- Check if we need to add the "Always On" layer now ---
         // If the MapView loaded BEFORE these modules, onActiveViewChange skipped the add.
         // We must do it here now that modules (and the layer object) are ready.
         if (this.props.config.coverageLayerAlwaysOn && this.state.jimuMapView) {
@@ -3476,7 +3557,7 @@ export default class Widget extends React.PureComponent<
             // Guard: Check if tooltipDiv is valid
             if (!this.tooltipDiv) return;
 
-            // === TURBO MODE HOVER (FIXED) ===
+            // === TURBO MODE HOVER ===
             const turboHit = hit.results.find(r =>
                 r.graphic?.layer?.id === "turboCoverage"
             );
@@ -3656,7 +3737,7 @@ export default class Widget extends React.PureComponent<
         if (this.props.config.coverageLayerAlwaysOn) {
             this.setState({ tilesActive: true });
             
-            // FIX: Only initialize/add if Modules are already loaded.
+            // Only initialize/add if Modules are already loaded.
             // If modules aren't loaded yet (null), componentDidMount will handle the add.
             if (this.ArcGISModules) {
                 // Check if layer is initialized
@@ -4165,7 +4246,7 @@ export default class Widget extends React.PureComponent<
                         })
                     );
 
-                    // FIXED: Moved loadSequenceById INSIDE the callback to guarantee layering order
+                    // Moved loadSequenceById INSIDE the callback to guarantee layering order
                     this.setState({ availableSequences: fullSeqs }, async () => {
                         // 1. Draw Background (Colored Dots)
                         this.drawSequencesOverlay();
@@ -4615,10 +4696,10 @@ export default class Widget extends React.PureComponent<
                     <div style={{
                         position: "absolute",
                         top: "25px",
-                        left: "50px",
+                        left: "40px",
                         background: "rgba(255,165,0,0.95)",
                         color: "#fff",
-                        padding: "6px 10px",
+                        padding: "3px 3px",
                         borderRadius: "4px",
                         fontSize: "10px",
                         boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
@@ -4808,6 +4889,23 @@ export default class Widget extends React.PureComponent<
                                     <span className="turbo-legend-cbd-date-title" style={{ fontSize: "9px" }}>{item.year}</span>
                                 </div>
                             ))}
+                        </div>
+                    )}
+                    {this.props.config.turboCreator && (
+                        <div style={{
+                            marginTop: "4px",
+                            padding: "2px 4px",
+                            borderRadius: "3px",
+                            fontSize: "8px"
+                        }}>
+                            <div>User:</div>
+                            <div style={{fontWeight: "bold"}}>{this.props.config.turboCreator}</div>
+                            {/* Optional: Check zoom level only if map is available */}
+                            {this.state.jimuMapView?.view.zoom < 14 && (
+                                <div style={{color: "yellow", marginTop: "2px"}}>
+                                    (Zoom in for filtered view)
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
