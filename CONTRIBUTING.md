@@ -43,9 +43,17 @@ By default, this is located under:
 ```bash
 cd <experience-builder-root>/server
 npm install      # install dependencies (only needed the first time)
-npm install pbf @mapbox/vector-tile react-select react-datepicker
+npm install mapillary-js pbf @mapbox/vector-tile react-select react-datepicker
 npm start        # start the server
  ```
+```text
+The version is used in this project:
+- mapillary-js@4.1.2
+- pbf@4.0.1
+- @mapbox/vector-tile@2.0.4
+- react-select@5.10.2
+- react-datepicker@8.9.0
+```
 2. Go to the server directory of Experience Builder, and start the Experience Builder Client:
    Open a new terminal window and run:
 ```bash
