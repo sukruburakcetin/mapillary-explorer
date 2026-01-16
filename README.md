@@ -3,7 +3,7 @@
   Mapillary Explorer
 </h1>
 
-![Version](https://img.shields.io/badge/version-2.9.0-blue.svg)
+![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![ArcGIS](https://img.shields.io/badge/ArcGIS-Experience%20Builder-007AC2)
 ![React](https://img.shields.io/badge/React-17+-61DAFB)
@@ -73,9 +73,9 @@ A high-performance custom widget for **ArcGIS Experience Builder** that seamless
 
 This widget is distributed as a **prebuilt (production) package** containing a `/dist` folder and `manifest.json`.  
 You do **not** need ArcGIS Experience Builder Developer Edition to use it, only a web server (such as IIS) and portal administrator privileges.
+However, if you want to view it on ArcGIS Developer Edition (localhost:3001), follow the CONTRIBUTE.md guide in the repository.
 
 ---
-
 ### 1. Prepare the Widget Folder
 
 1.1. Copy the exported release version of the widget folder (e.g., `mapillary-explorer`) to your web server or IIS directory.  
@@ -160,7 +160,7 @@ Below is an example of the `manifest.json` file used for configuration:
   "name": "mapillary-explorer",
   "label": "Mapillary Explorer",
   "type": "widget",
-  "version": "2.9.0",
+  "version": "3.0.0",
   "exbVersion": "1.18.0",
   "author": "Sukru Burak Cetin",
   "description": "Mapillary Explorer is a custom ArcGIS Experience Builder widget that brings street-level Mapillary imagery directly into your web maps.",
