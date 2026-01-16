@@ -11,14 +11,10 @@ import Select from 'react-select';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { objectNameMap } from "../helpers/mapillaryObjectNameMap";
-import { legendCircleStyle, legendRowStyle, mobileOverrideStyles} from "../helpers/styles";
+import { legendCircleStyle, mobileOverrideStyles} from "../helpers/styles";
+import { Viewer } from 'mapillary-js';
+import 'mapillary-js/dist/mapillary.css'; 
 
-interface WindowWithMapillary extends Window {
-    mapillary: any;
-    define?: any;
-}
-
-declare const window: WindowWithMapillary;
 
 // --- React component state ---
 // Holds current map view, image/sequence data, viewer state,
@@ -87,13 +83,17 @@ export default class Widget extends React.PureComponent<
     private sequenceCoordsCache: Record<string, {id: string, lat: number, lon: number}[]> = {};
     private _lastBearing: number = 0; 
     viewerContainer = React.createRef<HTMLDivElement>();
-    minimapContainer = React.createRef<HTMLDivElement>(); // Add this
+    minimapContainer = React.createRef<HTMLDivElement>();
     private minimapView: __esri.MapView | null = null;
     private minimapGraphicsLayer: __esri.GraphicsLayer | null = null;
     private minimapWatchHandle: __esri.WatchHandle | null = null;
     private _hoverTimeout: any = null;
     private _zoomWarningTimeout: any = null;
     private _currentHoveredFeatureId: string | null = null;
+    private _directionHoverGraphic: __esri.Graphic | null = null;
+    private _directionUnsubscribe: (() => void) | null = null;  
+    private directionImageCache: Record<string, { lon: number; lat: number }> = {};
+    private _currentDirectionHoverId: string | null = null;
 
     /**
         * Human‑readable names for Mapillary object classification codes.
@@ -257,6 +257,11 @@ export default class Widget extends React.PureComponent<
             });
         });
 
+        // Setup Direction Component Hover with delay
+        setTimeout(() => {
+            this.setupDirectionHover();
+        }, 500); // 500ms delay to ensure component is loaded
+
         // 2. Bearing Change Event
         this.mapillaryViewer.on("bearing", (event: any) => {
             this._lastBearing = event.bearing;
@@ -337,7 +342,7 @@ export default class Widget extends React.PureComponent<
                                 // Draw new sequence points
                                 newSequenceImages.forEach(img => {
                                     if (img.id !== newId) {
-                                        this.drawPointWithoutRemoving(img.lon, img.lat, [0, 0, 255, 1]);
+                                        this.drawPointWithoutRemoving(img.lon, img.lat, [0, 0, 255, 1], newSeqId);
                                     }
                                 });
                             }
@@ -359,7 +364,7 @@ export default class Widget extends React.PureComponent<
                 const prevImg = this.state.sequenceImages.find(s => s.id === this.state.imageId);
                 if (prevImg) {
                     this.clearGreenPulse();
-                    this.drawPointWithoutRemoving(prevImg.lon, prevImg.lat, [0, 0, 255, 1]);
+                    this.drawPointWithoutRemoving(prevImg.lon, prevImg.lat, [0, 0, 255, 1], this.state.sequenceId!);
                 }
             }
 
@@ -389,6 +394,255 @@ export default class Widget extends React.PureComponent<
             // Update minimap tracking
             this.updateMinimapTracking();
         });
+    }
+
+    /**
+        * Sets up hover detection for DirectionComponent arrows.
+        * When user hovers over navigation arrows, highlights the target image marker on the map.
+    */
+    private setupDirectionHover() {
+        if (!this.mapillaryViewer) return;
+
+        try {
+            const directionComponent: any = this.mapillaryViewer.getComponent("direction");
+            
+            if (!directionComponent) {
+                console.warn("DirectionComponent not found");
+                return;
+            }
+
+            if (directionComponent._hoveredId$) {
+                const subscription = directionComponent._hoveredId$.subscribe((hoveredId: string | null) => {
+                    // console.log("Direction hover:", hoveredId);
+                    this.handleDirectionHover(hoveredId);
+                });
+
+                // Store unsubscribe function for cleanup
+                this._directionUnsubscribe = () => subscription.unsubscribe();
+                
+                // Mobil 'hover'
+                if (this.viewerContainer.current) {
+                    const container = this.viewerContainer.current;
+
+                    const simulateMouseMove = (e: TouchEvent) => {
+                        if (e.touches.length > 1) return;
+
+                        const touch = e.touches[0];
+                        // Sahte bir mousemove olayı oluştur
+                        const mouseEvent = new MouseEvent("mousemove", {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window,
+                            clientX: touch.clientX,
+                            clientY: touch.clientY,
+                            screenX: touch.screenX,
+                            screenY: touch.screenY,
+                        });
+
+                        if (e.target) {
+                            e.target.dispatchEvent(mouseEvent);
+                        }
+                    };
+
+                    // TouchStart
+                    container.addEventListener("touchstart", simulateMouseMove, { passive: true });
+                    
+                    // TouchMove
+                    container.addEventListener("touchmove", simulateMouseMove, { passive: true });
+                    
+                    // TouchEnd
+                    container.addEventListener("touchend", () => {
+                         this.handleDirectionHover(null);
+                    }, { passive: true });
+                }
+            } else {
+                console.warn("_hoveredId$ not available on DirectionComponent");
+            }
+        } catch (err) {
+            console.warn("Failed to setup direction hover:", err);
+        }
+    }
+
+    /**
+        * Handles hover events from DirectionComponent.
+        * Draws a highlighted yellow marker on the map for the hovered navigation target.
+        * Searches across ALL available sequences (normal mode) and current sequence (turbo mode).
+        * @param hoveredId Image ID being hovered, or null when hover ends
+    */
+    private handleDirectionHover(hoveredId: string | null) {
+        const view = this.state.jimuMapView?.view;
+        if (!view || !this.ArcGISModules) return;
+        this._currentDirectionHoverId = hoveredId;
+        
+        // Clear previous hover graphic
+        this.clearDirectionHighlight();
+
+        if (!hoveredId) return;
+
+        // Search strategy:
+        let hoveredImg: { id: string; lon: number; lat: number } | undefined;
+
+        // Strategy 1: Current active sequence
+        hoveredImg = this.state.sequenceImages.find(img => img.id === hoveredId);
+
+        // Strategy 2: Search in all available sequences
+        if (!hoveredImg && this.state.availableSequences?.length > 0) {
+            for (const seq of this.state.availableSequences) {
+                hoveredImg = seq.images.find(img => img.id === hoveredId);
+                if (hoveredImg) {
+                    console.log(`Found hover target in sequence: ${seq.sequenceId}`);
+                    break;
+                }
+            }
+        }
+
+        if (!hoveredImg && this.directionImageCache[hoveredId]) {
+            hoveredImg = {
+                id: hoveredId,
+                ...this.directionImageCache[hoveredId]
+            };
+        }
+
+        // Strategy 3: Fetch from API if not found locally
+        if (!hoveredImg) {
+            console.log(`Image not in loaded sequences, fetching from API: ${hoveredId}`);
+            this.fetchAndHighlightImage(hoveredId);
+            return;
+        }
+
+        this.drawDirectionHighlight(hoveredImg);
+    }
+
+    /**
+        * Fetches a Mapillary image's geometry (longitude / latitude)
+        * from the Mapillary Graph API using the given imageId.
+        * - Requests only minimal fields (id, geometry)
+        * - Caches coordinates for reuse
+        * - Ensures the hover state is still valid before drawing
+        * - Prevents outdated hover results from being rendered
+    */
+    private async fetchAndHighlightImage(imageId: string) {
+        try {
+            const response = await fetch(
+                `https://graph.mapillary.com/${imageId}?fields=id,geometry`,
+                { headers: { Authorization: `OAuth ${this.accessToken}` } }
+            );
+            
+            if (!response.ok) {
+                console.warn(`Failed to fetch image ${imageId}`);
+                return;
+            }
+
+            const data = await response.json();
+            const coords = data.geometry?.coordinates;
+            
+            if (!coords) {
+                console.warn(`No coordinates for image ${imageId}`);
+                return;
+            }
+
+            const hoveredImg = {
+                id: imageId,
+                lon: coords[0],
+                lat: coords[1]
+            };
+            // Cache image coordinates for future hover events
+            this.directionImageCache[imageId] = { lon: hoveredImg.lon, lat: hoveredImg.lat };
+
+            if (this._currentDirectionHoverId === imageId) {
+                this.drawDirectionHighlight(hoveredImg);
+            } else {
+                console.log(`Hover changed during fetch, discarding: ${imageId}`);
+            }
+        } catch (error) {
+            console.error(`Error fetching image ${imageId}:`, error);
+        }
+    }
+
+    /**
+        * Draws a pulsing highlight marker on the map
+        * for the given image location.
+        * - Clears any existing highlight
+        * - Adds a graphic to the view.graphics layer
+        * - Applies a pulse animation by dynamically
+        *   updating the marker size
+    */
+    private drawDirectionHighlight(hoveredImg: { id: string; lon: number; lat: number }) {
+        const view = this.state.jimuMapView?.view;
+        if (!view || !this.ArcGISModules) return;
+        // Remove any existing highlight before drawing a new one
+        this.clearDirectionHighlight();
+        const { Graphic } = this.ArcGISModules;
+
+        const graphic = new Graphic({
+            geometry: {
+                type: "point",
+                longitude: hoveredImg.lon,
+                latitude: hoveredImg.lat,
+                spatialReference: { wkid: 4326 }
+            },
+            symbol: {
+                type: "simple-marker",
+                style: "circle",
+                color: [255, 255, 0, 0.8],
+                size: 16,
+                outline: { color: [255, 165, 0, 1], width: 3 }
+            }
+        });
+
+        view.graphics.add(graphic);
+        this._directionHoverGraphic = graphic;
+
+        // Pulse animation state
+        let growing = true;
+        let size = 16;
+
+        // Creates a pulsing effect by oscillating marker size
+        const pulseInterval = setInterval(() => {
+            if (!this._directionHoverGraphic) {
+                clearInterval(pulseInterval);
+                return;
+            }
+
+            size += growing ? 0.5 : -0.5;
+            if (size >= 20) growing = false;
+            if (size <= 16) growing = true;
+
+            graphic.symbol = {
+                type: "simple-marker",
+                style: "circle",
+                color: [255, 255, 0, 0.8],
+                size,
+                outline: { color: [255, 165, 0, 1], width: 3 }
+            };
+
+            view.graphics.remove(graphic);
+            view.graphics.add(graphic);
+        }, 60);
+        // Store interval reference for cleanup
+        (graphic as any)._pulseInterval = pulseInterval;
+    }
+
+    /**
+        * Removes the currently active direction highlight
+        * from the map and stops its pulse animation.
+        * - Clears the interval animation
+        * - Removes the graphic from the view
+        * - Resets internal reference
+    */
+    private clearDirectionHighlight() {
+        if (this._directionHoverGraphic) {
+            // Stop pulse animation
+            if ((this._directionHoverGraphic as any)._pulseInterval) {
+                clearInterval((this._directionHoverGraphic as any)._pulseInterval);
+            }
+            // Remove graphic from the map view
+            const view = this.state.jimuMapView?.view; // 👈 Burayı ekle
+            if (view) {
+                view.graphics.remove(this._directionHoverGraphic);
+            }
+            this._directionHoverGraphic = null;
+        }
     }
 
     /*
@@ -537,8 +791,13 @@ export default class Widget extends React.PureComponent<
 
         const toRemove: __esri.Graphic[] = [];
         view.graphics.forEach(g => {
-            if ((g as any).__isSequenceOverlay || (g as any).__isCone) {
-            toRemove.push(g);
+            // Updated to remove blue dots (__isActiveSequencePoint) as well
+            if (
+                (g as any).__isSequenceOverlay || 
+                (g as any).__isCone || 
+                (g as any).__isActiveSequencePoint
+            ) {
+                toRemove.push(g);
             }
         });
         toRemove.forEach(g => view.graphics.remove(g));
@@ -684,6 +943,15 @@ export default class Widget extends React.PureComponent<
 			clearInterval((this.currentGreenGraphic as any)._pulseInterval);
 			this.currentGreenGraphic = null;
 		}
+
+        // Clean up direction hover graphic
+        this.clearDirectionHighlight();
+
+        // Unsubscribe from direction hover events
+        if (this._directionUnsubscribe) {
+            this._directionUnsubscribe();
+            this._directionUnsubscribe = null;
+        }
 
         // ... (Keep graphics cleanup) ...
         if (fullRemove && this.state.jimuMapView) {
@@ -1055,8 +1323,8 @@ export default class Widget extends React.PureComponent<
             },
             symbol: {
                 type: "simple-marker",
-                color: [255, 0, 0, 1],
-                size: 12,
+                color: "#00ff00",
+                size: 10,
                 outline: {
                     color: [255, 255, 255],
                     width: 2
@@ -1069,7 +1337,7 @@ export default class Widget extends React.PureComponent<
         // Add direction cone on minimap
         if (this._lastBearing !== undefined) {
             const coneMini = new Graphic({
-                geometry: this.createConeGeometry(currentImg.lon, currentImg.lat, this._lastBearing, 50, 60),
+                geometry: this.createConeGeometry(currentImg.lon, currentImg.lat, this._lastBearing, 30, 60),
                 symbol: {
                     type: "simple-fill",
                     color: [255, 165, 0, 0.6],
@@ -1175,7 +1443,13 @@ export default class Widget extends React.PureComponent<
                 // Wait for WebGL context to be released
                 await new Promise(resolve => setTimeout(resolve, 100));
             } catch (err) {
-                console.warn("Error removing viewer:", err);
+                // Ignore "Request aborted" errors which are expected during cleanup
+                const errorMsg = err instanceof Error ? err.message : String(err);
+                const errorName = (err as any).name;
+                
+                if (errorName !== 'CancelMapillaryError' && !errorMsg.includes('aborted')) {
+                    console.warn("Error removing viewer:", err);
+                }
             }
             this.mapillaryViewer = null;
         }
@@ -1185,7 +1459,6 @@ export default class Widget extends React.PureComponent<
             await new Promise(resolve => setTimeout(resolve, 50));
 
             if (this.viewerContainer.current && currentImageId) {
-                const {Viewer} = window.mapillary;
                 
                 // Create new viewer
                 this.mapillaryViewer = new Viewer({
@@ -1487,19 +1760,39 @@ export default class Widget extends React.PureComponent<
         }
     }
 
+    // --- HELPER: Fetch ID from Username ---
+    private async getUserIdFromUsername(username: string): Promise<number | null> {
+        if (!username) return null;
+        const url = `https://graph.mapillary.com/images?creator_username=${username}&limit=1&fields=creator&access_token=${this.accessToken}`;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) return null;
+            const data = await response.json();
+            if (data.data && data.data.length > 0) {
+                // Convert String ID to Integer (required for vector tile filtering)
+                return parseInt(data.data[0].creator.id, 10);
+            }
+            return null;
+        } catch (error) {
+            console.warn("Error resolving Mapillary User ID:", error);
+            return null;
+        }
+    }
+
     /*
         --- Initializes the Mapillary Vector Tile Layer ---
         * Creates a VectorTileLayer from the Mapillary tiles API
         * Uses an inline `minimalStyle` object for symbology (sequence = green line, image = light cyan blue circle)
         * Stores the layer in `this.mapillaryVTLayer` for later toggling
     */
-    private initMapillaryLayer() {
+    private initMapillaryLayer(filterCreatorId?: number) {
         const { VectorTileLayer } = this.ArcGISModules
 
-        // Base URL for Mapillary Vector Tiles API (image + sequence data)
         const vectorTileSourceUrl = `https://tiles.mapillary.com/maps/vtp/mly1_public/2/{z}/{x}/{y}?access_token=${this.accessToken}`
 
-        // A minimal Mapbox GL style object describing how the layer should look
+        // Create filter expression if ID exists: ["==", "creator_id", 12345]
+        const layerFilter = filterCreatorId ? ["==", "creator_id", filterCreatorId] : null;
+
         const minimalStyle = {
             "version": 8,
             "sources": {
@@ -1512,27 +1805,39 @@ export default class Widget extends React.PureComponent<
             },
             "layers": [
                 {
-                    // Green lines = photo capture sequences
+                    "id": "overview",
+                    "source": "mapillary",
+                    "source-layer": "overview",
+                    "type": "circle",
+                    "filter": layerFilter,
+                    "paint": {
+                        "circle-radius": 1,
+                        "circle-color": "#35AF6D",
+                        "circle-stroke-color": "#35AF6D",
+                        "circle-stroke-width": 1
+                    }
+                },
+                {
                     "id": "sequence",
                     "source": "mapillary",
                     "source-layer": "sequence",
                     "type": "line",
+                    "filter": layerFilter,
                     "paint": {
-                        "line-opacity": 0.6,
+                        "line-opacity": 0.8,
                         "line-color": "#35AF6D",
                         "line-width": 2
                     }
                 },
                 {
-                    // light cyan blue circles = individual images
                     "id": "image",
                     "source": "mapillary",
                     "source-layer": "image",
                     "type": "circle",
+                    "filter": layerFilter,
                     "paint": {
                         "circle-radius": 2,
-                        "circle-opacity": 0.3,
-                        "circle-color": "#33c2ffff",
+                        "circle-color": "#35AF6D",
                         "circle-stroke-color": "#ffffff",
                         "circle-stroke-width": 1
                     }
@@ -1540,7 +1845,6 @@ export default class Widget extends React.PureComponent<
             ]
         }
 
-        // Store the VectorTileLayer instance so we can toggle it later
         this.mapillaryVTLayer = new VectorTileLayer({
             id: "mapillary-vector-tiles",
             style: minimalStyle
@@ -2239,32 +2543,35 @@ export default class Widget extends React.PureComponent<
         * Uses `this.mapillaryVTLayer` created by initMapillaryLayer()
         * Uses `this.mapillaryTrafficSignsLayer` created by initMapillaryTrafficSignsLayer()
     */
-    private toggleMapillaryTiles = () => {
+    private toggleMapillaryTiles = async () => {
         const { jimuMapView } = this.state;
         if (!jimuMapView) return;
 
-        // Check if layer exists by ID
         const existingLayer = jimuMapView.view.map.findLayerById("mapillary-vector-tiles");
 
         if (existingLayer) {
-            // If exists, remove it
             jimuMapView.view.map.remove(existingLayer);
             this.setState({ tilesActive: false });
         } else {
-            // Recreate if missing (or references lost)
-            this.initMapillaryLayer();
-            
-            // Add new layer
+            // === START CHANGE ===
+            // Check config for default creator
+            let targetId: number | undefined = undefined;
+            if (this.props.config.turboCreator) {
+                targetId = await this.getUserIdFromUsername(this.props.config.turboCreator);
+            }
+
+            // Re-initialize with the fresh filter ID
+            this.initMapillaryLayer(targetId);
+            // === END CHANGE ===
+
             jimuMapView.view.map.add(this.mapillaryVTLayer);
             this.setState({ tilesActive: true });
 
+            // Keep Turbo/Features on top
             const layers = jimuMapView.view.map.layers;
-            // Ensure Turbo Coverage layer stays on top
             if (this.turboCoverageLayer && layers.includes(this.turboCoverageLayer)) {
                 jimuMapView.view.map.reorder(this.turboCoverageLayer, layers.length - 1);
             }
-
-            // (Optional) Also re-raise interactive feature layers for Objects/Signs if they are active
             if (this.mapillaryObjectsFeatureLayer && layers.includes(this.mapillaryObjectsFeatureLayer)) {
                 jimuMapView.view.map.reorder(this.mapillaryObjectsFeatureLayer, layers.length - 1);
             }
@@ -2541,6 +2848,99 @@ export default class Widget extends React.PureComponent<
 
         this.objectsZoomHandle = zoomHandle;
         this.setState({ objectsActive: true });
+    };
+
+    /**
+        * Downloads currently visible traffic signs and objects within the map extent
+        * as a GeoJSON file.
+        * Enforces Zoom >= 16 because FeatureLayers are empty/not hydrated below that level.
+    */
+    private downloadCurrentFeatures = async () => {
+        const { jimuMapView } = this.state;
+        if (!jimuMapView) return;
+
+        // 1. Zoom Level Check
+        // The FeatureLayer data is not loaded by the widget logic until Zoom 16.
+        // Trying to query below this level would result in 0 features or an error.
+        if (jimuMapView.view.zoom < 16) {
+            this.showZoomWarning("Zoom in closer (≥ 16) to load and download feature data.", 4000);
+            return;
+        }
+
+        const view = jimuMapView.view;
+        const featuresList: any[] = [];
+
+        // Helper to query a layer and format results
+        const queryAndFormat = async (layer: __esri.FeatureLayer | null) => {
+            if (!layer) return;
+            
+            try {
+                const query = layer.createQuery();
+                query.geometry = view.extent;
+                query.spatialRelationship = "intersects";
+                query.returnGeometry = true;
+                query.outFields = ["*"]; 
+
+                const results = await layer.queryFeatures(query);
+
+                results.features.forEach((graphic) => {
+                    const geoGeometry = webMercatorUtils.webMercatorToGeographic(graphic.geometry) as __esri.Point;
+                    
+                    if (geoGeometry) {
+                        featuresList.push({
+                            geometry: {
+                                type: "Point",
+                                coordinates: [geoGeometry.x, geoGeometry.y] 
+                            },
+                            type: "Feature",
+                            properties: {
+                                ...graphic.attributes,
+                                first_seen_at: graphic.attributes.first_seen_at, 
+                                last_seen_at: graphic.attributes.last_seen_at
+                            }
+                        });
+                    }
+                });
+            } catch (err) {
+                console.warn("Error querying features for download", err);
+            }
+        };
+
+        this.setState({ isLoading: true });
+
+        // Query active layers
+        if (this.state.trafficSignsActive) {
+            await queryAndFormat(this.mapillaryTrafficSignsFeatureLayer);
+        }
+        if (this.state.objectsActive) {
+            await queryAndFormat(this.mapillaryObjectsFeatureLayer);
+        }
+
+        this.setState({ isLoading: false });
+
+        if (featuresList.length === 0) {
+            this.showZoomWarning("No features found in the current view to download.", 3000);
+            return;
+        }
+
+        // Construct final GeoJSON
+        const featureCollection = {
+            features: featuresList,
+            type: "FeatureCollection"
+        };
+
+        // Trigger Download
+        try {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(featureCollection));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", `mapillary_features_${new Date().getTime()}.json`);
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        } catch (err) {
+            console.error("Download failed", err);
+        }
     };
 
     // --- Local caching of last sequence ---
@@ -2922,14 +3322,6 @@ export default class Widget extends React.PureComponent<
             this.setState({ turboYearLegend: [] });
         }
 
-        // let enablePopups = needDetails;
-        // const onlyPanoOrColor =
-        //     (!turboFilterUsername?.trim() &&
-        //     !turboFilterStartDate &&
-        //     !turboFilterEndDate &&
-        //     (turboFilterIsPano !== undefined || turboColorByDate));
-        // if (onlyPanoOrColor) enablePopups = false;
-
         this.turboCoverageLayer = new FeatureLayer({
             id: "turboCoverage",
             source: features,
@@ -2945,18 +3337,6 @@ export default class Widget extends React.PureComponent<
             spatialReference: { wkid: 3857 },
             renderer,
             popupEnabled: false
-            // popupTemplate: enablePopups
-            // ? {
-            //     title: `{creator_username}`,
-            //     content: `
-            //         <b>Image ID:</b> {id}<br>
-            //         <b>Creator:</b> {creator_username}<br>
-            //         <b>Captured At:</b> {captured_at}<br>
-            //         <b>Panorama:</b> {is_pano}<br>
-            //         ${turboColorByDate ? "<b>Year:</b> {date_category}<br>" : ""}
-            //     `
-            //     }
-            // : undefined
         });
 
         jimuMapView.view.map.add(this.turboCoverageLayer);
@@ -2996,14 +3376,13 @@ export default class Widget extends React.PureComponent<
     // Fetches all image coordinates in the sequence,
     // updates the viewer, re-draws map markers,
     // and attaches Mapillary event listeners for bearing/image changes.
-    // --- Load a specific sequence by ID and image ---
-    private async loadSequenceById(sequenceId: string, startImageId: string) {
+    private async loadSequenceById(sequenceId: string, startImageId: string, clickPoint?: { lon: number, lat: number }) {
         this.clearGreenPulse();
         
         const { jimuMapView } = this.state;
         if (!jimuMapView) return;
 
-        // If the new sequence is not the same as the existing selectedSequenceId, clear markers
+        // Old Code Logic: Simple clear if sequence changed
         if (this.state.selectedSequenceId && this.state.selectedSequenceId !== sequenceId) {
             this.clearActiveSequenceGraphics(this.state.selectedSequenceId);
         }
@@ -3032,28 +3411,28 @@ export default class Widget extends React.PureComponent<
             }
 
             // Create new Mapillary viewer
-            const { Viewer } = window.mapillary;
             if (this.viewerContainer.current) {
                 this.mapillaryViewer = new Viewer({
                     container: this.viewerContainer.current,
                     accessToken: this.accessToken,
                     imageId: startImageId,
                     component: {
-                        zoom: true,       
-                        // direction: false,  
+                        zoom: true,    
+                        direction: {
+                            maxWidth: 200,
+                            minWidth: 200,
+                        },   
                         cover: false
                     }
                 });
                 
-                // <--- REPLACED THE HUGE BLOCK OF EVENT LISTENERS WITH THIS:
                 this.bindMapillaryEvents();
             }
 
             // Clear previous green pulse
             this.clearGreenPulse();
 
-            // Clear old map graphics and draw new ones...
-            // (Rest of the drawing logic remains exactly the same as your original code)
+            // Clear old map graphics (except overlay)
             const toRemove: __esri.Graphic[] = [];
             jimuMapView.view.graphics.forEach(g => {
                 if (!(g as any).__isSequenceOverlay) {
@@ -3062,6 +3441,9 @@ export default class Widget extends React.PureComponent<
             });
             toRemove.forEach(g => jimuMapView.view.graphics.remove(g));
 
+            // --- MOVED UP: Draw Polyline FIRST so it stays BEHIND points ---
+            const { Graphic } = this.ArcGISModules;
+            
             const hasPolyline = jimuMapView.view.graphics.some(g => 
                 (g as any).__isSequenceOverlay && 
                 g.geometry.type === "polyline" && 
@@ -3069,7 +3451,6 @@ export default class Widget extends React.PureComponent<
             );
 
             if (!hasPolyline && updatedSequence.length > 1) {
-                 const { Graphic } = this.ArcGISModules;
                  const paths = updatedSequence.map(img => [img.lon, img.lat]);
                  
                  const polylineGraphic = new Graphic({
@@ -3080,21 +3461,28 @@ export default class Widget extends React.PureComponent<
                 (polylineGraphic as any).__isSequenceOverlay = true;
                 jimuMapView.view.graphics.add(polylineGraphic);
             }
+            // -------------------------------------------------------------
 
-            const { clickLon, clickLat } = this.state;
-            if (clickLon != null && clickLat != null) {
-                this.drawPoint(clickLon, clickLat);
-            }
-
+            // Draw Blue Dots (Active Sequence) - Now they render ON TOP of the line
             updatedSequence.forEach(img => {
                 if (img.id !== startImageId) {
-                    this.drawPointWithoutRemoving(img.lon, img.lat, [0, 0, 255, 1]);
+                    this.drawPointWithoutRemoving(img.lon, img.lat, [0, 0, 255, 1], sequenceId);
                 }
             });
 
+            // Draw active Green Pulse - Topmost
             const currentImg = updatedSequence.find(img => img.id === startImageId);
             if (currentImg) {
                 this.currentGreenGraphic = this.drawPulsingPoint(currentImg.lon, currentImg.lat, [0, 255, 0, 1]);
+            }
+
+            // Redraw clicked location marker if exists
+            // Use passed point (fresh) or fallback to state (if no new click passed)
+            const targetLon = clickPoint ? clickPoint.lon : this.state.clickLon;
+            const targetLat = clickPoint ? clickPoint.lat : this.state.clickLat;
+
+            if (targetLon != null && targetLat != null) {
+                this.drawPoint(targetLon, targetLat);
             }
 
         } catch (err) {
@@ -3125,8 +3513,15 @@ export default class Widget extends React.PureComponent<
             };
             console.log("ArcGIS API modules loaded");
 
-            // Initialize Mapillary Vector Tile Layer right after modules are ready
-            this.initMapillaryLayer();
+            // Resolve Default Creator ID if configured
+            let defaultFilterId: number | undefined = undefined;
+            if (this.props.config.turboCreator) {
+                defaultFilterId = await this.getUserIdFromUsername(this.props.config.turboCreator);
+                if(defaultFilterId) console.log(`Initializing Always-On layer for user ID: ${defaultFilterId}`);
+            }
+
+            // Initialize layer with the resolved ID
+            this.initMapillaryLayer(defaultFilterId);
             this.initMapillaryTrafficSignsLayer();
             this.initMapillaryObjectsLayer(); 
         } catch (err) {
@@ -3135,34 +3530,6 @@ export default class Widget extends React.PureComponent<
 
         // Restore any cached sequence from previous session
         this.restoreSequenceCache();
-
-        // Load Mapillary JS + CSS
-        const link = document.createElement("link");
-        link.rel = "stylesheet";
-        // link.href = "https://localhost:3001/assets/mapillary.css";
-        link.href = "https://unpkg.com/mapillary-js@4.1.2/dist/mapillary.css";
-        document.head.appendChild(link);
-
-        await new Promise<void>((resolve, reject) => {
-            const originalDefine = window.define;
-            window.define = undefined;
-
-            const script = document.createElement("script");
-            // script.src = "https://localhost:3001/assets/mapillary.js";
-            script.src = "https://unpkg.com/mapillary-js@4.1.2/dist/mapillary.js";
-            script.async = true;
-            script.onload = () => {
-                console.log("Mapillary JS loaded", !!window.mapillary);
-                window.define = originalDefine;
-                resolve();
-            };
-            script.onerror = () => {
-                console.error("Failed to load Mapillary JS");
-                window.define = originalDefine;
-                reject();
-            };
-            document.body.appendChild(script);
-        });
 
         this.resizeObserver = new ResizeObserver(() => {
             if (this.mapillaryViewer?.resize) {
@@ -3232,7 +3599,45 @@ export default class Widget extends React.PureComponent<
         }
     }
 	
-	componentDidUpdate(prevProps: AllWidgetProps<any>) {
+	componentDidUpdate(prevProps: AllWidgetProps<any>, prevState: State) {
+        
+        // Handle Resize & Re-attach Observer ===
+        // 1. Resize trigger for mobile panel animations
+        // Resize the viewer whenever the widget updates (e.g., when the panel is expanded).
+        if (this.mapillaryViewer) {
+            try {
+                this.mapillaryViewer.resize();
+            } catch (e) {
+                // Ignore WebGL context errors during layout transitions
+            }
+            
+            // Re-trigger after the CSS transition (animation) is completed
+            setTimeout(() => {
+                if (this.mapillaryViewer) {
+                    try {
+                        this.mapillaryViewer.resize();
+                    } catch (e) { /* ignore */ }
+                }
+            }, 350);
+        }
+
+        // 2. Restore the ResizeObserver on fullscreen changes
+        // When exiting fullscreen, the DOM element changes, so the observer gets disconnected and must be reattached.
+        if (prevState.isFullscreen !== this.state.isFullscreen) {
+            if (this.resizeObserver) {
+                this.resizeObserver.disconnect();
+            }
+            // Recreate and reattach the observer
+            this.resizeObserver = new ResizeObserver(() => {
+                if (this.mapillaryViewer?.resize) {
+                    this.mapillaryViewer.resize();
+                }
+            });
+            if (this.viewerContainer.current) {
+                this.resizeObserver.observe(this.viewerContainer.current);
+            }
+        }
+
         // Minimizing → don't remove listeners
         if (prevProps.visible && !this.props.visible) {
             console.log("Widget minimized - keeping listeners, skipping cleanup of handles");
@@ -3249,6 +3654,21 @@ export default class Widget extends React.PureComponent<
         // Reopened after closed → reattach listeners
         if (prevProps.state === 'CLOSED' && this.props.state === 'OPENED' && this.state.jimuMapView) {
             console.log("Widget reopened - reattaching event handles");
+
+            // If the layers were destroyed (null) when the widget was closed, recreate them.
+            // This ensures that when onActiveViewChange runs, it can find the layer to add.
+            if (!this.mapillaryVTLayer) {
+            // If there is a creator filter, we may need to reapply it, but for a fast startup we call the standard init.
+            // If a filter exists, it will be applied later via a state update.
+                this.initMapillaryLayer(); 
+            }
+            if (!this.mapillaryTrafficSignsLayer && this.props.config.enableTrafficSigns !== false) {
+                this.initMapillaryTrafficSignsLayer();
+            }
+            if (!this.mapillaryObjectsLayer && this.props.config.enableMapillaryObjects !== false) {
+                this.initMapillaryObjectsLayer();
+            }
+
             // Always ensure TurboMode is OFF and filter cleared
             this.setState({
                 turboModeActive: false,
@@ -3382,7 +3802,11 @@ export default class Widget extends React.PureComponent<
     private handleFullscreenChange = () => {
         // When fullscreen mode changes, resize the Mapillary viewer
         if (this.mapillaryViewer?.resize) {
-            this.mapillaryViewer.resize();
+            try {
+                this.mapillaryViewer.resize();
+            } catch (e) {
+                console.warn("Viewer resize suppressed during fullscreen toggle");
+            }
         }
     };
 
@@ -3392,7 +3816,11 @@ export default class Widget extends React.PureComponent<
     */
     private handleWindowResize = () => {
         if (this.mapillaryViewer?.resize) {
-            this.mapillaryViewer.resize();
+            try {
+                this.mapillaryViewer.resize();
+            } catch (e) {
+                 // Ignore resize errors if widget is hidden/destroyed
+            }
         }
     };
 
@@ -3403,185 +3831,239 @@ export default class Widget extends React.PureComponent<
     onActiveViewChange(jmv: JimuMapView) {
         if (!jmv) return;
 
-        console.log("Active MapView set");
+        console.log("Active MapView set - Attaching Handlers");
         this.setState({ jimuMapView: jmv });
 
-        // Remove old handles if reassigning view
-        if (this.mapClickHandle) {
-            this.mapClickHandle.remove();
-        }
-        if (this.pointerMoveHandle) {
-            this.pointerMoveHandle.remove();
+        // Cleanup old handles
+        if (this.mapClickHandle) this.mapClickHandle.remove();
+        if (this.pointerMoveHandle) this.pointerMoveHandle.remove();
+
+        // Force Add Coverage Layer if Config is ON
+        if (this.props.config.coverageLayerAlwaysOn) {
+            this.setState({ tilesActive: true });
+            
+            // Only add if modules loaded
+            if (this.ArcGISModules && this.mapillaryVTLayer) {
+                const existingLayer = jmv.view.map.findLayerById("mapillary-vector-tiles");
+                if (!existingLayer) {
+                    jmv.view.map.add(this.mapillaryVTLayer);
+                }
+            }
         }
 
+        // --- CLICK HANDLER ---
         this.mapClickHandle = jmv.view.on("click", async (evt) => {
-            // Guard: do nothing if widget is not visible/closed
-            if (this.props.state !== 'OPENED') return;
-
-            // 1. Always calculate map point and hitTest first
-            const point = jmv.view.toMap(evt) as __esri.Point;
-            this.setState({ clickLon: point.longitude, clickLat: point.latitude });
+            // console.log("=== CLICK EVENT START ===");
+            // console.log("Widget State:", this.props.state);
+            // console.log("Turbo Mode Active:", this.state.turboModeActive);
+            // console.log("Turbo Mode Only Config:", this.props.config.turboModeOnly);
             
-            const hit = await jmv.view.hitTest(evt);
-
-            // --- PRIORITY 1: Check for Sequence Overlay (Blue Dots/Lines) ---
-            // This ensures we can navigate within the active sequence in BOTH Turbo and Normal modes.
-            const seqGraphic = hit.results.find(r => (r.graphic as any).__isSequenceOverlay);
-            
-            if (seqGraphic && seqGraphic.graphic.attributes?.sequenceId) {
-                const seqId = seqGraphic.graphic.attributes.sequenceId;
-                
-                // Get the sequence data (use cache if available and matching)
-                let currentSeqData = this.state.sequenceImages;
-                
-                // If the clicked overlay is not the currently loaded data, fetch it
-                if (this.state.selectedSequenceId !== seqId || !currentSeqData.length) {
-                    currentSeqData = await this.getSequenceWithCoords(seqId, this.accessToken);
-                }
-
-                if (currentSeqData.length) {
-                    // Find the closest image in the sequence to the click
-                    const closestImg = currentSeqData.reduce((closest, img) => {
-                        const dist = this.distanceMeters(img.lat, img.lon, point.latitude, point.longitude);
-                        return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
-                    }, null as any);
-
-                    if (closestImg) {
-                        // If it's a new sequence, update ID
-                        if (this.state.selectedSequenceId !== seqId) {
-                            this.setState({ selectedSequenceId: seqId });
-                        }
-                        
-                        // Load the specific frame
-                        // We use skipInactiveMarkers logic implicitly by how loadSequenceById works, 
-                        // but calling it directly here ensures the viewer jumps.
-                        await this.loadSequenceById(seqId, closestImg.id);
-                        
-                        // Visual feedback for click
-                        this.drawPoint(point.longitude, point.latitude);
-                    }
-                }
-                // Stop processing (don't fire Turbo logic or Normal background logic)
+            // Only block if explicitly closed
+            if (this.props.state === 'CLOSED') {
+                console.log(">> BLOCKED: Widget explicitly closed");
                 return;
             }
 
-            // --- PRIORITY 2: Mapillary Objects/Signs (Popups) ---
-            const objectHit = hit.results.find(r => r.graphic?.layer === this.mapillaryObjectsFeatureLayer);
-            if (this.mapillaryObjectsFeatureLayer && objectHit && objectHit.graphic?.layer === this.mapillaryObjectsFeatureLayer) {
-                return; // let ArcGIS popup handle it
-            }
+            // 1. Setup Click Variables
+            const point = jmv.view.toMap(evt) as __esri.Point;
+            this.setState({ clickLon: point.longitude, clickLat: point.latitude });
 
-            const trafficSignHit = hit.results.find(r => r.graphic?.layer === this.mapillaryTrafficSignsFeatureLayer);
-            if (this.mapillaryTrafficSignsFeatureLayer && trafficSignHit && trafficSignHit.graphic?.layer === this.mapillaryTrafficSignsFeatureLayer) {
-                return; // let ArcGIS popup handle it
-            }
+            // console.log("Click detected at:", point.longitude, point.latitude);
 
-            // --- PRIORITY 3: Turbo Mode Logic (Loading NEW Sequence) ---
-            if (this.state.turboModeActive) {
-                const imageHit = hit.results.find(r => r.layer?.id === "turboCoverage");
+            try {
+                // 2. Perform Broad HitTest
+                const response = await jmv.view.hitTest(evt);
                 
-                // If Turbo Only mode is ON, and we didn't hit a point, STOP.
-                if (this.props.config.turboModeOnly && !imageHit) {
-                    // 1. Draw orange warning ripple at click location
-                    this.drawWarningRipple(point.longitude, point.latitude);
-                    
-                    // 2. Show warning message
-                    this.showZoomWarning(
-                        "Turbo Mode: Please click directly on a brown coverage point to load imagery.", 
-                        3000 // Show for 3 seconds
-                    );
-                    
-                    console.log("Turbo Mode Only: Background clicks disabled. Click on a coverage point (brown dot).");
-                    return; 
-                }
+                // console.log("Raw HitTest Results COUNT:", response.results.length);
 
-                if (imageHit) {
-                    if (this.turboCoverageLayerView) {
-                        if (this.highlightHandle) this.highlightHandle.remove();
-                        this.highlightHandle = this.turboCoverageLayerView.highlight(imageHit.graphic);
-                    }
-                    const attrs = imageHit.graphic.attributes;
-                    const imageId = attrs.id;
-                    let seqId = attrs.sequence_id;
+                // 3. Check each priority
+                
+                // === PRIORITY 1: Blue Markers ===
+                const seqPointHit = response.results.find(r => 
+                    r.graphic && 
+                    (
+                        (r.graphic as any).__isSequenceOverlay || 
+                        (r.graphic as any).__isActiveSequencePoint
+                    ) &&
+                    r.graphic.geometry?.type === "point"
+                );
 
+                if (seqPointHit) {
+                    // console.log(">> PRIORITY 1: Blue Point Marker HIT");
+                    const seqId = seqPointHit.graphic.attributes?.sequenceId || this.state.selectedSequenceId;
+                    
                     if (!seqId) {
-                        try {
-                            const resp = await fetch(`https://graph.mapillary.com/${imageId}?fields=sequence`, {
-                                headers: { Authorization: `OAuth ${this.accessToken}` }
-                            });
-                            if (resp.ok) {
-                                const data = await resp.json();
-                                seqId = data.sequence;
-                                imageHit.graphic.attributes.sequence_id = seqId; 
-                            }
-                        } catch (err) { console.error(err); return; }
+                        console.log(">> ERROR: No sequenceId");
+                        return;
+                    }
+                    
+                    let currentSeqData = this.state.sequenceImages;
+                    if (this.state.selectedSequenceId !== seqId || !currentSeqData.length) {
+                        currentSeqData = await this.getSequenceWithCoords(seqId, this.accessToken);
                     }
 
-                    if (!seqId) return;
+                    if (currentSeqData.length) {
+                        const closestImg = currentSeqData.reduce((closest, img) => {
+                            const dist = this.distanceMeters(img.lat, img.lon, point.latitude, point.longitude);
+                            return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
+                        }, null as any);
 
-                    this.drawClickRipple(point.longitude, point.latitude);
-                    this.setState({ selectedSequenceId: seqId });
-                    this.clearSequenceGraphics();
-                    await this.loadSequenceById(seqId, imageId);
-                    return; 
+                        if (closestImg) {
+                            if (this.state.selectedSequenceId !== seqId) {
+                                this.setState({ selectedSequenceId: seqId });
+                            }
+                            
+                            await this.loadSequenceById(seqId, closestImg.id, { lon: point.longitude, lat: point.latitude });
+                            return;
+                        }
+                    }
+                    return;
                 }
-                else {
-                    // Block background clicks in Turbo Mode =====
-                    // User clicked on empty map space in Turbo Mode - NOT ALLOWED
-                    // In Turbo Mode, only direct clicks on coverage points are allowed
-                    // User clicked on empty map space - show ripple and warning
 
-                    // 1. Draw orange warning ripple at click location
-                    this.drawWarningRipple(point.longitude, point.latitude);
-                    
-                    // 2. Show warning message
-                    this.showZoomWarning(
-                        "Turbo Mode: Please click directly on a brown coverage point to load imagery.", 
-                        3000 // Show for 3 seconds
-                    );
-                    
-                    console.log("Turbo Mode: Background clicks disabled. Click on a coverage point (brown dot).");
-                    return; // Stop processing - do NOT call handleMapClick
+                // === PRIORITY 2: Objects/Signs ===
+                const objectHit = response.results.find(r => {
+                    const layer = r.layer || (r.graphic && r.graphic.layer);
+                    return layer && layer.id === "mapillary-objects-fl";
+                });
+                
+                if (objectHit) {
+                    // console.log(">> PRIORITY 2: Object HIT (popup)");
+                    return;
+                }
 
+                const trafficSignHit = response.results.find(r => {
+                    const layer = r.layer || (r.graphic && r.graphic.layer);
+                    return layer && layer.id === "mapillary-traffic-signs-fl";
+                });
+                
+                if (trafficSignHit) {
+                    console.log(">> PRIORITY 2: Traffic Sign HIT (popup)");
+                    return;
+                }
+
+                // === PRIORITY 3: Turbo Coverage ===
+                const turboHit = response.results.find(r => {
+                    const layer = r.layer || (r.graphic && r.graphic.layer);
+                    return layer && layer.id === "turboCoverage";
+                });
+
+                // === TURBO MODE BRANCH ===
+                if (this.state.turboModeActive) {
+                    // console.log(">> BRANCH: Turbo Mode Active");
+                    
+                    if (turboHit) {
+                        // console.log(">> PRIORITY 3: Turbo Coverage HIT");
+                        const hitGraphic = turboHit.graphic;
+                        const attrs = hitGraphic?.attributes;
+
+                        if (this.turboCoverageLayerView && hitGraphic) {
+                            if (this.highlightHandle) this.highlightHandle.remove();
+                            this.highlightHandle = this.turboCoverageLayerView.highlight(hitGraphic);
+                        }
+
+                        if (attrs) {
+                            const imageId = attrs.id;
+                            let seqId = attrs.sequence_id;
+
+                            if (!seqId) {
+                                try {
+                                    const resp = await fetch(`https://graph.mapillary.com/${imageId}?fields=sequence`, {
+                                        headers: { Authorization: `OAuth ${this.accessToken}` }
+                                    });
+                                    if (resp.ok) {
+                                        const data = await resp.json();
+                                        seqId = data.sequence;
+                                        hitGraphic.attributes.sequence_id = seqId;
+                                    }
+                                } catch (err) { 
+                                    console.error("Fetch error:", err); 
+                                    return; 
+                                }
+                            }
+
+                            if (seqId) {
+                                this.drawClickRipple(point.longitude, point.latitude);
+                                this.setState({ selectedSequenceId: seqId });
+                                this.clearSequenceGraphics();
+                                await this.loadSequenceById(seqId, imageId, { lon: point.longitude, lat: point.latitude });
+                                return;
+                            }
+                        }
+                    } else {
+                        console.log(">> BRANCH: Turbo Mode MISS - Blocking");
+                        this.drawWarningRipple(point.longitude, point.latitude);
+                        this.showZoomWarning("Turbo Mode: Please click directly on a brown coverage point.", 3000);
+                        return;
+                    }
+                }
+
+                // === NORMAL MODE BRANCH ===
+                // console.log(">> BRANCH: Normal Mode - Background Click");
+                await this.handleMapClick(evt);
+
+            } catch (error) {
+                console.error("=== CLICK EVENT ERROR ===", error);
+                
+                if (!this.state.turboModeActive) {
+                    await this.handleMapClick(evt);
                 }
             }
-
-            // --- PRIORITY 4: Normal Mode Background Click (API Search) ---
-            // Only runs if not Turbo, not Overlay, not Object
-            await this.handleMapClick(evt);
         });
 
+        // --- HOVER HANDLER ---
         this.pointerMoveHandle = jmv.view.on("pointer-move", async (evt) => {
-            const hit = await jmv.view.hitTest(evt);
+            // Capture global coordinates IMMEDIATELY
+            const globalX = evt.native.clientX;
+            const globalY = evt.native.clientY;
 
-            // Guard: Check if tooltipDiv is valid
+            // Broad hitTest for hover as well
+            const hit = await jmv.view.hitTest(evt);
+            
+            // Standard Object Hover
+            const obj = hit.results.find(r => {
+                const l = r.layer || (r.graphic && r.graphic.layer);
+                return l && l.id === "mapillary-objects-fl";
+            });
+
+            if (obj && obj.graphic) {
+                this.setState({
+                    hoveredMapObject: {
+                        x: evt.x,
+                        y: evt.y,
+                        objectName: obj.graphic.attributes.value,
+                        firstSeen: new Date(obj.graphic.attributes.first_seen_at).toLocaleString(),
+                        lastSeen: new Date(obj.graphic.attributes.last_seen_at).toLocaleString()
+                    }
+                });
+            } else {
+                if (this.state.hoveredMapObject) this.setState({ hoveredMapObject: null });
+            }
+
             if (!this.tooltipDiv) return;
 
-            // === TURBO MODE HOVER ===
-            const turboHit = hit.results.find(r =>
-                r.graphic?.layer?.id === "turboCoverage"
-            );
+            // Turbo Mode Hover
+            const turboHit = hit.results.find(r => {
+                const layer = r.layer || (r.graphic && r.graphic.layer);
+                return layer && layer.id === "turboCoverage";
+            });
 
             if (turboHit) {
-                const attrs = turboHit.graphic.attributes;
+                const hitGraphic = turboHit.graphic;
+                const attrs = hitGraphic?.attributes;
+                if (!attrs) return;
+
                 const featureId = attrs.id;
 
-                // Check if we're hovering over a DIFFERENT feature
                 if (this._currentHoveredFeatureId !== featureId) {
-                    // NEW FEATURE - Clear old timeout and start fresh
                     if (this._hoverTimeout) {
                         clearTimeout(this._hoverTimeout);
                         this._hoverTimeout = null;
                     }
-
-                    // Update the tracked feature ID
                     this._currentHoveredFeatureId = featureId;
 
-                    // Start new timer (Debounce)
                     this._hoverTimeout = setTimeout(async () => {
                         if (!this.tooltipDiv) return;
 
-                        // A. If we have detailed attributes already → show immediately
                         if (attrs.creator_username) {
                             const dateStr = attrs.captured_at ? new Date(attrs.captured_at).toLocaleString() : "Unknown date";
                             const thumbHtml = attrs.thumb_url
@@ -3593,31 +4075,25 @@ export default class Widget extends React.PureComponent<
                                 <div>${dateStr}</div>
                                 ${thumbHtml}
                             `;
-                            this.tooltipDiv.style.left = `${evt.x + 15}px`;
-                            this.tooltipDiv.style.top = `${evt.y + 15}px`;
+                            this.tooltipDiv.style.left = `${globalX + 15}px`;
+                            this.tooltipDiv.style.top = `${globalY + 15}px`;
                             this.tooltipDiv.style.display = "block";
-                        } 
-                        // B. If missing details → Fetch from API
-                        else {
+                        } else {
                             this.tooltipDiv.innerHTML = `<div>Loading details…</div>`;
-                            this.tooltipDiv.style.left = `${evt.x + 15}px`;
-                            this.tooltipDiv.style.top = `${evt.y + 15}px`;
+                            this.tooltipDiv.style.left = `${globalX + 15}px`;
+                            this.tooltipDiv.style.top = `${globalY + 15}px`;
                             this.tooltipDiv.style.display = "block";
 
                             try {
-                                const imgId = attrs.id;
-                                const url = `https://graph.mapillary.com/${imgId}?fields=id,sequence,creator.username,captured_at,thumb_256_url`;
+                                const url = `https://graph.mapillary.com/${featureId}?fields=id,sequence,creator.username,captured_at,thumb_256_url`;
                                 const resp = await fetch(url, {
                                     headers: { Authorization: `OAuth ${this.accessToken}` }
                                 });
 
-                                if (!this.tooltipDiv) return;
-                                
                                 if (resp.ok) {
                                     const data = await resp.json();
                                     if (!this.tooltipDiv) return;
 
-                                    // Update the feature's attributes in the layer cache
                                     const updatedAttrs = {
                                         ...attrs,
                                         sequence_id: data.sequence || null,
@@ -3625,7 +4101,8 @@ export default class Widget extends React.PureComponent<
                                         creator_username: data.creator?.username || null,
                                         thumb_url: data.thumb_256_url || null
                                     };
-                                    turboHit.graphic.attributes = updatedAttrs;
+                                    // Update graphic
+                                    hitGraphic.attributes = updatedAttrs;
 
                                     const dateStr = updatedAttrs.captured_at
                                         ? new Date(updatedAttrs.captured_at).toLocaleString()
@@ -3639,24 +4116,26 @@ export default class Widget extends React.PureComponent<
                                         <div>${dateStr}</div>
                                         ${thumbHtml}
                                     `;
+                                    // Re-position using captured coords
+                                    this.tooltipDiv.style.left = `${globalX + 15}px`;
+                                    this.tooltipDiv.style.top = `${globalY + 15}px`;
                                 } else {
-                                    this.tooltipDiv.innerHTML = `<div>Failed to load details</div>`;
+                                    if(this.tooltipDiv) this.tooltipDiv.innerHTML = `<div>Failed to load details</div>`;
                                 }
                             } catch (err) {
-                                console.warn("Turbo hover fetch error", err);
-                                if (this.tooltipDiv) this.tooltipDiv.innerHTML = `<div>Error loading details</div>`;
+                                if(this.tooltipDiv) this.tooltipDiv.innerHTML = `<div>Error loading details</div>`;
                             }
                         }
-                    }, 500); // Wait 100ms before showing tooltip
+                    }, 500); 
                 } else {
-                    // SAME FEATURE - Just update tooltip position without restarting timer
+                    // Moving within same feature
                     if (this.tooltipDiv.style.display === "block") {
-                        this.tooltipDiv.style.left = `${evt.x + 15}px`;
-                        this.tooltipDiv.style.top = `${evt.y + 15}px`;
+                        this.tooltipDiv.style.left = `${globalX + 15}px`;
+                        this.tooltipDiv.style.top = `${globalY + 15}px`;
                     }
                 }
             } else {
-                // No turbo hit - clear everything
+                // Not hovering Turbo layer
                 if (this._hoverTimeout) {
                     clearTimeout(this._hoverTimeout);
                     this._hoverTimeout = null;
@@ -3664,99 +4143,43 @@ export default class Widget extends React.PureComponent<
                 this._currentHoveredFeatureId = null;
                 this.tooltipDiv.style.display = "none";
             }
-
-            // === Standard Object Hover (Keep existing logic) ===
-            const obj = hit.results.find(r => r.graphic?.layer === this.mapillaryObjectsFeatureLayer);
-            if (obj) {
-                this.setState({
-                    hoveredMapObject: {
-                        x: evt.x,
-                        y: evt.y,
-                        objectName: obj.graphic.attributes.value,
-                        firstSeen: new Date(obj.graphic.attributes.first_seen_at).toLocaleString(),
-                        lastSeen: new Date(obj.graphic.attributes.last_seen_at).toLocaleString()
-                    }
-                });
-            } else {
-                if (this.state.hoveredMapObject) this.setState({ hoveredMapObject: null });
-            }
         });
 
-        // 3. Auto-Initialize Turbo Watchers if Config is ON ---
+        // Auto-Initialize Turbo Watchers if Config is ON
         if (this.props.config.turboModeOnly) {
-            // 1. Set State Active
             this.setState({ turboModeActive: true });
 
-            // 2. Attach Watchers immediately (Crucial Step!)
-            if (this.turboStationaryHandle) { this.turboStationaryHandle.remove(); }
+            if (this.turboStationaryHandle) this.turboStationaryHandle.remove();
+            
             this.turboStationaryHandle = jmv.view.watch(
                 "stationary",
                 this.debounce(async (isStationary) => {
                     if (isStationary && this.state.turboModeActive) {
                         if (jmv.view.zoom < 16) return;
-                        // Use filter if entered
                         const filter = this.state.turboFilterUsername.trim();
-                        if (filter) {
-                            await this.enableTurboCoverageLayer(); // Note: updated logic handles filter from state inside enable function usually
-                        } else {
-                            await this.enableTurboCoverageLayer();
-                        }
+                        await this.enableTurboCoverageLayer();
                     }
                 }, 500)
-        );
+            );
 
-        if (this.turboZoomHandle) { this.turboZoomHandle.remove(); }
-
-        this.turboZoomHandle = jmv.view.watch("zoom", (z) => {
-                    const minTurboZoom = 16;
-                    
-                    if (this.state.turboModeActive) {
-                        if (z < minTurboZoom) {
-                            // 1. Zoomed OUT too far: Disable layer AND Show persistent warning
-                            this.disableTurboCoverageLayer();
-                            this.showZoomWarning("Turbo Mode active: Zoom in closer (≥ 16) to view data.", 0); // 0 = Infinite
-                        } else {
-                            // 2. Zoomed IN enough: Clear warning
-                            this.clearZoomWarning();
-                            // (The stationary watcher will handle loading the data once zooming stops)
-                        }
+            if (this.turboZoomHandle) this.turboZoomHandle.remove();
+            this.turboZoomHandle = jmv.view.watch("zoom", (z) => {
+                const minTurboZoom = 16;
+                if (this.state.turboModeActive) {
+                    if (z < minTurboZoom) {
+                        this.disableTurboCoverageLayer();
+                        this.showZoomWarning("Turbo Mode active: Zoom in closer (≥ 16) to interact with data.", 0);
+                    } else {
+                        this.clearZoomWarning();
                     }
-        });
+                }
+            });
 
-        // --- UPDATED INITIAL CHECK ---
-        if (jmv.view.zoom >= 16) {
+            if (jmv.view.zoom >= 16) {
                 this.enableTurboCoverageLayer();
-                this.clearZoomWarning(); // Ensure no leftover warnings
+                this.clearZoomWarning();
             } else {
-                // Start with persistent warning if initial view is too far out
-                this.showZoomWarning("Turbo Mode active: Zoom in closer (≥ 16) to view data.", 0);
-            }
-        }
-
-        // Force Add Coverage Layer if Config is ON
-        if (this.props.config.coverageLayerAlwaysOn) {
-            this.setState({ tilesActive: true });
-            
-            // Only initialize/add if Modules are already loaded.
-            // If modules aren't loaded yet (null), componentDidMount will handle the add.
-            if (this.ArcGISModules) {
-                // Check if layer is initialized
-                if (!this.mapillaryVTLayer) {
-                    this.initMapillaryLayer();
-                }
-
-                // Add to map if not present
-                const existingLayer = jmv.view.map.findLayerById("mapillary-vector-tiles");
-                if (!existingLayer && this.mapillaryVTLayer) {
-                    jmv.view.map.add(this.mapillaryVTLayer);
-                    
-                    // Optional: Ensure it's ordered correctly relative to Turbo
-                    if (this.turboCoverageLayer && jmv.view.map.layers.includes(this.turboCoverageLayer)) {
-                        jmv.view.map.reorder(this.turboCoverageLayer, jmv.view.map.layers.length - 1);
-                    }
-                }
-            } else {
-                console.log("Map ready but modules pending. Layer add deferred to componentDidMount.");
+                this.showZoomWarning(`Your current zoom level is ${jmv.view.zoom}. Turbo Mode is active. Zoom in closer (≥ 16) to interact with data.`, 0);
             }
         }
     }
@@ -3946,7 +4369,8 @@ export default class Widget extends React.PureComponent<
     private drawPointWithoutRemoving(
         lon: number,
         lat: number,
-        color: any = [0, 0, 255, 1]
+        color: any = [0, 0, 255, 1],
+        sequenceId?: string 
     ) {
         const {jimuMapView} = this.state;
         if (!jimuMapView || !this.ArcGISModules) return;
@@ -3967,8 +4391,11 @@ export default class Widget extends React.PureComponent<
                 size: 10,
                 outline: {color: "white", width: 2},
             },
+            attributes: sequenceId ? { sequenceId: sequenceId } : undefined
         });
 
+        (graphic as any).__isActiveSequencePoint = true;
+        // Tag removed so this is treated as a temporary graphic
         jimuMapView.view.graphics.add(graphic);
     }
 
@@ -3998,8 +4425,8 @@ export default class Widget extends React.PureComponent<
             symbol: {
                 type: "simple-marker",
                 style: "circle",
-                color: "red",
-                size: 14, // pop effect start size
+                color: "black",
+                size: 7, 
                 outline: { color: "white", width: 2 },
             },
             attributes: { isClickedLocation: true }
@@ -4009,19 +4436,6 @@ export default class Widget extends React.PureComponent<
 
         jimuMapView.view.graphics.add(graphic);
         this.clickedLocationGraphic = graphic;
-
-        let size = 14;
-        const shrink = setInterval(() => {
-            size -= 1;
-            graphic.symbol = {
-                type: "simple-marker",
-                style: "circle",
-                color: "red",
-                size,
-                outline: { color: "white", width: 2 }
-            };
-            if (size <= 10) clearInterval(shrink);
-        }, 30);
     }
     
     /**
@@ -4115,8 +4529,15 @@ export default class Widget extends React.PureComponent<
     // 5) Draws sequence markers + active point + cone
     // 6) Displays spinner overlay during API fetch
     private async handleMapClick(event: __esri.ViewClickEvent) {
-        // Do nothing if closed or no map view yet
-        if (this.props.state !== 'OPENED' || !this.state.jimuMapView) return;
+
+        // Only block if explicitly closed or no map view
+        if (this.props.state === 'CLOSED' || !this.state.jimuMapView) {
+            console.log(">>> handleMapClick BLOCKED:", {
+                propsState: this.props.state,
+                jimuMapView: !!this.state.jimuMapView
+            });
+            return;
+        }
 
         const { jimuMapView, selectedSequenceId } = this.state;
 
@@ -4138,6 +4559,13 @@ export default class Widget extends React.PureComponent<
 
         // Show loading overlay.
         this.setState({ isLoading: true });
+
+        if (!this.state.turboModeActive && this.props.config.turboCreator) {
+            this.showZoomWarning(
+                `Turbo Mode is inactive. Although a Default Creator (${this.props.config.turboCreator}) is set, Normal Mode searches ALL public data at this location.`,
+                5000
+            );
+        }
 
         try {
             if (!selectedSequenceId) {
@@ -4273,7 +4701,7 @@ export default class Widget extends React.PureComponent<
                         this.clearNoImageMessage();
                         
                         // 3. Draw Foreground (Blue Dots) - Runs AFTER drawSequencesOverlay
-                        await this.loadSequenceById(globalClosest2.seqId, globalClosest2.imgId);
+                        await this.loadSequenceById(globalClosest2.seqId, globalClosest2.imgId, { lon, lat });
                         
                         this.setState({ isLoading: false });
                     });
@@ -4283,7 +4711,7 @@ export default class Widget extends React.PureComponent<
                 // === CASE B: Click is NEAR an image in current sequence ===
                 console.log("Same sequence within threshold, reusing cached overlay");
 
-                await this.loadSequenceById(selectedSequenceId, closestImg.id, { skipInactiveMarkers: true } as any);
+                await this.loadSequenceById(selectedSequenceId, closestImg.id, { lon, lat });
 
                 // Optional: mark “off-point” clicks with a red marker
                 const toleranceMeters = 0.5;
@@ -4312,9 +4740,9 @@ export default class Widget extends React.PureComponent<
     // Groups them by sequence ID and keeps the earliest captured_at
     // date per sequence for UI dropdown display.
     private async getSequencesInBBox(lon: number, lat: number, accessToken: string) {
-        // Increased from 0.00005 (5 meters) 
-        const bboxSize = 0.00005;
-        const maxDistanceMeters = 50; // Only include sequences within 50m of click
+        // 0.00003 (30 meters) 
+        const bboxSize = 0.00003;
+        const maxDistanceMeters = 30; // Only include sequences within 30m of click
         
         const url = `https://graph.mapillary.com/images?fields=id,geometry,sequence,captured_at&bbox=${
             lon - bboxSize
@@ -4462,10 +4890,10 @@ export default class Widget extends React.PureComponent<
                 {this.state.imageId && (
                     <div className="legend-container" style={{
                                 position: "absolute",
-                                bottom: "10px",
+                                bottom: "1px",
                                 left: "6px",
                                 background: "rgba(255,255,255,0.3)",
-                                padding: "4px 8px",
+                                padding: "2px 4px",
                                 borderRadius: "4px",
                                 boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
                                 fontSize: "9px",
@@ -4479,7 +4907,7 @@ export default class Widget extends React.PureComponent<
                             // Turbo Mode Legend
                             <div className="legend-container-turbo-inner" style={{marginBottom: "4px"}}>
                                 <div className="legend-container-turbo-inner-cell">
-                                    <span style={legendCircleStyle('green')}></span>
+                                    <span style={legendCircleStyle('rgba(0, 255, 0)')}></span>
                                     Active frame
                                 </div>
                                 <div className="legend-container-turbo-inner-cell">
@@ -4488,7 +4916,7 @@ export default class Widget extends React.PureComponent<
                                 </div>
                                 <div className="legend-container-turbo-inner-cell">
                                     <span style={legendCircleStyle('brown')}></span>
-                                    All Mapillary coverage
+                                    Turbo Coverage images
                                 </div>
                                 <div className="legend-container-turbo-inner-cell">
                                     <span style={{
@@ -4497,21 +4925,32 @@ export default class Widget extends React.PureComponent<
                                     }}></span>
                                     Highlighted feature
                                 </div>
+                                <div className="legend-container-turbo-inner-cell">
+                                    <span style={{
+                                        ...legendCircleStyle('yellow'), 
+                                        border: '2px solid orange'}}></span>
+                                    Next direction
+                                </div>
                             </div>
                         ) : (
                             // Normal Mode Legend
                             <div className="legend-container-normal-inner">
-                                <div style={legendRowStyle}>
-                                    <span style={legendCircleStyle('red')}></span>
-                                    Clicked location
+                                <div className="legend-container-normal-inner-cell">
+                                    <span style={{...legendCircleStyle('black'), border: '1px solid white'}}></span>
+                                    Clicked
                                 </div>
-                                <div style={legendRowStyle}>
+                                <div className="legend-container-normal-inner-cell">
                                     <span style={legendCircleStyle('green')}></span>
                                     Active frame
                                 </div>
-                                <div style={legendRowStyle}>
+                                <div className="legend-container-normal-inner-cell">
                                     <span style={legendCircleStyle('blue')}></span>
                                     Active sequence
+                                </div>
+                                <div className="legend-container-normal-inner-cell">
+                                    <span style={{...legendCircleStyle('yellow'), 
+                                        border: '2px solid orange'}}></span>
+                                       Next direction
                                 </div>
                                 {/* Cache Clear Button */}
                                 {!this.state.turboModeActive && (
@@ -4693,7 +5132,7 @@ export default class Widget extends React.PureComponent<
 
                 {viewerArea}
                 {this.state.zoomWarningMessage && (
-                    <div style={{
+                    <div className="warning-message-container" style={{
                         position: "absolute",
                         top: "25px",
                         left: "40px",
@@ -4837,7 +5276,7 @@ export default class Widget extends React.PureComponent<
                 {/* Info box */}
                 <div className= "info-box"
                     style={{
-                        padding: "4px",
+                        // padding: "4px",
                         fontSize: "9px",
                         color: "white",
                         position: "absolute",
@@ -4903,7 +5342,7 @@ export default class Widget extends React.PureComponent<
                             {/* Optional: Check zoom level only if map is available */}
                             {this.state.jimuMapView?.view.zoom < 14 && (
                                 <div style={{color: "yellow", marginTop: "2px"}}>
-                                    (Zoom in for filtered view)
+                                    (Mapillary Coverage Layer is filtered by creator username)
                                 </div>
                             )}
                         </div>
@@ -5509,7 +5948,7 @@ export default class Widget extends React.PureComponent<
                         {/* Main Turbo Button */}
                         {!this.props.config.turboModeOnly && (
                             <button className="unified-control-buttons"
-                                title="Turbo Mode - Click coverage features directly"
+                                title="Toggle Turbo Mode"
                                 onClick={async () => {
                                     const next = !this.state.turboModeActive;
                                     this.setState({ turboModeActive: next });
@@ -5517,7 +5956,7 @@ export default class Widget extends React.PureComponent<
                                     if (next) {
                                         const view = this.state.jimuMapView?.view;
                                         if (this.state.jimuMapView?.view.zoom! < 16) {
-                                            this.showZoomWarning("Zoom in closer (≥ 16) to view Mapillary coverage point features in Turbo Mode.");
+                                            this.showZoomWarning("Zoom in closer (≥ 16) to view and interact with Mapillary coverage point features in Turbo Mode.");
                                         }
                                         this.clearSequenceUI();
                                         if (view) {
@@ -5806,6 +6245,43 @@ export default class Widget extends React.PureComponent<
                             </button>
                         </div>
                     )}
+
+                    {(this.state.trafficSignsActive || this.state.objectsActive) && (
+                        <div style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '2px',
+                            marginTop: '2px' // slight separation
+                        }}>
+                            <button className="unified-control-buttons"
+                                title="Download features in current view (GeoJSON)"
+                                onClick={this.downloadCurrentFeatures}
+                                style={{
+                                    background: 'rgba(0, 123, 255, 0.9)',
+                                    color: '#fff',
+                                    width: '25px',
+                                    height: '25px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    borderRadius: '6px',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                                    transition: 'transform 0.1s ease'
+                                }}
+                                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.1)')}
+                                onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                            >
+                                {/* Download Icon SVG */}
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="7 10 12 15 17 10"></polyline>
+                                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                                </svg>
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
         );
@@ -5854,7 +6330,7 @@ export default class Widget extends React.PureComponent<
                         position: 'absolute',
                         bottom: '40px',
                         right: '60px',
-                        width: '250px',
+                        width: '350px',
                         height: '200px',
                         border: '2px solid #fff',
                         borderRadius: '8px',
