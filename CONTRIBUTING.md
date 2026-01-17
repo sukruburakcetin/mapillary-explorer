@@ -90,4 +90,4 @@ Ensure that any required files (e.g., chunks, shared-code, manifest.json) are in
 
 To save the dist version of your widget, go and apply this section:
 
-[Register the Widget in ArcGIS Portal](#3-register-the-widget-in-arcgis-portal)
+[Add custom widgets](https://doc.arcgis.com/en/experience-builder/11.4/configure-widgets/add-custom-widgets.htm)
