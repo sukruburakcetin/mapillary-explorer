@@ -162,7 +162,6 @@ export default class Widget extends React.PureComponent<
         this.handleMapClick = this.handleMapClick.bind(this);
     }
 
-    // --- NEW HELPER METHOD ---
     // Binds events (cone drawing, zoom, image changes) to the current viewer instance.
     private bindMapillaryEvents() {
         if (!this.mapillaryViewer) return;
@@ -878,7 +877,6 @@ export default class Widget extends React.PureComponent<
     /**
         * Clears the locally saved Mapillary sequence cache and resets the widget UI
         * so there is no active sequence or markers remaining.
-        *
         * Triggered by the "Clear Sequence Cache" button in the legend UI.
         * - Removes cache from localStorage
         * - Stops & removes the pulsing green active image marker
@@ -972,6 +970,8 @@ export default class Widget extends React.PureComponent<
             if (this.trafficSignsZoomHandle) { this.trafficSignsZoomHandle.remove(); this.trafficSignsZoomHandle = null; }
             if (this.objectsStationaryHandle) { this.objectsStationaryHandle.remove(); this.objectsStationaryHandle = null; }
             if (this.objectsZoomHandle) { this.objectsZoomHandle.remove(); this.objectsZoomHandle = null; }
+            if (this.turboStationaryHandle) { this.turboStationaryHandle.remove(); this.turboStationaryHandle = null; }
+            if (this.turboZoomHandle) { this.turboZoomHandle.remove(); this.turboZoomHandle = null; }
 
             this.setState({
                 trafficSignsActive: false,
@@ -3292,6 +3292,13 @@ export default class Widget extends React.PureComponent<
             return;
         }
 
+        // If the widget was closed or Turbo Mode turned off while fetching, stop here.
+        if (!this.state.turboModeActive || this.props.state === 'CLOSED') {
+            console.log("Turbo layer loaded, but widget is closed or inactive. Discarding layer.");
+            this.setState({ turboLoading: false });
+            return;
+        }
+
         // --- 2. Create Point Layer ---
         let renderer: __esri.Renderer;
         if (turboColorByDate && needDetails) {
@@ -4179,7 +4186,8 @@ export default class Widget extends React.PureComponent<
                 this.enableTurboCoverageLayer();
                 this.clearZoomWarning();
             } else {
-                this.showZoomWarning(`Your current zoom level is ${jmv.view.zoom}. Turbo Mode is active. Zoom in closer (≥ 16) to interact with data.`, 0);
+                // .toFixed(1) ekleyerek 13.5567... yerine 13.6 gibi görünmesini sağlıyoruz
+                this.showZoomWarning(`Your current zoom level is ${jmv.view.zoom.toFixed(1)}. Turbo Mode is active. Zoom in closer (≥ 16) to interact with data.`, 0);
             }
         }
     }
@@ -6257,7 +6265,7 @@ export default class Widget extends React.PureComponent<
                                 title="Download features in current view (GeoJSON)"
                                 onClick={this.downloadCurrentFeatures}
                                 style={{
-                                    background: 'rgba(0, 123, 255, 0.9)',
+                                    background: 'rgba(0, 123, 255, 0.7)',
                                     color: '#fff',
                                     width: '25px',
                                     height: '25px',
