@@ -52,6 +52,21 @@ interface State {
     filtersLoaded: boolean;
     showIntro: boolean;
     minimapView?: __esri.MapView;
+    noImageMessageVisible: boolean;
+    turboFilterUsername: string;
+    showTurboFilterBox: boolean;
+    trafficSignsOptions: Array<{ value: string; label: string; iconUrl: string | null }>;
+    showTrafficSignsFilterBox: boolean;
+    objectsOptions: Array<{ value: string; label: string; iconUrl: string | null }>;
+    showObjectsFilterBox: boolean;
+    hoveredMapObject?: {
+        x: number;
+        y: number;
+        objectName: string;
+        firstSeen: string;
+        lastSeen: string;
+    } | null;
+    currentZoom?: number;
 }
 
 export default class Widget extends React.PureComponent<
@@ -59,41 +74,76 @@ export default class Widget extends React.PureComponent<
     State
 > {
     viewerContainer = React.createRef<HTMLDivElement>();
+    minimapContainer = React.createRef<HTMLDivElement>();
+    
     mapillaryViewer: any = null;
     ArcGISModules: any = null;
+    
+    // Graphics references
     private currentGreenGraphic: __esri.Graphic | null = null;
-    private resizeObserver: ResizeObserver | null = null;
     private currentConeGraphic: __esri.Graphic | null = null;
-	private accessToken: string = "";
-    private coneSpreads = [60, 40, 30, 20];   // width in degrees
-    private coneLengths = [10, 15, 20, 30];  // length in meters, tuned to 5m spacing
-    private zoomStepIndex = 0;              // start zoomed out
+    private clickedLocationGraphic: __esri.Graphic | null = null;
+    private _directionHoverGraphic: __esri.Graphic | null = null;
+    
+    // Observers and handles
+    private resizeObserver: ResizeObserver | null = null;
+    private mapClickHandle: IHandle | null = null;
+    private pointerMoveHandle: IHandle | null = null;
+    private minimapWatchHandle: __esri.WatchHandle | null = null;
+    
+    // Missing layer handles
+    private objectsStationaryHandle: IHandle | null = null;
+    private trafficSignsStationaryHandle: IHandle | null = null;
+    private trafficSignsZoomHandle: __esri.WatchHandle | null = null;
+    private objectsZoomHandle: __esri.WatchHandle | null = null;
+    private turboStationaryHandle: IHandle | null = null;
+    private turboZoomHandle: __esri.WatchHandle | null = null;
+    private highlightHandle: any = null;
+    
+    // Cancellation flags
+    private _cancelTrafficSignsFetch: boolean = false;
+    private _cancelObjectsFetch: boolean = false;
+    
+    // Layers
+    private accessToken: string = "";
     private mapillaryVTLayer: __esri.VectorTileLayer | null = null;
     private mapillaryTrafficSignsLayer: __esri.VectorTileLayer | null = null;
     private mapillaryObjectsLayer: __esri.VectorTileLayer | null = null;
-    private objectsStationaryHandle: IHandle | null = null;
-    private mapClickHandle: IHandle | null = null;
-    private pointerMoveHandle: IHandle | null = null;
-    private turboCoverageLayer: __esri.FeatureLayer;
-    private turboSequenceLayer: __esri.FeatureLayer | null = null; 
-    private turboStationaryHandle: IHandle | null = null;
+    
+    // Missing layer properties
+    private mapillaryTrafficSignsFeatureLayer: __esri.FeatureLayer | null = null;
+    private mapillaryObjectsFeatureLayer: __esri.FeatureLayer | null = null;
+    private turboCoverageLayer: __esri.FeatureLayer | null = null;
+    private turboSequenceLayer: __esri.FeatureLayer | null = null;
+    private turboCoverageLayerView: __esri.LayerView | null = null;
+    
+    // UI elements
     private tooltipDiv: HTMLDivElement | null = null;
-    private debouncedTurboFilter: () => void;
-    private clickedLocationGraphic: __esri.Graphic | null = null;
-    private sequenceCoordsCache: Record<string, {id: string, lat: number, lon: number}[]> = {};
-    private _lastBearing: number = 0; 
-    viewerContainer = React.createRef<HTMLDivElement>();
-    minimapContainer = React.createRef<HTMLDivElement>();
     private minimapView: __esri.MapView | null = null;
     private minimapGraphicsLayer: __esri.GraphicsLayer | null = null;
-    private minimapWatchHandle: __esri.WatchHandle | null = null;
+    
+    // Missing cached options
+    private _fullTrafficSignsOptions: Array<{ value: string; label: string; iconUrl: string | null }> = [];
+    private _fullObjectsOptions: Array<{ value: string; label: string; iconUrl: string | null }> = [];
+    
+    // Caches and timeouts
+    private sequenceCoordsCache: Record<string, {id: string, lat: number, lon: number}[]> = {};
+    private directionImageCache: Record<string, { lon: number; lat: number }> = {};
     private _hoverTimeout: any = null;
     private _zoomWarningTimeout: any = null;
     private _currentHoveredFeatureId: string | null = null;
-    private _directionHoverGraphic: __esri.Graphic | null = null;
-    private _directionUnsubscribe: (() => void) | null = null;  
-    private directionImageCache: Record<string, { lon: number; lat: number }> = {};
     private _currentDirectionHoverId: string | null = null;
+    private _directionUnsubscribe: (() => void) | null = null;
+    
+    // Camera settings
+    private coneSpreads = [60, 40, 30, 20];
+    private coneLengths = [10, 15, 20, 30];
+    private zoomStepIndex = 0;
+    private _lastBearing: number = 0;
+    
+    // Debounced function
+    private debouncedTurboFilter: (() => void) & { cancel?: () => void };
+    private zoomDisplayHandle: __esri.WatchHandle | null = null;
 
     /**
         * Human‑readable names for Mapillary object classification codes.
@@ -141,7 +191,14 @@ export default class Widget extends React.PureComponent<
         objectsFilterValue: { value: "All points", label: "All points", iconUrl: null },
         objectsOptions: [],
         filtersLoaded: false,
-        showIntro: true
+        showIntro: true,
+        turboFilterUsername: "",
+        showTurboFilterBox: false,
+        trafficSignsOptions: [{ value: "All traffic signs", label: "All traffic signs", iconUrl: null }],
+        showTrafficSignsFilterBox: false,
+        objectsOptions: [{ value: "All points", label: "All points", iconUrl: null }],
+        showObjectsFilterBox: false,
+        hoveredMapObject: null
     };
 
     constructor(props: AllWidgetProps<any>) {
@@ -941,6 +998,12 @@ export default class Widget extends React.PureComponent<
 			clearInterval((this.currentGreenGraphic as any)._pulseInterval);
 			this.currentGreenGraphic = null;
 		}
+
+        // Clean up zoom watcher
+        if (this.zoomDisplayHandle) {
+            this.zoomDisplayHandle.remove();
+            this.zoomDisplayHandle = null;
+        }
 
         // Clean up direction hover graphic
         this.clearDirectionHighlight();
@@ -3084,11 +3147,8 @@ export default class Widget extends React.PureComponent<
         * - Ends by setting `turboLoading` false to hide the spinner.
         * Called when Turbo Mode starts or reloads (stationary/zoom watchers).
     */
-     private async enableTurboCoverageLayer() {
-        if (!this.state.turboModeActive) {
-            console.log("Turbo Mode is OFF, ignoring enableTurboCoverageLayer call.");
-            return;
-        }
+     private async enableTurboCoverageLayer(forceUsernameFilter?: string) {
+        if (!this.state.turboModeActive) return;
 
         const {
             jimuMapView,
@@ -3099,28 +3159,34 @@ export default class Widget extends React.PureComponent<
             turboColorByDate
         } = this.state;
 
+        const activeUsername = forceUsernameFilter !== undefined ? forceUsernameFilter : turboFilterUsername;
+
         if (!jimuMapView) return;
 
+        // Check Zoom Level
         const minTurboZoom = 16;
-        if (jimuMapView.view.zoom < minTurboZoom) {
-            console.log(`Turbo Mode disabled - zoom level ${jimuMapView.view.zoom} is below ${minTurboZoom}`);
-            return;
-        }
+        if (jimuMapView.view.zoom < minTurboZoom) return;
 
         this.setState({ turboLoading: true });
-
-        // Remove old Turbo layers if exists
         this.disableTurboCoverageLayer();
 
+        // 1. Resolve Username to ID (One-time check)
+        let targetCreatorId: number | null = null;
+        if (activeUsername && activeUsername.trim().length > 0) {
+            targetCreatorId = await this.getUserIdFromUsername(activeUsername.trim());
+            if (!targetCreatorId) {
+                this.showZoomWarning(`User '${activeUsername}' not found.`, 3000);
+                this.setState({ turboLoading: false });
+                return;
+            }
+        }
+
+        // 2. Calculate Extent
         let wgs84Extent: __esri.Extent;
         try {
             const projected = webMercatorUtils.webMercatorToGeographic(jimuMapView.view.extent);
-            if (!projected) {
-                throw new Error("webMercatorToGeographic returned null");
-            }
             wgs84Extent = projected as __esri.Extent;
         } catch (err) {
-            console.error("Extent conversion to WGS84 failed:", err);
             this.setState({ turboLoading: false });
             return; 
         }
@@ -3130,8 +3196,15 @@ export default class Widget extends React.PureComponent<
         const tiles = this.bboxToTileRange(bbox, zoom);
 
         const seenIds = new Set<string>();
-        const baseFeatureList: { id: string; lon: number; lat: number }[] = [];
+        let features: any[] = [];
+        const allYears: Set<string> = new Set();
+        
+        const startTime = turboFilterStartDate ? new Date(turboFilterStartDate).getTime() : null;
+        const endTime = turboFilterEndDate ? new Date(turboFilterEndDate).getTime() : null;
 
+        let objectIdCounter = 1;
+
+        // 3. Process Tiles
         for (const [x, y, z] of tiles) {
             const url = `https://tiles.mapillary.com/maps/vtp/mly1_public/2/${z}/${x}/${y}?access_token=${this.accessToken}`;
             try {
@@ -3140,171 +3213,94 @@ export default class Widget extends React.PureComponent<
                 const ab = await resp.arrayBuffer();
                 const tile = new VectorTile(new Pbf(ab));
 
-                // --- 1. Process Images (Points) ---
                 const imgLayer = tile.layers["image"];
                 if (imgLayer) {
                     for (let i = 0; i < imgLayer.length; i++) {
-                        const feat = imgLayer.feature(i).toGeoJSON(x, y, z);
-                        const [lon, lat] = feat.geometry.coordinates;
-                        const id = feat.properties.id;
+                        const feat = imgLayer.feature(i);
+                        const props = feat.properties; 
+
+                        // --- Filtering ---
+                        if (targetCreatorId !== null && props.creator_id !== targetCreatorId) continue;
+
+                        if (turboFilterIsPano !== undefined) {
+                            const isPano = !!props.is_pano; 
+                            if (isPano !== turboFilterIsPano) continue;
+                        }
+
+                        if (startTime || endTime || turboColorByDate) {
+                            if (props.captured_at) {
+                                const t = props.captured_at; 
+                                if (startTime && t < startTime) continue;
+                                if (endTime && t > endTime) continue;
+                                if (turboColorByDate) {
+                                    const d = new Date(t);
+                                    if (!isNaN(d.getTime())) allYears.add(String(d.getFullYear()));
+                                }
+                            } else if (startTime || endTime) {
+                                continue;
+                            }
+                        }
+
+                        const geo = feat.toGeoJSON(x, y, z);
+                        const [lon, lat] = geo.geometry.coordinates;
+                        
+                        // ID HANDLING: Convert to string immediately
+                        const idStr = String(props.id);
 
                         if (
-                            !seenIds.has(id) &&
+                            !seenIds.has(idStr) &&
                             lon >= bbox[0] && lon <= bbox[2] &&
                             lat >= bbox[1] && lat <= bbox[3]
                         ) {
-                            seenIds.add(id);
-                            baseFeatureList.push({ id, lon, lat });
+                            seenIds.add(idStr);
+
+                            let yearCat: string | null = null;
+                            if (turboColorByDate && props.captured_at) {
+                                yearCat = String(new Date(props.captured_at).getFullYear());
+                            }
+
+                            // --- CREATE FEATURE ---
+                            features.push({
+                                geometry: webMercatorUtils.geographicToWebMercator({
+                                    type: "point",
+                                    x: lon,
+                                    y: lat,
+                                    spatialReference: { wkid: 4326 }
+                                }),
+                                attributes: {
+                                    oid: objectIdCounter++, 
+                                    image_id: idStr, // STORE AS STRING 'image_id'
+                                    creator_id: String(props.creator_id), 
+                                    sequence_id: String(props.sequence_id || ""),
+                                    captured_at: props.captured_at || null, 
+                                    is_pano: !!props.is_pano ? 1 : 0,
+                                    date_category: yearCat,
+                                    // PBF doesn't have username string, we rely on API for that later
+                                    creator_username: activeUsername || null 
+                                }
+                            });
                         }
                     }
                 }
-            } catch (err) {
-                console.warn("Turbo tile fetch error", err);
-            }
-        }
-
-        // Decide if details are needed
-        const needDetails =
-            turboColorByDate ||
-            Boolean(turboFilterUsername?.trim()) ||
-            Boolean(turboFilterStartDate) ||
-            Boolean(turboFilterEndDate) ||
-            turboFilterIsPano !== undefined;
-
-        let features: any[] = [];
-        const allYears: Set<string> = new Set();
-        
-        // This set will hold sequence IDs that passed the filter (or all if no filter)
-        const validSequenceIds = new Set<string>();
-
-        if (!needDetails) {
-            // --- FAST MODE (No API calls) ---
-            
-            // Points
-            features = baseFeatureList.map(base => ({
-                geometry: webMercatorUtils.geographicToWebMercator({
-                    type: "point",
-                    x: base.lon,
-                    y: base.lat,
-                    spatialReference: { wkid: 4326 }
-                }),
-                attributes: { id: base.id }
-            }));
-        } else {
-            // --- DETAIL MODE (API Filter calls) ---
-            const idToUser: Record<string, string> = {};
-            const idToSequence: Record<string, string> = {};
-            const idToCapturedAt: Record<string, string> = {};
-            const idToIsPano: Record<string, boolean | null> = {};
-
-            const chunkSize = 50;
-            const chunks: string[][] = [];
-            for (let i = 0; i < baseFeatureList.length; i += chunkSize) {
-                chunks.push(baseFeatureList.slice(i, i + chunkSize).map(f => f.id));
-            }
-
-            // Fetch details in parallel
-            await Promise.all(
-                chunks.map(async chunk => {
-                    try {
-                    const fields = "id,creator.username,sequence,captured_at,is_pano";
-                    const apiUrl = `https://graph.mapillary.com/?ids=${chunk.join(",")}&fields=${fields}`;
-                    const resp = await fetch(apiUrl, {
-                        headers: { Authorization: `OAuth ${this.accessToken}` }
-                    });
-                    if (!resp.ok) return;
-                    const json = await resp.json();
-                    for (const [id, obj] of Object.entries(json)) {
-                        idToUser[id] = (obj as any).creator?.username || "Unknown";
-                        idToSequence[id] = (obj as any).sequence || null;
-                        idToCapturedAt[id] = (obj as any).captured_at || null;
-                        idToIsPano[id] = (obj as any).is_pano ?? null;
-                    }
-                    } catch (err) {
-                        console.warn("Graph API chunk error", err);
-                    }
-                })
-            );
-
-            const startTime = turboFilterStartDate ? new Date(turboFilterStartDate).getTime() : null;
-            const endTime = turboFilterEndDate ? new Date(turboFilterEndDate).getTime() : null;
-
-            // Filter Points
-            features = baseFeatureList
-            .filter(base => {
-                const userOk = turboFilterUsername?.trim()
-                ? idToUser[base.id] === turboFilterUsername.trim()
-                : true;
-
-                const dateStr = idToCapturedAt[base.id];
-                let dateOk = true;
-                if (dateStr) {
-                    const t = new Date(dateStr).getTime();
-                    if (startTime && t < startTime) dateOk = false;
-                    if (endTime && t > endTime) dateOk = false;
-                }
-
-                let panoOk = true;
-                if (turboFilterIsPano !== undefined) {
-                    panoOk = idToIsPano[base.id] === turboFilterIsPano;
-                }
-
-                return userOk && dateOk && panoOk;
-            })
-            .map(base => {
-                // Collect valid sequence IDs from the images that passed the filter
-                const seqId = idToSequence[base.id];
-                if (seqId) validSequenceIds.add(seqId);
-
-                let yearCat: string | null = null;
-                if (turboColorByDate) {
-                    yearCat = this.getDateCategory(idToCapturedAt[base.id]);
-                    if (yearCat && yearCat !== "unknown") {
-                        allYears.add(yearCat);
-                    }
-                }
-                return {
-                    geometry: webMercatorUtils.geographicToWebMercator({
-                        type: "point",
-                        x: base.lon,
-                        y: base.lat,
-                        spatialReference: { wkid: 4326 }
-                    }),
-                    attributes: {
-                        id: base.id,
-                        creator_username: idToUser[base.id],
-                        sequence_id: seqId,
-                        captured_at: idToCapturedAt[base.id],
-                        is_pano: idToIsPano[base.id],
-                        date_category: yearCat
-                    }
-                };
-            });
+            } catch (err) { }
         }
 
         if (!features.length) {
-            this.showZoomWarning(
-                "No Turbo coverage matches for filters or date coloring", 
-                3000 // Show for 3 seconds
-            );
-            console.warn("No Turbo coverage matches for filters or date coloring");
+            this.showZoomWarning("No Turbo coverage matches found.", 3000);
             this.setState({ turboLoading: false });
             return;
         }
 
-        // If the widget was closed or Turbo Mode turned off while fetching, stop here.
         if (!this.state.turboModeActive || this.props.state === 'CLOSED') {
-            console.log("Turbo layer loaded, but widget is closed or inactive. Discarding layer.");
             this.setState({ turboLoading: false });
             return;
         }
 
-        // --- 2. Create Point Layer ---
+        // --- Renderer Setup ---
         let renderer: __esri.Renderer;
-        if (turboColorByDate && needDetails) {
-            const yearList = Array.from(allYears);
+        if (turboColorByDate && allYears.size > 0) {
+            const yearList = Array.from(allYears).sort();
             const yearRenderer = this.createYearBasedRenderer(yearList);
-
             const palette = [
                 [46, 204, 113], [52, 152, 219], [241, 196, 15], [231, 76, 60],
                 [155, 89, 182], [26, 188, 156], [230, 126, 34], [149, 165, 166]
@@ -3313,40 +3309,45 @@ export default class Widget extends React.PureComponent<
                 year: year,
                 color: `rgb(${palette[idx % palette.length].join(",")})`
             }));
-
             this.setState({ turboYearLegend: legendMap });
             renderer = yearRenderer;
         } else {
             renderer = {
-            type: "simple",
-            symbol: {
-                type: "simple-marker",
-                color: [165, 42, 42, 0.9],
-                size: 6,
-                outline: { color: [255, 255, 255], width: 1 }
-            }
+                type: "simple",
+                symbol: {
+                    type: "simple-marker",
+                    color: [165, 42, 42, 0.9],
+                    size: 6,
+                    outline: { color: [255, 255, 255], width: 1 }
+                }
             };
             this.setState({ turboYearLegend: [] });
         }
 
+        // --- Layer Creation ---
         this.turboCoverageLayer = new FeatureLayer({
             id: "turboCoverage",
             source: features,
-            objectIdField: "id",
+            objectIdField: "oid",
             fields: [
-                { name: "id", type: "string" },
+                { name: "oid", type: "oid" },
+                { name: "image_id", type: "string" }, // Critical field for lookup
+                { name: "creator_id", type: "string" },
                 { name: "creator_username", type: "string" },
                 { name: "sequence_id", type: "string" },
-                { name: "captured_at", type: "string" },
-                { name: "date_category", type: "string" }
+                { name: "captured_at", type: "date" },
+                { name: "date_category", type: "string" },
+                { name: "is_pano", type: "integer" }
             ],
             geometryType: "point",
             spatialReference: { wkid: 3857 },
             renderer,
-            popupEnabled: false
+            popupEnabled: false,
+            outFields: ["*"] // Ensure all attributes are available on client
         });
 
         jimuMapView.view.map.add(this.turboCoverageLayer);
+        
         jimuMapView.view.whenLayerView(this.turboCoverageLayer).then(lv => {
             this.turboCoverageLayerView = lv;
         });
@@ -3376,7 +3377,7 @@ export default class Widget extends React.PureComponent<
         }
         this.turboSequenceLayer = null;
         
-        console.log("Turbo coverage layers removed");
+        // console.log("Turbo coverage layers removed");
     }
     
     // --- Load a specific sequence by ID and image ---
@@ -3831,7 +3832,7 @@ export default class Widget extends React.PureComponent<
         }
     };
 
-    /**
+    /*
         * Handles map view changes and sets up click/hover event handlers.
         * Manages interactions for both normal and turbo mode, including object/traffic sign layers.
     */
@@ -3841,15 +3842,23 @@ export default class Widget extends React.PureComponent<
         console.log("Active MapView set - Attaching Handlers");
         this.setState({ jimuMapView: jmv });
 
-        // Cleanup old handles
+        // ZOOM WATCHER 
+        if (this.zoomDisplayHandle) {
+            this.zoomDisplayHandle.remove();
+            this.zoomDisplayHandle = null;
+        }
+        
+        this.setState({ currentZoom: jmv.view.zoom });
+        this.zoomDisplayHandle = jmv.view.watch("zoom", (newZoom: number) => {
+            this.setState({ currentZoom: newZoom });
+        });
+        
         if (this.mapClickHandle) this.mapClickHandle.remove();
         if (this.pointerMoveHandle) this.pointerMoveHandle.remove();
 
         // Force Add Coverage Layer if Config is ON
         if (this.props.config.coverageLayerAlwaysOn) {
             this.setState({ tilesActive: true });
-            
-            // Only add if modules loaded
             if (this.ArcGISModules && this.mapillaryVTLayer) {
                 const existingLayer = jmv.view.map.findLayerById("mapillary-vector-tiles");
                 if (!existingLayer) {
@@ -3860,32 +3869,15 @@ export default class Widget extends React.PureComponent<
 
         // --- CLICK HANDLER ---
         this.mapClickHandle = jmv.view.on("click", async (evt) => {
-            // console.log("=== CLICK EVENT START ===");
-            // console.log("Widget State:", this.props.state);
-            // console.log("Turbo Mode Active:", this.state.turboModeActive);
-            // console.log("Turbo Mode Only Config:", this.props.config.turboModeOnly);
-            
-            // Only block if explicitly closed
-            if (this.props.state === 'CLOSED') {
-                console.log(">> BLOCKED: Widget explicitly closed");
-                return;
-            }
+            if (this.props.state === 'CLOSED') return;
 
-            // 1. Setup Click Variables
             const point = jmv.view.toMap(evt) as __esri.Point;
             this.setState({ clickLon: point.longitude, clickLat: point.latitude });
 
-            // console.log("Click detected at:", point.longitude, point.latitude);
-
             try {
-                // 2. Perform Broad HitTest
                 const response = await jmv.view.hitTest(evt);
                 
-                // console.log("Raw HitTest Results COUNT:", response.results.length);
-
-                // 3. Check each priority
-                
-                // === PRIORITY 1: Blue Markers ===
+                // 1. Blue Markers
                 const seqPointHit = response.results.find(r => 
                     r.graphic && 
                     (
@@ -3896,13 +3888,8 @@ export default class Widget extends React.PureComponent<
                 );
 
                 if (seqPointHit) {
-                    // console.log(">> PRIORITY 1: Blue Point Marker HIT");
                     const seqId = seqPointHit.graphic.attributes?.sequenceId || this.state.selectedSequenceId;
-                    
-                    if (!seqId) {
-                        console.log(">> ERROR: No sequenceId");
-                        return;
-                    }
+                    if (!seqId) return;
                     
                     let currentSeqData = this.state.sequenceImages;
                     if (this.state.selectedSequenceId !== seqId || !currentSeqData.length) {
@@ -3919,7 +3906,6 @@ export default class Widget extends React.PureComponent<
                             if (this.state.selectedSequenceId !== seqId) {
                                 this.setState({ selectedSequenceId: seqId });
                             }
-                            
                             await this.loadSequenceById(seqId, closestImg.id, { lon: point.longitude, lat: point.latitude });
                             return;
                         }
@@ -3927,39 +3913,28 @@ export default class Widget extends React.PureComponent<
                     return;
                 }
 
-                // === PRIORITY 2: Objects/Signs ===
+                // 2. Objects/Signs
                 const objectHit = response.results.find(r => {
                     const layer = r.layer || (r.graphic && r.graphic.layer);
                     return layer && layer.id === "mapillary-objects-fl";
                 });
-                
-                if (objectHit) {
-                    // console.log(">> PRIORITY 2: Object HIT (popup)");
-                    return;
-                }
+                if (objectHit) return;
 
                 const trafficSignHit = response.results.find(r => {
                     const layer = r.layer || (r.graphic && r.graphic.layer);
                     return layer && layer.id === "mapillary-traffic-signs-fl";
                 });
-                
-                if (trafficSignHit) {
-                    console.log(">> PRIORITY 2: Traffic Sign HIT (popup)");
-                    return;
-                }
+                if (trafficSignHit) return;
 
-                // === PRIORITY 3: Turbo Coverage ===
+                // 3. Turbo Coverage
                 const turboHit = response.results.find(r => {
                     const layer = r.layer || (r.graphic && r.graphic.layer);
                     return layer && layer.id === "turboCoverage";
                 });
-
+                
                 // === TURBO MODE BRANCH ===
                 if (this.state.turboModeActive) {
-                    // console.log(">> BRANCH: Turbo Mode Active");
-                    
                     if (turboHit) {
-                        // console.log(">> PRIORITY 3: Turbo Coverage HIT");
                         const hitGraphic = turboHit.graphic;
                         const attrs = hitGraphic?.attributes;
 
@@ -3969,10 +3944,13 @@ export default class Widget extends React.PureComponent<
                         }
 
                         if (attrs) {
-                            const imageId = attrs.id;
+                            const imageId = attrs.image_id || attrs.id; 
+                            if (!imageId) return;
+
                             let seqId = attrs.sequence_id;
 
-                            if (!seqId) {
+                           // Fetch Sequence ID from Graph API if missing in PBF
+                            if (!seqId || seqId === "" || seqId === "undefined") {
                                 try {
                                     const resp = await fetch(`https://graph.mapillary.com/${imageId}?fields=sequence`, {
                                         headers: { Authorization: `OAuth ${this.accessToken}` }
@@ -3980,14 +3958,14 @@ export default class Widget extends React.PureComponent<
                                     if (resp.ok) {
                                         const data = await resp.json();
                                         seqId = data.sequence;
+                                        // Cache it back to graphic
                                         hitGraphic.attributes.sequence_id = seqId;
                                     }
                                 } catch (err) { 
-                                    console.error("Fetch error:", err); 
+                                    console.error("Failed to fetch sequence for click", err);
                                     return; 
                                 }
                             }
-
                             if (seqId) {
                                 this.drawClickRipple(point.longitude, point.latitude);
                                 this.setState({ selectedSequenceId: seqId });
@@ -3997,36 +3975,32 @@ export default class Widget extends React.PureComponent<
                             }
                         }
                     } else {
-                        console.log(">> BRANCH: Turbo Mode MISS - Blocking");
+                        // Clicked empty space in Turbo Mode
                         this.drawWarningRipple(point.longitude, point.latitude);
                         this.showZoomWarning("Turbo Mode: Please click directly on a brown coverage point.", 3000);
                         return;
                     }
                 }
-
+                
                 // === NORMAL MODE BRANCH ===
-                // console.log(">> BRANCH: Normal Mode - Background Click");
                 await this.handleMapClick(evt);
 
             } catch (error) {
-                console.error("=== CLICK EVENT ERROR ===", error);
-                
+                console.error("Click error", error);
                 if (!this.state.turboModeActive) {
                     await this.handleMapClick(evt);
                 }
             }
         });
 
-        // --- HOVER HANDLER ---
+        // --- HOVER HANDLER (Strict Debounce) ---
         this.pointerMoveHandle = jmv.view.on("pointer-move", async (evt) => {
-            // Capture global coordinates IMMEDIATELY
             const globalX = evt.native.clientX;
             const globalY = evt.native.clientY;
 
-            // Broad hitTest for hover as well
             const hit = await jmv.view.hitTest(evt);
             
-            // Standard Object Hover
+            // Standard Object Hover Logic
             const obj = hit.results.find(r => {
                 const l = r.layer || (r.graphic && r.graphic.layer);
                 return l && l.id === "mapillary-objects-fl";
@@ -4059,90 +4033,101 @@ export default class Widget extends React.PureComponent<
                 const attrs = hitGraphic?.attributes;
                 if (!attrs) return;
 
-                const featureId = attrs.id;
+                const featureId = attrs.image_id || attrs.id;
+                if (!featureId) return;
 
+                // If the feature has changed (or if it’s a new entry)
                 if (this._currentHoveredFeatureId !== featureId) {
+                    
+                    // 1. Cancel the previous pending operation
                     if (this._hoverTimeout) {
                         clearTimeout(this._hoverTimeout);
                         this._hoverTimeout = null;
                     }
+                    
+                     // 2. HIDE the tooltip (do NOT show it immediately!)
+                    this.tooltipDiv.style.display = "none";
+
+                    // 3. Store the new ID
                     this._currentHoveredFeatureId = featureId;
 
+                     // 4. Start the timer (wait 300ms)
                     this._hoverTimeout = setTimeout(async () => {
                         if (!this.tooltipDiv) return;
 
-                        if (attrs.creator_username) {
-                            const dateStr = attrs.captured_at ? new Date(attrs.captured_at).toLocaleString() : "Unknown date";
-                            const thumbHtml = attrs.thumb_url
-                                ? `<img src="${attrs.thumb_url}" style="max-width:150px;border-radius:3px;margin-top:4px" />`
-                                : "";
+                         // -- 300ms has passed, meaning the user is now hovering steadily at this point --
+                        
+                        // First, show "Loading"
+                        this.tooltipDiv.innerHTML = `<div>Loading details…</div>`;
+                        this.tooltipDiv.style.left = `${globalX + 15}px`;
+                        this.tooltipDiv.style.top = `${globalY + 15}px`;
+                        this.tooltipDiv.style.display = "block";
 
-                            this.tooltipDiv.innerHTML = `
+                        // Cache kontrolü (Attribute içinde veri var mı?)
+                        if (attrs.creator_username && attrs.thumb_url) {
+                             // Veri zaten varsa API'ye gitme
+                             const dateStr = attrs.captured_at ? new Date(attrs.captured_at).toLocaleString() : "Unknown date";
+                             const thumbHtml = `<img src="${attrs.thumb_url}" style="max-width:150px;border-radius:3px;margin-top:4px;display:block;" />`;
+                             
+                             this.tooltipDiv.innerHTML = `
                                 <div><b>${attrs.creator_username}</b></div>
-                                <div>${dateStr}</div>
+                                <div style="font-size:10px">${dateStr}</div>
                                 ${thumbHtml}
                             `;
-                            this.tooltipDiv.style.left = `${globalX + 15}px`;
-                            this.tooltipDiv.style.top = `${globalY + 15}px`;
-                            this.tooltipDiv.style.display = "block";
-                        } else {
-                            this.tooltipDiv.innerHTML = `<div>Loading details…</div>`;
-                            this.tooltipDiv.style.left = `${globalX + 15}px`;
-                            this.tooltipDiv.style.top = `${globalY + 15}px`;
-                            this.tooltipDiv.style.display = "block";
-
-                            try {
-                                const url = `https://graph.mapillary.com/${featureId}?fields=id,sequence,creator.username,captured_at,thumb_256_url`;
-                                const resp = await fetch(url, {
-                                    headers: { Authorization: `OAuth ${this.accessToken}` }
-                                });
-
-                                if (resp.ok) {
-                                    const data = await resp.json();
-                                    if (!this.tooltipDiv) return;
-
-                                    const updatedAttrs = {
-                                        ...attrs,
-                                        sequence_id: data.sequence || null,
-                                        captured_at: data.captured_at ? new Date(data.captured_at).getTime() : null,
-                                        creator_username: data.creator?.username || null,
-                                        thumb_url: data.thumb_256_url || null
-                                    };
-                                    // Update graphic
-                                    hitGraphic.attributes = updatedAttrs;
-
-                                    const dateStr = updatedAttrs.captured_at
-                                        ? new Date(updatedAttrs.captured_at).toLocaleString()
-                                        : "Unknown date";
-                                    const thumbHtml = updatedAttrs.thumb_url
-                                        ? `<img src="${updatedAttrs.thumb_url}" style="max-width:150px;border-radius:3px;margin-top:4px" />`
-                                        : "";
-
-                                    this.tooltipDiv.innerHTML = `
-                                        <div><b>${updatedAttrs.creator_username || "Unknown User"}</b></div>
-                                        <div>${dateStr}</div>
-                                        ${thumbHtml}
-                                    `;
-                                    // Re-position using captured coords
-                                    this.tooltipDiv.style.left = `${globalX + 15}px`;
-                                    this.tooltipDiv.style.top = `${globalY + 15}px`;
-                                } else {
-                                    if(this.tooltipDiv) this.tooltipDiv.innerHTML = `<div>Failed to load details</div>`;
-                                }
-                            } catch (err) {
-                                if(this.tooltipDiv) this.tooltipDiv.innerHTML = `<div>Error loading details</div>`;
-                            }
+                            return;
                         }
-                    }, 500); 
+
+                        try {
+                            // Make the API request (only after waiting 300ms)
+                            const url = `https://graph.mapillary.com/${featureId}?fields=id,sequence,creator.username,captured_at,thumb_256_url`;
+                            const resp = await fetch(url, {
+                                headers: { Authorization: `OAuth ${this.accessToken}` }
+                            });
+
+                            if (resp.ok) {
+                                const data = await resp.json();
+                                if (!this.tooltipDiv) return;
+
+                                // Cache results back to graphic so we don't fetch again for this point
+                                hitGraphic.attributes.creator_username = data.creator?.username;
+                                hitGraphic.attributes.thumb_url = data.thumb_256_url;
+                                // captured_at zaten vardı ama güncelleyelim
+                                if(data.captured_at) hitGraphic.attributes.captured_at = new Date(data.captured_at).getTime();
+
+                                const dateStr = data.captured_at 
+                                    ? new Date(data.captured_at).toLocaleString() 
+                                    : "Unknown date";
+                                
+                                const thumbHtml = data.thumb_256_url
+                                    ? `<img src="${data.thumb_256_url}" style="max-width:150px;border-radius:3px;margin-top:4px;display:block;" />`
+                                    : "";
+
+                                this.tooltipDiv.innerHTML = `
+                                    <div><b>${data.creator?.username || "Unknown User"}</b></div>
+                                    <div style="font-size:10px">${dateStr}</div>
+                                    ${thumbHtml}
+                                `;
+                                // Update the position (the mouse may have moved; using the latest position would be better,
+                                // but globalX inside the closure is currently stale)
+                                // Note: globalX inside setTimeout is the position when the hover started.
+                                // If the user moves the mouse slightly within 500ms, the tooltip may appear slightly offset;
+                                // this is acceptable.
+                            } else {
+                                this.tooltipDiv.innerHTML = `<div>Failed to load details</div>`;
+                            }
+                        } catch (err) {
+                            this.tooltipDiv.innerHTML = `<div>Error loading details</div>`;
+                        }
+                    }, 300); // 300ms Delay
                 } else {
-                    // Moving within same feature
+                    // The user is still hovering over the same feature; if the tooltip is already open,
+                    // just update its position
                     if (this.tooltipDiv.style.display === "block") {
                         this.tooltipDiv.style.left = `${globalX + 15}px`;
                         this.tooltipDiv.style.top = `${globalY + 15}px`;
                     }
                 }
             } else {
-                // Not hovering Turbo layer
                 if (this._hoverTimeout) {
                     clearTimeout(this._hoverTimeout);
                     this._hoverTimeout = null;
@@ -4186,7 +4171,6 @@ export default class Widget extends React.PureComponent<
                 this.enableTurboCoverageLayer();
                 this.clearZoomWarning();
             } else {
-                // .toFixed(1) ekleyerek 13.5567... yerine 13.6 gibi görünmesini sağlıyoruz
                 this.showZoomWarning(`Your current zoom level is ${jmv.view.zoom.toFixed(1)}. Turbo Mode is active. Zoom in closer (≥ 16) to interact with data.`, 0);
             }
         }
@@ -5293,7 +5277,8 @@ export default class Widget extends React.PureComponent<
                         background: "rgba(2, 117, 216, 0.6)",
                         borderRadius: "4px",
 						maxWidth: "80px",
-                        textAlign: "center"
+                        textAlign: "center",
+                        padding: "1px 5px 1px 5px"
                     }}
                 >
                     {/* {this.state.imageId && <>Image ID: {this.state.imageId}<br/></>}
@@ -5314,7 +5299,20 @@ export default class Widget extends React.PureComponent<
                             }
                         }
                         return null;
-                    })()}					
+                    })()}	
+                    {this.state.jimuMapView?.view && (
+                        <div style={{ 
+                            fontWeight: "bold", 
+                            fontSize: "10px",
+                            borderBottom: "1px solid rgba(255,255,255,0.3)",
+                            paddingBottom: "3px",
+                            marginBottom: "3px"
+                        }}>
+                            🔍 Zoom: {this.state.currentZoom !== undefined 
+                                ? this.state.currentZoom.toFixed(1) 
+                                : this.state.jimuMapView.view.zoom.toFixed(1)}
+                        </div>
+                    )}		
 
                     {/*TURBO YEAR LEGEND*/}
                     {this.state.turboColorByDate && this.state.turboYearLegend?.length > 0 && (
