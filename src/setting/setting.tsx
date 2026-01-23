@@ -39,6 +39,13 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     });
   }
 
+  onToggleHideTurboFilter = (evt: React.ChangeEvent<HTMLInputElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('hideTurboFilter', evt.target.checked)
+    });
+  }
+
   onToggleCoverageAlwaysOn = (evt: React.ChangeEvent<HTMLInputElement>) => {
     this.props.onSettingChange({
       id: this.props.id,
@@ -75,6 +82,19 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     });
   }
 
+  onToggleHideImageDownload = (evt: React.ChangeEvent<HTMLInputElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('hideImageDownload', evt.target.checked)
+    });
+  }
+
+  onToggleHideTimeTravel = (evt: React.ChangeEvent<HTMLInputElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('hideTimeTravel', evt.target.checked)
+    });
+  }
 
   render() {
     const config = this.props.config;
@@ -137,6 +157,27 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
             <Switch 
               checked={config.hideInfoBox === true} 
               onChange={this.onToggleHideInfoBox} 
+            />
+          </SettingRow>
+
+          <SettingRow label="Hide Turbo Mode Filter Button">
+                <Switch 
+                  checked={config.hideTurboFilter === true} 
+                  onChange={this.onToggleHideTurboFilter} 
+                />
+          </SettingRow>
+
+          <SettingRow label="Hide Image Download">
+            <Switch 
+              checked={config.hideImageDownload === true} 
+              onChange={this.onToggleHideImageDownload} 
+            />
+          </SettingRow>
+
+          <SettingRow label="Hide Time Travel">
+            <Switch 
+              checked={config.hideTimeTravel === true} 
+              onChange={this.onToggleHideTimeTravel} 
             />
           </SettingRow>
         </SettingSection>

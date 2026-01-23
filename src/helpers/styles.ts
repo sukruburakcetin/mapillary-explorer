@@ -65,7 +65,7 @@ export const mobileOverrideStyles = `
         .splash-screen-logo { margin-bottom: 15px !important; }
         .splash-screen-text { font-size: 10px !important; }
         .minimap-container { 
-            top: 40px !important; 
+            top: 50px !important; 
             left: 50% !important; 
             right: auto !important;
             transform: translateX(-50%) !important;

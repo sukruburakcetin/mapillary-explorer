@@ -61,6 +61,22 @@ export interface Config {
     * If true, the Mapillary "zoom" component (+/- buttons) is deactivated.
   */
   hideZoom?: boolean;
+
+  /**
+    * If true, the filter button (magnifying glass) inside the Turbo Mode controls is hidden.
+    * This prevents users from changing the username/date filters.
+  */
+  hideTurboFilter?: boolean;
+  
+  /**
+    * If true, the button to download the current high-res image is hidden.
+  */
+  hideImageDownload?: boolean;
+
+  /**
+    * If true, the Time Travel button (clock icon) is hidden even if historical data exists.
+  */
+  hideTimeTravel?: boolean;
 }
 
 export type IMConfig = ImmutableObject<Config>;
