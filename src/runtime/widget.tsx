@@ -23,7 +23,7 @@ interface State {
     jimuMapView: JimuMapView | null;
     imageId: string | null;
     sequenceId: string | null;
-    sequenceImages: { id: string; lat: number; lon: number }[];
+    sequenceImages: { id: string; lat: number; lon: number; captured_at?: number }[];
     lon: number | null;
     lat: number | null;
     isFullscreen: boolean;
@@ -67,6 +67,7 @@ interface State {
         lastSeen: string;
     } | null;
     currentZoom?: number;
+    hasTimeTravel: boolean; 
 }
 
 export default class Widget extends React.PureComponent<
@@ -114,17 +115,12 @@ export default class Widget extends React.PureComponent<
     private mapillaryTrafficSignsFeatureLayer: __esri.FeatureLayer | null = null;
     private mapillaryObjectsFeatureLayer: __esri.FeatureLayer | null = null;
     private turboCoverageLayer: __esri.FeatureLayer | null = null;
-    private turboSequenceLayer: __esri.FeatureLayer | null = null;
     private turboCoverageLayerView: __esri.LayerView | null = null;
     
     // UI elements
     private tooltipDiv: HTMLDivElement | null = null;
     private minimapView: __esri.MapView | null = null;
     private minimapGraphicsLayer: __esri.GraphicsLayer | null = null;
-    
-    // Missing cached options
-    private _fullTrafficSignsOptions: Array<{ value: string; label: string; iconUrl: string | null }> = [];
-    private _fullObjectsOptions: Array<{ value: string; label: string; iconUrl: string | null }> = [];
     
     // Caches and timeouts
     private sequenceCoordsCache: Record<string, {id: string, lat: number, lon: number}[]> = {};
@@ -134,6 +130,10 @@ export default class Widget extends React.PureComponent<
     private _currentHoveredFeatureId: string | null = null;
     private _currentDirectionHoverId: string | null = null;
     private _directionUnsubscribe: (() => void) | null = null;
+
+    // Backup arrays to reset filter dropdowns to their initial state
+    private _fullTrafficSignsOptions: Array<{ value: string; label: string; iconUrl: string | null }> = [];
+    private _fullObjectsOptions: Array<{ value: string; label: string; iconUrl: string | null }> = [];
     
     // Camera settings
     private coneSpreads = [60, 40, 30, 20];
@@ -198,7 +198,8 @@ export default class Widget extends React.PureComponent<
         showTrafficSignsFilterBox: false,
         objectsOptions: [{ value: "All points", label: "All points", iconUrl: null }],
         showObjectsFilterBox: false,
-        hoveredMapObject: null
+        hoveredMapObject: null,
+        hasTimeTravel: false
     };
 
     constructor(props: AllWidgetProps<any>) {
@@ -431,6 +432,7 @@ export default class Widget extends React.PureComponent<
 
                 // Draw new green pulsing point at NEW location
                 this.currentGreenGraphic = this.drawPulsingPoint(newImg.lon, newImg.lat, [0, 255, 0, 1]);
+                this.checkForTimeTravel(newImg.lon, newImg.lat, newImg.captured_at);
 
                 // Get bearing and draw cone at NEW location
                 this.mapillaryViewer.getBearing().then((b: number) => {
@@ -1066,8 +1068,7 @@ export default class Widget extends React.PureComponent<
                 "mapillary-traffic-signs-fl",   // Traffic Signs Popup Points
                 "mapillary-objects-vt",         // Objects Coverage
                 "mapillary-objects-fl",         // Objects Popup Points
-                "turboCoverage",                // Turbo Points
-                "turboSequence"                 // Turbo Lines
+                "turboCoverage"                // Turbo Points
             ];
 
             layersToRemoveById.forEach(id => {
@@ -1085,7 +1086,6 @@ export default class Widget extends React.PureComponent<
             this.mapillaryObjectsLayer = null;
             this.mapillaryObjectsFeatureLayer = null;
             this.turboCoverageLayer = null;
-            this.turboSequenceLayer = null;
             this.turboCoverageLayerView = null;
             
             // Fallback sweep (optional, but good for safety)
@@ -1688,9 +1688,10 @@ export default class Widget extends React.PureComponent<
                 },
                 (results) => {
                     const allOption = { value: "All traffic signs", label: "All traffic signs", iconUrl: null };
+
                     // Store full list
                     const fullList = [allOption, ...results];
-                    this._fullTrafficSignsOptions = fullList;
+                    this._fullTrafficSignsOptions = fullList; 
 
                     this.setState({
                         trafficSignsOptions: fullList,
@@ -1735,6 +1736,7 @@ export default class Widget extends React.PureComponent<
                 },
                 (results) => {
                     const allOption = { value: "All points", label: "All points", iconUrl: null };
+
                     // Store full list
                     const fullList = [allOption, ...results];
                     this._fullObjectsOptions = fullList;
@@ -1836,7 +1838,7 @@ export default class Widget extends React.PureComponent<
         }
     }
 
-    // --- HELPER: Fetch ID from Username ---
+    // --- Fetch ID from Username ---
     private async getUserIdFromUsername(username: string): Promise<number | null> {
         if (!username) return null;
         const url = `https://graph.mapillary.com/images?creator_username=${username}&limit=1&fields=creator&access_token=${this.accessToken}`;
@@ -1923,6 +1925,7 @@ export default class Widget extends React.PureComponent<
 
         this.mapillaryVTLayer = new VectorTileLayer({
             id: "mapillary-vector-tiles",
+            title: "Mapillary Coverage",
             style: minimalStyle
         })
     }
@@ -1964,7 +1967,8 @@ export default class Widget extends React.PureComponent<
         };
 
         this.mapillaryTrafficSignsLayer = new VectorTileLayer({
-            id: "mapillary-traffic-signs-vt", // <--- ADDED ID
+            id: "mapillary-traffic-signs-vt",
+            title: "Mapillary Traffic Signs Coverage",
             style: minimalStyle
         });
     }
@@ -2006,7 +2010,8 @@ export default class Widget extends React.PureComponent<
         };
 
         this.mapillaryObjectsLayer = new VectorTileLayer({
-            id: "mapillary-objects-vt", // <--- ADDED ID
+            id: "mapillary-objects-vt",
+            title: "Mapillary Objects Coverage",
             style: minimalStyle
         });
     }
@@ -2310,7 +2315,8 @@ export default class Widget extends React.PureComponent<
         }
 
         const layer = new FeatureLayer({
-            id: "mapillary-traffic-signs-fl", // <--- 1. Explicit ID
+            id: "mapillary-traffic-signs-fl",
+            title: "Mapillary Traffic Signs Features",
             source: features,
             fields,
             objectIdField: "id",
@@ -2559,7 +2565,8 @@ export default class Widget extends React.PureComponent<
         }
 
         const layer = new FeatureLayer({
-            id: "mapillary-objects-fl", // <--- Explicit ID
+            id: "mapillary-objects-fl",
+            title: "Mapillary Objects Features",
             source: features,
             fields,
             objectIdField: "id",
@@ -2768,6 +2775,11 @@ export default class Widget extends React.PureComponent<
                 this._cancelTrafficSignsFetch = true;
                 const specificLayer = jimuMapView.view.map.findLayerById("mapillary-traffic-signs-fl");
                 if (specificLayer) jimuMapView.view.map.remove(specificLayer);
+
+                // --- Reset to full list when zoomed out ---
+                if (this._fullTrafficSignsOptions.length > 0) {
+                    this.setState({ trafficSignsOptions: this._fullTrafficSignsOptions });
+                }
             } else {
                 this._cancelTrafficSignsFetch = false;
             }
@@ -2902,6 +2914,11 @@ export default class Widget extends React.PureComponent<
                 this._cancelObjectsFetch = true;
                 const specificLayer = jimuMapView.view.map.findLayerById("mapillary-objects-fl");
                 if (specificLayer) jimuMapView.view.map.remove(specificLayer);
+                
+                // --- Reset to full list when zoomed out ---
+                if (this._fullObjectsOptions.length > 0) {
+                    this.setState({ objectsOptions: this._fullObjectsOptions });
+                }
             } else {
                 this._cancelObjectsFetch = false;
             }
@@ -3018,6 +3035,109 @@ export default class Widget extends React.PureComponent<
             console.error("Download failed", err);
         }
     };
+
+    /**
+        * Fetches the high-resolution (2048px) image URL for the current image
+        * and triggers a browser download.
+    */
+     private downloadActiveImage = async () => {
+        const { imageId, sequenceImages } = this.state;
+        if (!imageId) return;
+
+        // Visual feedback
+        const btn = document.getElementById('btn-download-mly-overlay');
+        if(btn) btn.style.cursor = 'wait';
+
+        try {
+            // 1. Get the URL for the 2048px version
+            const url = `https://graph.mapillary.com/${imageId}?fields=thumb_2048_url&access_token=${this.accessToken}`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+            const imageUrl = data.thumb_2048_url;
+
+            if (!imageUrl) {
+                console.warn("No high-res image found for this ID");
+                alert("High-resolution image not available for this frame.");
+                return;
+            }
+
+            // 2. Fetch blob to force download
+            const imageResp = await fetch(imageUrl);
+            const blob = await imageResp.blob();
+            const blobUrl = URL.createObjectURL(blob);
+
+            // 3. Determine Filename (ID + Date)
+            let filename = `mapillary_${imageId}.jpg`;
+            
+            // Find metadata for current image
+            const currentImg = sequenceImages.find(img => img.id === imageId);
+            
+            if (currentImg && currentImg.captured_at) {
+                // Format: YYYY-MM-DD (Safe for Windows/Mac/Linux filenames)
+                const dateStr = new Date(currentImg.captured_at).toISOString().split('T')[0];
+                filename = `mapillary_${imageId}_${dateStr}.jpg`;
+            }
+
+            // 4. Trigger download
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            URL.revokeObjectURL(blobUrl);
+
+        } catch (err) {
+            console.error("Failed to download image:", err);
+        } finally {
+            if(btn) btn.style.cursor = 'pointer';
+        }
+    };
+
+    /**
+        * Checks if there are other sequences within ~20 meters of the current location.
+        * If yes, enables the Time Travel button.
+    */
+    private checkForTimeTravel = async (lon: number, lat: number, currentCapturedAt?: number) => {
+        if (!lon || !lat || !currentCapturedAt) {
+            this.setState({ hasTimeTravel: false });
+            return;
+        }
+
+        // Create a small bounding box (~20 meters)
+        const offset = 0.0002; 
+        const bbox = `${lon - offset},${lat - offset},${lon + offset},${lat + offset}`;
+
+        try {
+            // Fetch nearby images with their capture date
+            const url = `https://graph.mapillary.com/images?bbox=${bbox}&fields=captured_at&limit=30&access_token=${this.accessToken}`;
+            
+            const response = await fetch(url);
+            if (!response.ok) return;
+            
+            const data = await response.json();
+            
+            if (data.data && data.data.length > 0) {
+                // Logic: Time Travel exists if we find an image where the capture time 
+                // differs by more than 24 hours (86,400,000 ms) from the current image.
+                const ONE_DAY_MS = 86400000;
+
+                const hasDifferentDate = data.data.some((img: any) => {
+                    if (!img.captured_at) return false;
+                    const imgTime = new Date(img.captured_at).getTime();
+                    return Math.abs(imgTime - currentCapturedAt) > ONE_DAY_MS;
+                });
+                
+                this.setState({ hasTimeTravel: hasDifferentDate });
+            } else {
+                this.setState({ hasTimeTravel: false });
+            }
+        } catch (err) {
+            console.warn("Time travel check failed", err);
+            this.setState({ hasTimeTravel: false });
+        }
+    }
 
     // --- Local caching of last sequence ---
     // Stores minimal sequence info (IDs + coords) in localStorage
@@ -3340,6 +3460,7 @@ export default class Widget extends React.PureComponent<
         // --- Layer Creation ---
         this.turboCoverageLayer = new FeatureLayer({
             id: "turboCoverage",
+            title: "Mapillary Turbo Coverage Points",
             source: features,
             objectIdField: "oid",
             fields: [
@@ -3381,15 +3502,7 @@ export default class Widget extends React.PureComponent<
         if (layer) {
             jimuMapView.view.map.remove(layer);
         }
-        this.turboCoverageLayer = null;
-
-        // Remove Lines Layer
-        const seqLayer = jimuMapView.view.map.findLayerById("turboSequence");
-        if (seqLayer) {
-            jimuMapView.view.map.remove(seqLayer);
-        }
-        this.turboSequenceLayer = null;
-        
+        this.turboCoverageLayer = null; 
         // console.log("Turbo coverage layers removed");
     }
     
@@ -3419,8 +3532,18 @@ export default class Widget extends React.PureComponent<
                 sequenceImages: updatedSequence,
                 imageId: startImageId,
                 sequenceId,
-                selectedSequenceId: sequenceId
+                selectedSequenceId: sequenceId,
+                hasTimeTravel: false
             });
+
+            // --- Check for Time Travel for the starting image ---
+            const currentImg = updatedSequence.find(img => img.id === startImageId);
+            if (currentImg) {
+                // Pass captured_at instead of sequenceId
+                this.checkForTimeTravel(currentImg.lon, currentImg.lat, currentImg.captured_at);
+                
+                this.currentGreenGraphic = this.drawPulsingPoint(currentImg.lon, currentImg.lat, [0, 255, 0, 1]);
+            }
 
             // Cache sequence
             this.saveSequenceCache(sequenceId, updatedSequence);
@@ -3492,7 +3615,6 @@ export default class Widget extends React.PureComponent<
             });
 
             // Draw active Green Pulse - Topmost
-            const currentImg = updatedSequence.find(img => img.id === startImageId);
             if (currentImg) {
                 this.currentGreenGraphic = this.drawPulsingPoint(currentImg.lon, currentImg.lat, [0, 255, 0, 1]);
             }
@@ -4220,7 +4342,10 @@ export default class Widget extends React.PureComponent<
         * Message auto-dismisses after 4 seconds.
     */
     private showNoImageMessage() {
-        this.setState({ noImageMessageVisible: true });
+        this.setState({ 
+            noImageMessageVisible: true,
+            isLoading: false
+        });
         // Automatically hide after fade (4 seconds)
         setTimeout(() => {
             this.setState({ noImageMessageVisible: false });
@@ -4844,7 +4969,7 @@ export default class Widget extends React.PureComponent<
     private async getSequenceWithCoords(
             sequenceId: string,
             accessToken: string
-        ): Promise<{ id: string; lat: number; lon: number }[]> {
+        ): Promise<{ id: string; lat: number; lon: number; captured_at?: number }[]> {
             
             // 1. Check RAM Cache
             if (this.sequenceCoordsCache[sequenceId]) {
@@ -4875,7 +5000,7 @@ export default class Widget extends React.PureComponent<
                 const ids = data.data.map((d: any) => d.id);
 
                 // Batch fetch geometry
-                const coordUrl = `https://graph.mapillary.com/?ids=${ids.join(",")}&fields=id,geometry`;
+                const coordUrl = `https://graph.mapillary.com/?ids=${ids.join(",")}&fields=id,geometry,captured_at`;
                 const coordResp = await fetch(coordUrl, {
                     headers: { Authorization: `OAuth ${accessToken}` },
                 });
@@ -4889,6 +5014,7 @@ export default class Widget extends React.PureComponent<
                             id,
                             lon: value.geometry?.coordinates?.[0] || 0,
                             lat: value.geometry?.coordinates?.[1] || 0,
+                            captured_at: value.captured_at ? new Date(value.captured_at).getTime() : undefined
                         };
                     })
                     .filter((item) => item !== null && item.lon !== 0);
@@ -4932,7 +5058,6 @@ export default class Widget extends React.PureComponent<
                 style={{
                     flex: 1,
                     minHeight: 0,
-                    border: "1px solid #ccc",
                     position: "relative",
                     background: "#000",
                     boxSizing: "border-box"
@@ -5097,7 +5222,7 @@ export default class Widget extends React.PureComponent<
                                 fontWeight: "500",
                                 textAlign: "center"
                             }}>
-                            Loading street imagery...
+                            Loading imagery...
                         </div>
                         <style>{`
                             @keyframes spin {
@@ -5106,7 +5231,7 @@ export default class Widget extends React.PureComponent<
                             }
                         `}</style>
                     </div>
-                    )}
+                )}
 
                 {!this.state.imageId && !this.state.isLoading && !this.state.turboLoading && !this.state.noImageMessageVisible &&  (
                     <div
@@ -5126,14 +5251,21 @@ export default class Widget extends React.PureComponent<
                             flexDirection: "column" // stack items vertically
                         }}
                         >
-					    <span style={{fontSize: "12px", opacity: 0.9}}>
-						    🛈 Click any point on the map to show imagery
-					    </span>
+                        <span
+                            style={{
+                                fontSize: "12px",
+                                opacity: 0.7,
+                                color: "#fff"
+                            }}
+                        >
+                        Click a point to view imagery
+                        </span>
 					    <span style={{fontSize: "10px", opacity: 0.7}}>
-						    (Mapillary street-level imagery will appear here)
+						    (Mapillary imagery will appear here)
 				        </span>
                     </div>
                 )}
+
                 {this.state.noImageMessageVisible && (
                 <div
                     style={{
@@ -5154,9 +5286,84 @@ export default class Widget extends React.PureComponent<
                     }}
                 >
                      <span style={{fontSize: "11px", fontWeight: "bold"}}>
-                          🚫 No nearby Mapillary image found at this location.
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/><line x1="7" y1="7" x2="17" 
+                          y2="17" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                        </svg> No nearby Mapillary image found at this location. 
                      </span>
                 </div>
+                )}
+
+                {!this.props.config.hideTimeTravel && this.state.imageId && this.state.hasTimeTravel && (
+                    <button
+                        title="Open in Mapillary Time Travel"
+                        onClick={() => {
+                            const currentImg = this.state.sequenceImages.find(i => i.id === this.state.imageId);
+                            if (currentImg) {
+                                // Construct the specific Time Travel URL
+                                // We use the current image ID as pKey (Photo Key)
+                                const url = `https://www.mapillary.com/app/time-travel?lat=${currentImg.lat}&lng=${currentImg.lon}&z=17&pKey=${this.state.imageId}&focus=photo`;
+                                window.open(url, '_blank');
+                            }
+                        }}
+                        style={{
+                            position: "absolute",
+                            bottom: "48px", 
+                            right: "52px", 
+                            zIndex: 10000,
+                            background: "rgba(0, 0, 0, 0.3)",
+                            color: "#ffc107b7",
+                            border: "1px solid rgba(255,255,255,0.4)",
+                            borderRadius: "4px",
+                            padding: "3px",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            transition: "background 0.2s"
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(0, 0, 0, 0.8)"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "rgba(0, 0, 0, 0.3)"}
+                    >
+                        {/* Clock/History Icon */}
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <polyline points="12 6 12 12 16 14"></polyline>
+                        </svg>
+                    </button>
+                )}
+                 {/* --- DOWNLOAD CURRENT IMAGE BUTTON --- */}
+                {!this.props.config.hideImageDownload && this.state.imageId && (
+                    <button
+                        id="btn-download-mly-overlay"
+                        title="Download current image (High Res)"
+                        onClick={this.downloadActiveImage}
+                        style={{
+                            position: "absolute",
+                            bottom: "24px",
+                            right: "52px",
+                            zIndex: 10000,
+                            background: "rgba(0, 0, 0, 0.3)",
+                            color: "white",
+                            border: "1px solid rgba(255,255,255,0.2)",
+                            borderRadius: "4px",
+                            padding: "3px",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            transition: "background 0.2s"
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(0, 0, 0, 0.8)"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "rgba(0, 0, 0, 0.3)"}
+                    >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" 
+                            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                    </button>
                 )}
             </div>
         );
@@ -5173,7 +5380,7 @@ export default class Widget extends React.PureComponent<
                     position: "relative",
                     display: "flex",
                     flexDirection: "column",
-                    border: brdColor !== 'transparent' ? `2px solid ${brdColor}` : 'none',
+                    border: brdColor !== 'transparent' ? `3px solid ${brdColor}` : 'none',
                     boxSizing: 'border-box',
                     overflow: 'hidden'      
                 }}
@@ -5195,8 +5402,8 @@ export default class Widget extends React.PureComponent<
                         className="warning-message-container"
                         style={{
                             position: "absolute",
-                            top: "7px",
-                            left: "40px",
+                            top: "6px",
+                            left: "42px",
                             background: "rgba(255,165,0,0.95)",
                             color: "#fff",
                             padding: "4px 6px",
@@ -5367,7 +5574,7 @@ export default class Widget extends React.PureComponent<
                             borderRadius: "4px",
                             maxWidth: "80px",
                             textAlign: "center",
-                            padding: "1px 5px 1px 5px"
+                            padding: "3px 3px 3px 3px"
                         }}
                     >
                         {/* {this.state.imageId && <>Image ID: {this.state.imageId}<br/></>}
@@ -5392,10 +5599,10 @@ export default class Widget extends React.PureComponent<
                         {this.state.jimuMapView?.view && (
                             <div style={{ 
                                 fontWeight: "bold", 
-                                fontSize: "10px",
+                                fontSize: "8px",
                                 borderBottom: "1px solid rgba(255,255,255,0.3)",
-                                paddingBottom: "3px",
-                                marginBottom: "3px"
+                                paddingBottom: "2px",
+                                marginBottom: "2px"
                             }}>
                                 🔍 Zoom: {this.state.currentZoom !== undefined 
                                     ? this.state.currentZoom.toFixed(1) 
@@ -5969,7 +6176,7 @@ export default class Widget extends React.PureComponent<
                         flexDirection: 'column',
                         gap: '4px',
                         background: 'rgba(0, 0, 0, 0.35)',
-                        padding: '4px',
+                        padding: '4px 4px 2px 4px',
                         borderRadius: '8px',
                         boxShadow: '0 2px 6px rgba(0,0,0,0.4)'
                     }}
@@ -5979,10 +6186,17 @@ export default class Widget extends React.PureComponent<
                         {
                             // SVG for "Expand" (Maximize)
                             content: (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
-                                    <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
-                                </svg>
-                            ), 
+                            <img
+                                className="unified-button-controls-svg-icons"
+                                src={`data:image/svg+xml;charset=utf-8,
+                                %3Csvg viewBox='1 1 22 22' xmlns='http://www.w3.org/2000/svg'%3E
+                                %3Cpath d='M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z'
+                                        fill='white'/%3E
+                                %3C/svg%3E`}
+                                alt="Expand"
+                                style={{ width: "16px", height: "16px" }}
+                            />
+                            ),
                             onClick: this.toggleFullscreen, 
                             title: 'Maximize/Fullscreen', 
                             bg: 'rgba(2, 117, 216, 0.9)', 
@@ -5991,13 +6205,20 @@ export default class Widget extends React.PureComponent<
                         {
                             // SVG for "Map/World" (Mapillary Layer)
                             content: (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" 
-                                strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2V6z" />
-                                    <line x1="9" y1="4" x2="9" y2="20" />
-                                    <line x1="15" y1="4" x2="15" y2="20" />
-                                </svg>
-                            ), 
+                            <img
+                                className="unified-button-controls-svg-icons"
+                                src={`data:image/svg+xml;charset=utf-8,
+                                    %3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg' fill='none'
+                                    stroke='white' stroke-width='1.8'
+                                    stroke-linecap='round' stroke-linejoin='round'%3E
+                                    %3Cpath d='M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2V6z'/%3E
+                                    %3Cline x1='9' y1='4' x2='9' y2='20'/%3E
+                                    %3Cline x1='15' y1='4' x2='15' y2='20'/%3E
+                                    %3C/svg%3E`}
+                                alt="Mapillary Layer"
+                                style={{ width: "16px", height: "16px" }}
+                            />
+                            ),
                             onClick: this.toggleMapillaryTiles, 
                             title: 'Toggle Mapillary Layer', 
                             bg: 'rgba(53, 175, 109, 0.9)', 
@@ -6052,7 +6273,6 @@ export default class Widget extends React.PureComponent<
                         gap: '2px',
                         borderRadius: '6px',
                         background: this.state.turboModeActive ? 'rgba(255,215,0,0.2)' : 'rgba(100,100,100,0.1)',
-                        // border: this.state.turboModeActive ? '1px solid rgba(255,215,0,0.4)' : '1px solid transparent'
                     }}>
                         {/* Main Turbo Button */}
                         {!this.props.config.turboModeOnly && (
@@ -6156,47 +6376,56 @@ export default class Widget extends React.PureComponent<
                                 onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                 onMouseLeave={e => (e.currentTarget.style.transform = this.state.turboModeActive ? 'scale(1.1)' : 'scale(1)')}
                             >
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
-                                    <path d="M7 2v11h3v9l7-12h-4l4-8z"/>
-                                </svg>
+                                <img
+                                    className="unified-button-controls-svg-icons"
+                                    src={`data:image/svg+xml;charset=utf-8,
+                                        %3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E
+                                            %3Cpath d='M7 2v11h3v9l7-12h-4l4-8z' fill='white'/%3E
+                                        %3C/svg%3E`}
+                                    alt="Turbo Mode"
+                                    style={{ width: "16px", height: "16px" }}
+                                />
                             </button>
                         )}  
 
                         {/* Turbo Filter Button */}
-                        <button className="unified-control-buttons-filters"
-                            title="Filter Turbo Coverage"
-                            onClick={() => {
-                                if (!this.state.turboModeActive) return;
-                                this.setState(prev => ({ showTurboFilterBox: !prev.showTurboFilterBox }));
-                            }}
-                            style={{
-                                background: this.state.turboModeActive 
-                                    ? (this.state.showTurboFilterBox ? 'rgba(255,215,0,0.9)' : 'rgba(255,215,0,0.3)')
-                                    : 'rgba(200,200,200,0.3)',
-                                color: '#fff',
-                                height: this.props.config.turboModeOnly ? '30px' : '20px',
-                                width: this.props.config.turboModeOnly ? '30px' : '20px', 
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                borderRadius: this.props.config.turboModeOnly ? '6px' : '4px',
-                                border: 'none',
-                                cursor: this.state.turboModeActive ? 'pointer' : 'not-allowed',
-                                opacity: this.state.turboModeActive ? 1 : 0.5,
-                                boxShadow: this.state.showTurboFilterBox
-                                    ? '0 0 4px rgba(255,255,255,0.6)'
-                                    : '0 1px 2px rgba(0,0,0,0.2)',
-                                transition: 'all 0.15s ease'
-                            }}
-                        >
-                            <img
-                                src={`data:image/svg+xml;utf8,
-                                <svg width='14' height='14' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
-                                    <path d='M3 4h18L14 12v7l-4 2v-9L3 4z' fill='%23fff'/>
-                                </svg>`}
-                                style={{ width: 14, height: 14 }}
-                            />
-                        </button>
+                        {!this.props.config.hideTurboFilter && (   
+                            <button className="unified-control-buttons-filters"
+                                title="Filter Turbo Coverage"
+                                onClick={() => {
+                                    if (!this.state.turboModeActive) return;
+                                    this.setState(prev => ({ showTurboFilterBox: !prev.showTurboFilterBox }));
+                                }}
+                                style={{
+                                    background: this.state.turboModeActive 
+                                        ? (this.state.showTurboFilterBox ? 'rgba(255,215,0,0.9)' : 'rgba(255,215,0,0.3)')
+                                        : 'rgba(200,200,200,0.3)',
+                                    color: '#fff',
+                                    height: this.props.config.turboModeOnly ? '30px' : '24px',
+                                    width: this.props.config.turboModeOnly ? '30px' : '24px', 
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    borderRadius: this.props.config.turboModeOnly ? '6px' : '4px',
+                                    border: 'none',
+                                    cursor: this.state.turboModeActive ? 'pointer' : 'not-allowed',
+                                    opacity: this.state.turboModeActive ? 1 : 0.5,
+                                    boxShadow: this.state.showTurboFilterBox
+                                        ? '0 0 4px rgba(255,255,255,0.6)'
+                                        : '0 1px 2px rgba(0,0,0,0.2)',
+                                    transition: 'all 0.15s ease',
+                                    marginTop: '1px'
+                                }}
+                            >
+                                <img
+                                    src={`data:image/svg+xml;utf8,
+                                    <svg width='14' height='14' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+                                        <path d='M3 4h18L14 12v7l-4 2v-9L3 4z' fill='%23fff'/>
+                                    </svg>`}
+                                    style={{ width: 14, height: 14 }}
+                                />
+                            </button>
+                        )}
                     </div>
 
                     {/* Traffic Signs Group */}
@@ -6207,7 +6436,6 @@ export default class Widget extends React.PureComponent<
                                 gap: '2px',
                                 borderRadius: '6px',
                                 background: this.state.trafficSignsActive ? 'rgba(255,165,0,0.2)' : 'rgba(100,100,100,0.1)',
-                                // border: this.state.trafficSignsActive ? '1px solid rgba(255,165,0,0.4)' : '1px solid transparent'
                             }}>
                             {/* Main Traffic Signs Button */}
                             <button className="unified-control-buttons"
@@ -6268,14 +6496,26 @@ export default class Widget extends React.PureComponent<
                                     boxShadow: this.state.showTrafficSignsFilterBox
                                         ? '0 0 4px rgba(255,255,255,0.6)'
                                         : '0 1px 2px rgba(0,0,0,0.2)',
-                                    transition: 'all 0.15s ease'
+                                    transition: 'all 0.15s ease',
+                                    marginTop: '1px'
                                 }}
                             >
-                                {/* SVG Magnifying Glass */}
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" 
-                                    strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" /><line x1="4" y1="12" 
-                                    x2="20" y2="12" /><circle cx="15" cy="12" r="2" /><line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" />
-                                </svg>
+                                <img
+                                className="unified-button-controls-svg-icons"
+                                src={`data:image/svg+xml;charset=utf-8,
+                                    %3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E
+                                    %3Crect x='3' y='5' width='18' height='2.8' rx='1.4' fill='white'/%3E
+                                    %3Ccircle cx='9' cy='6.4' r='2.4' fill='white'/%3E
+
+                                    %3Crect x='3' y='11' width='18' height='2.8' rx='1.4' fill='white'/%3E
+                                    %3Ccircle cx='15' cy='12.4' r='2.4' fill='white'/%3E
+
+                                    %3Crect x='3' y='17' width='18' height='2.8' rx='1.4' fill='white'/%3E
+                                    %3Ccircle cx='11' cy='18.4' r='2.4' fill='white'/%3E
+                                    %3C/svg%3E`}
+                                alt="Controls"
+                                style={{ width: "16px", height: "16px" }}
+                                />
 
                             </button>
                         </div>
@@ -6351,14 +6591,26 @@ export default class Widget extends React.PureComponent<
                                     boxShadow: this.state.showObjectsFilterBox
                                         ? '0 0 4px rgba(255,255,255,0.6)'
                                         : '0 1px 2px rgba(0,0,0,0.2)',
-                                    transition: 'all 0.15s ease'
+                                    transition: 'all 0.15s ease',
+                                    marginTop: '1px'
                                 }}
                             >
-                                {/* SVG Magnifying Glass */}
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" 
-                                    strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" /><line x1="4" y1="12" 
-                                    x2="20" y2="12" /><circle cx="15" cy="12" r="2" /><line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" />
-                                </svg>
+                                <img
+                                className="unified-button-controls-svg-icons"
+                                src={`data:image/svg+xml;charset=utf-8,
+                                    %3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E
+                                    %3Crect x='3' y='5' width='18' height='2.8' rx='1.4' fill='white'/%3E
+                                    %3Ccircle cx='9' cy='6.4' r='2.4' fill='white'/%3E
+
+                                    %3Crect x='3' y='11' width='18' height='2.8' rx='1.4' fill='white'/%3E
+                                    %3Ccircle cx='15' cy='12.4' r='2.4' fill='white'/%3E
+
+                                    %3Crect x='3' y='17' width='18' height='2.8' rx='1.4' fill='white'/%3E
+                                    %3Ccircle cx='11' cy='18.4' r='2.4' fill='white'/%3E
+                                    %3C/svg%3E`}
+                                alt="Controls"
+                                style={{ width: "16px", height: "16px" }}
+                                />
                             </button>
                         </div>
                     )}
@@ -6427,7 +6679,7 @@ export default class Widget extends React.PureComponent<
                         top: '10px',
                         left: '10px',
                         zIndex: 10000,
-                        background: '#d9534f',
+                        background: '#d9544fcb',
                         color: 'white',
                         padding: '6px', // Adjusted padding for SVG
                         borderRadius: '3px',
@@ -6451,7 +6703,7 @@ export default class Widget extends React.PureComponent<
                     style={{
                         position: 'absolute',
                         bottom: '36px',
-                        right: '60px',
+                        right: '80px',
                         width: '350px',
                         height: '200px',
                         border: '2px solid #fff',
