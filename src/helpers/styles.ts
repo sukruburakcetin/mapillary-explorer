@@ -43,8 +43,8 @@ export const mobileOverrideStyles = `
         .show-panorama-only-filter::after { content: "Panoramas:"; font-size: 9px !important; }
         .show-color-by-date-filter { font-size: 0 !important; }
         .show-color-by-date-filter::after { content: "CBD:"; font-size: 9px !important; }
-        .react-datepicker { transform: scale(0.6); }
-        .react-datepicker-popper { height: 230px; }
+        .react-datepicker { transform: scale(0.6) !important; }
+        .react-datepicker-popper { height: 230px !important; }
         .unified-control-buttons{ height: 20px !important; width: 20px !important; font-size: 12px !important; }
         .unified-control-buttons-mapped{ height: 21px !important; width: 21px !important; font-size: 12px !important; }
         .unified-control-buttons-filters{ height: 16px !important; width: 16px !important; font-size: 10px !important; }
@@ -71,7 +71,7 @@ export const mobileOverrideStyles = `
             transform: translateX(-50%) !important;
             width: 90% !important; 
             max-width: 350px !important;
-            height: 150px !important 
+            height: 150px !important; 
         }
         .warning-message-container { font-size: 8px !important; }
     }
