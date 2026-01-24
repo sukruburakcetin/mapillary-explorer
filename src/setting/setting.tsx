@@ -96,6 +96,20 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     });
   }
 
+  onToggleHideShareButton = (evt: React.ChangeEvent<HTMLInputElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('hideShareButton', evt.target.checked)
+    });
+  }
+
+  onToggleDebugMode = (evt: React.ChangeEvent<HTMLInputElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('debugMode', evt.target.checked)
+    });
+  }
+
   render() {
     const config = this.props.config;
 
@@ -180,6 +194,13 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
               onChange={this.onToggleHideTimeTravel} 
             />
           </SettingRow>
+
+          <SettingRow label="Hide Share Button">
+            <Switch 
+              checked={config.hideShareButton === true} 
+              onChange={this.onToggleHideShareButton} 
+            />
+          </SettingRow>
         </SettingSection>
 		
         <SettingSection title="General Settings">
@@ -241,8 +262,21 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                   Disabling these will hide the sign and object layer toggle buttons in the widget interface.
                 </span>
               </SettingRow>
-            </SettingSection>
+        </SettingSection>
         
+        <SettingSection title="Advanced Settings">
+            <SettingRow label="Debug Mode">
+                <Switch 
+                  checked={config.debugMode === true} 
+                  onChange={this.onToggleDebugMode} 
+                />
+            </SettingRow>
+            <SettingRow>
+                <span className="text-muted" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '0px' }}>
+                  Enables developer logging in the browser console (F12).
+                </span>
+            </SettingRow>
+        </SettingSection>
       </div>
     );
   }

@@ -77,6 +77,16 @@ export interface Config {
     * If true, the Time Travel button (clock icon) is hidden even if historical data exists.
   */
   hideTimeTravel?: boolean;
+  
+  /**
+	  * If true, the Share button (network icon) is hidden.
+  */
+  hideShareButton?: boolean;
+
+  /**
+    * If true, enables console.log outputs for debugging.
+  */
+  debugMode?: boolean;
 }
 
 export type IMConfig = ImmutableObject<Config>;
