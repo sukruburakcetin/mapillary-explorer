@@ -138,25 +138,7 @@ export const Controls = ({ size = 16, color = "white", ...props }: IconProps) =>
   </svg>
 );
 
-// 15. Location
-export const Pin = ({ size = 24, color = "currentColor", ...props }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke={color}
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    {...props}
-  >
-    <path d="M12 21s-6-5.5-6-10a6 6 0 1 1 12 0c0 4.5-6 10-6 10z" />
-    <circle cx="12" cy="11" r="2" />
-  </svg>
-);
-
-// 16. Current Address / World
+// 15. Current Address / World
 export const Globe = ({ size = 24, color = "currentColor", ...props }) => (
   <svg
     width={size}

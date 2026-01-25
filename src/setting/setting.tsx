@@ -3,9 +3,8 @@ import { React, jsx } from 'jimu-core';
 import { AllWidgetSettingProps } from 'jimu-for-builder';
 import { SettingSection, SettingRow } from 'jimu-ui/advanced/setting-components';
 import { MapWidgetSelector } from 'jimu-ui/advanced/setting-components';
-import { Switch } from 'jimu-ui';
+import { Switch, TextInput, NumericInput, Select, Option } from 'jimu-ui';
 import { IMConfig } from '../config';
-import { TextInput } from 'jimu-ui';
 import { ColorPicker } from 'jimu-ui/basic/color-picker'; 
 
 export default class Setting extends React.PureComponent<AllWidgetSettingProps<IMConfig>, any> {
@@ -103,6 +102,36 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     });
   }
 
+  // Handler for Render Mode
+  onRenderModeChange = (evt: React.ChangeEvent<HTMLSelectElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('renderMode', parseInt(evt.target.value, 10))
+    });
+  }
+
+  // Handler for Transition Mode
+  onTransitionModeChange = (evt: React.ChangeEvent<HTMLSelectElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('transitionMode', parseInt(evt.target.value, 10))
+    });
+  }
+
+  onCameraXChange = (value: number) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('cameraX', value)
+    });
+  }
+
+  onCameraYChange = (value: number) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('cameraY', value)
+    });
+  }
+
   onToggleDebugMode = (evt: React.ChangeEvent<HTMLInputElement>) => {
     this.props.onSettingChange({
       id: this.props.id,
@@ -148,7 +177,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
         <SettingSection title="Appearance Settings">
           <SettingRow label="Frame Color">
             <ColorPicker 
-              color={config.borderColor || '#37d582'} 
+              color={config.borderColor || '#ffffff00'} 
               onChange={this.onBorderColorChange} 
             />
           </SettingRow>
@@ -265,6 +294,77 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
         </SettingSection>
         
         <SettingSection title="Advanced Settings">
+            <SettingRow label="Render Mode">
+              <Select 
+                size="sm" 
+                // Fallback to '1' (Fill) if renderMode is undefined
+                value={String(config.renderMode ?? 1)} 
+                onChange={(evt) => this.props.onSettingChange({
+                  id: this.props.id,
+                  config: this.props.config.set('renderMode', parseInt(evt.target.value, 10))
+                })}
+                style={{ width: '130px' }}
+              >
+                <Option value="1">Fill (Default)</Option>
+                <Option value="0">Letterbox</Option>
+              </Select>
+            </SettingRow>
+            <SettingRow>
+              <span className="text-muted" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '-5px' }}>
+                <b>Fill:</b> Fills the window.<br/>
+                <b>Letterbox:</b> Shows the full original image (may show black bars, recommended for wide widgets).
+              </span>
+            </SettingRow>
+
+            <SettingRow label="Transition Mode">
+              <Select 
+                size="sm" 
+                value={String(config.transitionMode ?? 0)} 
+                onChange={this.onTransitionModeChange}
+                style={{ width: '130px' }}
+              >
+                <Option value="0">Smooth (Default)</Option>
+                <Option value="1">Instantaneous</Option>
+              </Select>
+            </SettingRow>
+            <SettingRow>
+              <span className="text-muted" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '-5px' }}>
+                <b>Default:</b> Uses motion blending between frames.<br/>
+                <b>Instantaneous:</b> Jumps immediately to the next frame (snappier).
+              </span>
+            </SettingRow>
+            <SettingRow flow="wrap">
+              <div className="w-100">
+                <div style={{ fontWeight: 500, marginBottom: '5px' }}>Default Camera Angle (Normalized 0-1)</div>
+                <div className="d-flex justify-content-between align-items-center mb-2">
+                  <span style={{ fontSize: '12px' }}>Horizontal (X)</span>
+                    <NumericInput 
+                      size="sm" 
+                      style={{ width: '80px' }}
+                      value={config.cameraX}
+                      min={0} max={1} step={0.05}
+                      placeholder="0.5" // Shows 0.5 when empty
+                      onChange={this.onCameraXChange}
+                    />
+                </div>
+                <div className="d-flex justify-content-between align-items-center mb-2">
+                  <span style={{ fontSize: '12px' }}>Vertical (Y)</span>
+                    <NumericInput 
+                      size="sm" 
+                      style={{ width: '80px' }}
+                      value={config.cameraY}
+                      min={0} max={1} step={0.05}
+                      placeholder="0.5" // Shows 0.5 when empty
+                      onChange={this.onCameraYChange}
+                    />
+                </div>
+                <div className="text-muted" style={{ fontSize: '11px', fontStyle: 'italic' }}>
+                  Standard is 0.5 for both(refers to center). <br/>
+                  <b>X:</b> 0 = Left, 1 = Right. <br/>
+                  <b>Y:</b> 0 = Sky, 1 = Ground. (Try 0.55 for wide widgets)
+                </div>
+              </div>
+            </SettingRow>
             <SettingRow label="Debug Mode">
                 <Switch 
                   checked={config.debugMode === true} 

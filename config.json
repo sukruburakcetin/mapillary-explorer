@@ -1,3 +1,23 @@
 {
-    "exampleConfigProperty": "test"
+  "mapillaryAccessToken": "",
+  "enableTrafficSigns": true,
+  "enableMapillaryObjects": true,
+  "turboModeOnly": false,
+  "coverageLayerAlwaysOn": false,
+  "turboCreator": "",
+  "borderColor": "#ffffff00",
+  "syncMapWithImage": false,
+  "hideLegend": false,
+  "hideInfoBox": false,
+  "hideBearing": false,
+  "hideZoom": false,
+  "hideTurboFilter": false,
+  "hideImageDownload": false,
+  "hideTimeTravel": false,
+  "hideShareButton": false,
+  "renderMode": 1,
+  "transitionMode": 0,
+  "cameraX": 0.5,
+  "cameraY": 0.5,
+  "debugMode": false
 }

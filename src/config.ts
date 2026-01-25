@@ -84,6 +84,25 @@ export interface Config {
   hideShareButton?: boolean;
 
   /**
+    * 0 = Letterbox, 1 = Fill
+  */
+  renderMode?: number;
+
+  /**
+    * 0 = Default (Smooth), 1 = Instantaneous
+  */
+  transitionMode?: number;
+
+  /**
+    * Horizontal camera center (0 to 1). Default 0.5
+  */
+  cameraX?: number; 
+
+  /**
+    * Vertical camera center (0 to 1). Default 0.5
+  */
+  cameraY?: number; 
+  /**
     * If true, enables console.log outputs for debugging.
   */
   debugMode?: boolean;
