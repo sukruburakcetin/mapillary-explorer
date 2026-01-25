@@ -5,12 +5,13 @@ import React from "react";
 // src/helpers/styles.ts
 export const legendCircleStyle = (color: string): React.CSSProperties => ({
     display: "inline-block",
-    width: "12px",
-    height: "12px",
+    width: "10px",
+    height: "10px",
     borderRadius: "50%",
     backgroundColor: color,
-    marginRight: "6px",
-    border: "1px solid #ccc"
+    marginRight: "8px",
+    border: "1px solid rgba(255,255,255,0.3)", // Softer border
+    flexShrink: 0    // Prevents circle from squishing
 });
 
 // --- Mobile / Responsive Styles ---
@@ -25,13 +26,18 @@ export const mobileOverrideStyles = `
     height: 280px !important;
 }
 
-.mapillary-js .DirectionsPerspective,
-.mapillary-js .DirectionsPerspectiveArrow {
-    transition: opacity 0.1s !important;
+.mapillary-js .DirectionsPerspective {
+    z-index: 1 !important; /* Ensure arrows are below our Widget UI but above the image */
 }
 
+/* Force standard chevrons to be more visible on bright backgrounds */
 .mapillary-js .DirectionsPerspectiveArrow {
-    opacity: 1 !important;
+    filter: drop-shadow(0px 0px 2px rgba(0,0,0,0.8)) !important;
+}
+
+/* Ensure the navigation arrows center themselves properly in short widgets */
+.mapillary-js .DirectionsPerspectiveContainer {
+    bottom: 10px !important;
 }
 
 .legend-container{ display: none !important; }
@@ -50,28 +56,14 @@ export const mobileOverrideStyles = `
         .unified-control-buttons-filters{ height: 16px !important; width: 16px !important; font-size: 10px !important; }
         .unified-button-controls-svg-icons{ height: 12px !important; width: 12px !important; }
         .info-box{ font-size: 8px !important; max-width: 110px !important; }
-        .turbo-legend-cbd-title, .turbo-legend-cbd-date-title{ font-size: 8px !important; }
-        .turbo-legend-cbd-circles{ width: 8px !important; height: 8px !important; }
-        .legend-container{ max-width: 240px !important; padding: 0px 8px !important; bottom: 1px !important; left: 0px !important; }
-        .legend-container-turbo-inner{ display: flex !important; width: 230px !important; font-size: 8px !important; padding-top: 4px !important; }
-        .legend-container-turbo-inner-cell{ width: 60px !important; }
-        .legend-container-normal-inner{ display: flex !important; width: 220px !important; }
-        .legend-container-normal-inner-cell{ width: 50px !important; }
-        .desktop-text { display: none !important; }
-        .mobile-text { display: inline !important; }
-        .legend-container-normal-button{ margin-top: 4px !important; }
+        .legend-container{ display: none !important; }
         .esri-popup__main-container { width: 250px !important; top: 8% !important; left: 17% !important; max-height:42% !important; }
         .splash-screen-spinner { width: 25px !important; height: 25px !important; }
         .splash-screen-logo { margin-bottom: 15px !important; }
         .splash-screen-text { font-size: 10px !important; }
         .minimap-container { 
-            top: 50px !important; 
-            left: 50% !important; 
-            right: auto !important;
-            transform: translateX(-50%) !important;
-            width: 90% !important; 
-            max-width: 350px !important;
-            height: 150px !important; 
+            top: 50px !important; left: 50% !important; right: auto !important; transform: translateX(-50%) !important; 
+            width: 90% !important; max-width: 350px !important; height: 150px !important; 
         }
         .warning-message-container { font-size: 8px !important; }
     }

@@ -330,6 +330,8 @@ export default class Widget extends React.PureComponent<
 
         // 3. Image Change Event
         this.mapillaryViewer.on("image", async (event: any) => {
+            // Apply custom angle if set in config
+            this.applyCustomCameraAngle();
             const newId = event.image.id;
             const view = this.state.jimuMapView?.view;
             if (!view) return;
@@ -960,7 +962,14 @@ export default class Widget extends React.PureComponent<
     private clearSequenceCache = () => {
         try {
             localStorage.removeItem("mapillary_sequence_cache");
-            this.log("Sequence cache cleared from localStorage");
+            // Loop through all localStorage keys and remove coordinate caches
+            Object.keys(localStorage).forEach(key => {
+                if (key.startsWith("mly_geo_")) {
+                    localStorage.removeItem(key);
+                }
+            });
+
+            this.log("All Mapillary sequence caches cleared from localStorage");
 
             // Stop and remove green pulsing marker
             this.clearGreenPulse();
@@ -1542,6 +1551,8 @@ export default class Widget extends React.PureComponent<
                     container: this.viewerContainer.current,
                     accessToken: this.accessToken,
                     imageId: currentImageId,
+                    renderMode: this.props.config.renderMode ?? 1,      // Default to Fill
+                    transitionMode: this.props.config.transitionMode ?? 0, // Default to Smooth 
                     component: {
                         zoom: true,         
                         direction: true,  
@@ -1571,6 +1582,7 @@ export default class Widget extends React.PureComponent<
                     );
                 }
                 
+                this.applyCustomCameraAngle();
                 // Bind events
                 this.bindMapillaryEvents();
                 
@@ -2100,6 +2112,43 @@ export default class Widget extends React.PureComponent<
         }
         return tiles;
     }
+
+    private applyCustomCameraAngle = () => {
+        // Fallback to 0.5 (Standard Center/Horizon) if values are missing
+        const x = this.props.config.cameraX ?? 0.5;
+        const y = this.props.config.cameraY ?? 0.5;
+
+        if (this.mapillaryViewer) {
+            // This will now ALWAYS run, ensuring wide widgets stay level
+            this.mapillaryViewer.setCenter([x, y]);
+        }
+    }
+
+    private legendRowStyle = () => ({
+        display: 'flex',
+        alignItems: 'center',
+        gap: '2px' // Increased gap between circle and text for clarity
+    });
+
+    private legendTextStyle = () => ({
+        fontSize: '10px',
+        color: 'rgba(255,255,255,0.9)',
+        whiteSpace: 'nowrap' as const,
+        fontWeight: 400
+    });
+
+    private compactButtonStyle = () => ({
+        marginTop: '4px',
+        background: 'rgba(217, 83, 79, 0.2)',
+        border: '1px solid rgba(217, 83, 79, 0.3)',
+        color: '#ff908d',
+        borderRadius: '2px',
+        fontSize: '8px',
+        padding: '2px 0',
+        cursor: 'pointer',
+        width: '100%',
+        fontWeight: 700
+    });
 
     /**
         * Formats Mapillary traffic sign code strings into human-friendly names.
@@ -3686,6 +3735,8 @@ export default class Widget extends React.PureComponent<
                     container: this.viewerContainer.current,
                     accessToken: this.accessToken,
                     imageId: startImageId,
+                    renderMode: this.props.config.renderMode ?? 1,      // Default to Fill
+                    transitionMode: this.props.config.transitionMode ?? 0, // Default to Smooth
                     component: {
                         zoom: true,    
                         direction: {
@@ -4108,6 +4159,7 @@ export default class Widget extends React.PureComponent<
         if (this.mapillaryViewer?.resize) {
             try {
                 this.mapillaryViewer.resize();
+                this.applyCustomCameraAngle();
             } catch (e) {
                  // Ignore resize errors if widget is hidden/destroyed
             }
@@ -5092,7 +5144,6 @@ export default class Widget extends React.PureComponent<
     // --- Fetch full coordinate list of a sequence ---
     // Uses sequence_id → image_ids → geometry batch fetch
     // to get lat/lon for all frames in a sequence efficiently.
-// --- Fetch full coordinate list (Optimized with LocalStorage) ---
     private async getSequenceWithCoords(
             sequenceId: string,
             accessToken: string
@@ -5153,7 +5204,20 @@ export default class Widget extends React.PureComponent<
                 try {
                     localStorage.setItem(cacheKey, JSON.stringify(coords));
                 } catch (e) {
-                    console.warn("Storage full, skipping cache save");
+                    // If full, clear ALL coordinate caches and try one more time for this specific one
+                    console.warn("Storage full, attempting to purge old coordinate caches...");
+                    Object.keys(localStorage).forEach(key => {
+                        if (key.startsWith("mly_geo_")) {
+                            localStorage.removeItem(key);
+                        }
+                    });
+                    
+                    // Try saving again after the purge
+                    try {
+                        localStorage.setItem(cacheKey, JSON.stringify(coords));
+                    } catch (retryError) {
+                        console.error("Storage still full after purge, skipping save.");
+                    }
                 }
 
                 return coords;
@@ -5177,7 +5241,7 @@ export default class Widget extends React.PureComponent<
         const mapWidgetId = this.props.useMapWidgetIds?.[0];
 
         // Set default to #37d582 to match settings
-        const brdColor = this.props.config.borderColor || '#37d582';
+        const brdColor = this.props.config.borderColor || '#ffffff00';
 
         // This is the viewer container. It will be placed either in normal widget or fullscreen portal.
         const viewerArea = (
@@ -5194,90 +5258,58 @@ export default class Widget extends React.PureComponent<
                     ref={this.viewerContainer}
                     style={{width: "100%", height: "100%", position: "relative"}}
                 />
-                {/* Legend only show if user clicked & image loaded */}
-                {this.state.imageId && !this.props.config.hideLegend &&  (
-                    <div className="legend-container" style={{
-                                position: "absolute",
-                                bottom: "1px",
-                                left: "6px",
-                                background: "rgba(255,255,255,0.3)",
-                                padding: "2px 4px",
-                                borderRadius: "4px",
-                                boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
-                                fontSize: "9px",
-                                fontWeight: "500",
-                                display: "flex",
-                                flexDirection: "column",  
-                                gap: "4px",
-                                maxWidth: "160px"
-                            }}>
-                        {this.state.turboModeActive ? (
-                            // Turbo Mode Legend
-                            <div className="legend-container-turbo-inner" style={{marginBottom: "4px"}}>
-                                <div className="legend-container-turbo-inner-cell">
-                                    <span style={legendCircleStyle('rgba(0, 255, 0)')}></span>
-                                    Active frame
-                                </div>
-                                <div className="legend-container-turbo-inner-cell">
-                                    <span style={legendCircleStyle('blue')}></span>
-                                    Active sequence images
-                                </div>
-                                <div className="legend-container-turbo-inner-cell">
-                                    <span style={legendCircleStyle('brown')}></span>
-                                    Turbo Coverage images
-                                </div>
-                                <div className="legend-container-turbo-inner-cell">
-                                    <span style={{
-                                        ...legendCircleStyle('transparent'),
-                                        border: '2px solid cyan'
-                                    }}></span>
-                                    Highlighted feature
-                                </div>
-                                <div className="legend-container-turbo-inner-cell">
-                                    <span style={{
-                                        ...legendCircleStyle('yellow'), 
-                                        border: '2px solid orange'}}></span>
-                                    Next direction
-                                </div>
-                            </div>
-                        ) : (
-                            // Normal Mode Legend
-                            <div className="legend-container-normal-inner">
-                                <div className="legend-container-normal-inner-cell">
-                                    <span style={{...legendCircleStyle('black'), border: '1px solid white'}}></span>
-                                    Clicked
-                                </div>
-                                <div className="legend-container-normal-inner-cell">
-                                    <span style={legendCircleStyle('green')}></span>
-                                    Active frame
-                                </div>
-                                <div className="legend-container-normal-inner-cell">
-                                    <span style={legendCircleStyle('blue')}></span>
-                                    Active sequence
-                                </div>
-                                <div className="legend-container-normal-inner-cell">
-                                    <span style={{...legendCircleStyle('yellow'), 
-                                        border: '2px solid orange'}}></span>
-                                       Next direction
-                                </div>
-                                {/* Cache Clear Button */}
-                                {!this.state.turboModeActive && (
-                                    <button className="legend-container-normal-button" style={{
-                                            background: "#d9534f",
-                                            color: "#fff",
-                                            borderRadius: "3px",
-                                            cursor: "pointer",
-                                            fontSize: "10px",
-                                            padding: "2px 4px",
-                                            height: "fit-content"
-                                        }} 
-                                        onClick={this.clearSequenceCache}>
-                                            <span style={{display:"inline"}} className="desktop-text">Clear Sequence Cache</span>
-                                            <span style={{display:"none"}} className="mobile-text">Clear</span>
-                                    </button>
-                                )}
-                            </div>
-                        )}
+                {/* Legend Section */}
+                {this.state.imageId && !this.props.config.hideLegend && (
+                    <div className="legend-container" 
+                        style={{
+                            position: "absolute",
+                            bottom: "10px",
+                            left: "5px",
+                            background: "rgba(0, 0, 0, 0.35)",
+                            backdropFilter: "blur(8px)",
+                            borderRadius: "4px",
+                            padding: "6px 10px", // Uniform padding
+                            boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+                            border: "1px solid rgba(255,255,255,0.1)",
+                            zIndex: 10002,
+                            pointerEvents: "auto",
+                            display: "flex",
+                            flexDirection: "column"
+                        }}
+                    >
+                        {/* Header - Moved to Top */}
+                        <div style={{
+                            opacity: 0.4,
+                            fontSize: '8px',
+                            fontWeight: 700,
+                            marginBottom: '6px', // Gap before items start
+                            color: 'white',
+                            textTransform: 'uppercase',
+                            letterSpacing: '1px',
+                            borderBottom: '1px solid rgba(255,255,255,0.1)',
+                            paddingBottom: '3px'
+                        }}>Legend</div>
+
+                        {/* Content Rows */}
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            {this.state.turboModeActive ? (
+                                <React.Fragment>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('#00ff00'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Active frame</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('blue'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Seq. images</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('#a52a2a'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Turbo coverage</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('transparent'), border: '1.5px solid cyan'}}></span> <span style={this.legendTextStyle()}>Highlighted</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('yellow'), border: '1px solid orange'}}></span> <span style={this.legendTextStyle()}>Navigation</span></div>
+                                </React.Fragment> 
+                            ) : (
+                                <React.Fragment>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('black'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Clicked point</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('#00ff00'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Active frame</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('blue'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Active seq</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('yellow'), border: '2px solid orange'}}></span> <span style={this.legendTextStyle()}>Navigation</span></div>
+                                    <button onClick={this.clearSequenceCache} style={this.compactButtonStyle()}>CLEAR CACHE</button>
+                                </React.Fragment> 
+                            )}
+                        </div>
                     </div>
                 )}
 
@@ -5690,24 +5722,55 @@ export default class Widget extends React.PureComponent<
 
                 {/* Info box */}
                 {!this.props.config.hideInfoBox && (
-                    <div className= "info-box"
+                    <div className="info-box"
                         style={{
-                            // padding: "4px",
                             fontSize: "9px",
                             color: "white",
                             position: "absolute",
                             top: "10px",
-                            right: "10px",
-                            background: "rgba(2, 117, 216, 0.6)",
-                            borderRadius: "4px",
-                            maxWidth: "80px",
-                            textAlign: "center",
-                            padding: "3px 4px 3px 3px"
+                            right: "5px",
+                            // Modern Dark Neutral with Blur
+                            background: "rgba(0, 0, 0, 0.45)",
+                            backdropFilter: "blur(5px)", 
+                            borderRadius: "6px",
+                            width: "120px", // Increased from 80px to prevent awkward wrapping
+                            textAlign: "left",
+                            padding: "8px",
+                            boxShadow: "0 4px 15px rgba(0,0,0,0.3)",
+                            border: "1px solid rgba(255,255,255,0.1)",
+                            zIndex: 10002,
+                            pointerEvents: "none" // Mouse passes through to viewer
                         }}
                     >
-                        {/* {this.state.imageId && <>Image ID: {this.state.imageId}<br/></>}
-                        {this.state.sequenceId && <>Sequence ID: {this.state.sequenceId}<br/></>} */}
-                        {/* Lat/Lon */}
+                        {/* Header/Zoom Section */}
+                        <div style={{ 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center',
+                            marginBottom: '6px',
+                            opacity: 0.8,
+                            fontSize: '10px',
+                            borderBottom: '1px solid rgba(255,255,255,0.2)',
+                            paddingBottom: '4px'
+                        }}>
+                            <span style={{fontWeight: 600}}>STATUS</span>
+                            <span>
+                                <Icons.Search size={9} style={{marginRight:'2px'}}/> 
+                                Z: {this.state.currentZoom !== undefined 
+                                    ? this.state.currentZoom.toFixed(1) 
+                                    : this.state.jimuMapView?.view.zoom.toFixed(1)}
+                            </span>
+                        </div>
+
+                        {/* Address Section */}
+                        {this.state.address && (
+                            <div style={{ marginBottom: "6px", color: "#37d582", fontWeight: 500 }}>
+                                <Icons.Globe size={12} style={{marginRight: '4px'}}/>
+                                {this.state.address}
+                            </div>
+                        )}
+
+                        {/* Coordinates Section */}
                         {(() => {
                             if (this.state.imageId && this.state.sequenceImages.length > 0) {
                                 const currentImg = this.state.sequenceImages.find(
@@ -5715,66 +5778,35 @@ export default class Widget extends React.PureComponent<
                                 );
                                 if (currentImg) {
                                     return (
-                                        <div>
-                                            <Icons.Pin size={13}/>{" "}Latitude: {currentImg.lat.toFixed(6)}<br/><Icons.Pin size={13}/>{" "}Longitude: {currentImg.lon.toFixed(6)}
-                                            {this.state.address && <><br/><Icons.Globe size={11}/>{"  "}{this.state.address}</>}
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', opacity: 0.9 }}>
+                                            <div style={{display: 'flex', alignItems: 'center'}}>
+                                                <span style={{width: '25px', fontSize: '9px', color: '#aaa'}}>LAT</span>
+                                                <span>{currentImg.lat.toFixed(6)}</span>
+                                            </div>
+                                            <div style={{display: 'flex', alignItems: 'center'}}>
+                                                <span style={{width: '25px', fontSize: '9px', color: '#aaa'}}>LON</span>
+                                                <span>{currentImg.lon.toFixed(6)}</span>
+                                            </div>
                                         </div>
                                     );
                                 }
                             }
                             return null;
-                        })()}	
-                        {this.state.jimuMapView?.view && (
-                            <div style={{ 
-                                fontWeight: "bold", 
-                                fontSize: "8px",
-                                borderBottom: "1px solid rgba(255,255,255,0.3)",
-                                paddingBottom: "2px",
-                                marginBottom: "2px"
-                            }}>
-                                <Icons.Search size={14}/> Zoom: {this.state.currentZoom !== undefined 
-                                    ? this.state.currentZoom.toFixed(1) 
-                                    : this.state.jimuMapView.view.zoom.toFixed(1)}
-                            </div>
-                        )}		
+                        })()}
 
-                        {/*TURBO YEAR LEGEND*/}
-                        {this.state.turboColorByDate && this.state.turboYearLegend?.length > 0 && (
-                            <div style={{ marginTop: "4px", textAlign: "center" }}>
-                                <div className="turbo-legend-cbd-title" style={{ fontWeight: "bold", fontSize: "10px", marginBottom: "2px" }}>
-                                    Date Legend:
-                                </div>
-                                {this.state.turboYearLegend.map(item => (
-                                    <div key={item.year} style={{ display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "2px" }}>
-                                        <span className="turbo-legend-cbd-circles" style={{
-                                            display: "inline-block",
-                                            width: "10px",
-                                            height: "10px",
-                                            borderRadius: "50%",
-                                            backgroundColor: item.color,
-                                            marginRight: "4px",
-                                            border: "1px solid white"
-                                        }}></span>
-                                        <span className="turbo-legend-cbd-date-title" style={{ fontSize: "9px" }}>{item.year}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+                        {/* Dynamic User Filter Tag (If Turbo Creator set) */}
                         {this.props.config.turboCreator && (
                             <div style={{
-                                marginTop: "4px",
-                                padding: "2px 4px",
+                                marginTop: "8px",
+                                padding: "3px 5px",
+                                background: "rgba(55, 213, 130, 0.2)",
+                                border: "1px solid rgba(55, 213, 130, 0.4)",
                                 borderRadius: "3px",
-                                fontSize: "8px"
+                                fontSize: "9px",
+                                color: "#37d582",
+                                textAlign: "center"
                             }}>
-                                <div>User:</div>
-                                <div style={{fontWeight: "bold"}}>{this.props.config.turboCreator}</div>
-                                {/* Optional: Check zoom level only if map is available */}
-                                {this.state.jimuMapView?.view.zoom < 14 && (
-                                    <div style={{color: "yellow", marginTop: "2px"}}>
-                                        (Mapillary Coverage Layer is filtered by creator username)
-                                    </div>
-                                )}
+                                User: {this.props.config.turboCreator}
                             </div>
                         )}
                     </div>
@@ -6496,8 +6528,8 @@ export default class Widget extends React.PureComponent<
                                         ? (this.state.showTurboFilterBox ? 'rgba(255,215,0,0.9)' : 'rgba(255,215,0,0.3)')
                                         : 'rgba(200,200,200,0.3)',
                                     color: '#fff',
-                                    height: this.props.config.turboModeOnly ? '24px' : '18px',
-                                    width: this.props.config.turboModeOnly ? '24px' : '18px', 
+                                    height: this.props.config.turboModeOnly ? '26px' : '18px',
+                                    width: this.props.config.turboModeOnly ? '26px' : '18px', 
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
