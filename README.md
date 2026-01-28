@@ -51,6 +51,11 @@ A high-performance custom widget for **ArcGIS Experience Builder** that seamless
 *   **Fullscreen Minimap:** A secondary map panel within fullscreen mode that allows users to track their route and "click-to-jump" to any frame in the sequence.
 *   **Responsive Design:** Adaptive UI that scales from desktop to mobile, with touch-optimized controls and layout injection.
 
+### Engine Customization
+*   **Pro-Level Render Modes:** Switch between Fill (default immersive view) and Letterbox (ideal for wide-screen widgets to see the original uncropped photo).
+*   **Transition Control:** Choose between Smooth motion blending (cinematic feel) or Instantaneous jumps (snappy, high-speed inspection).
+*   **Camera Horizon Control:** Set custom default X/Y camera angles (0.0 to 1.0) to ensure the viewer always opens at a specific perspective (e.g., tilted down at the road or up at the sky).
+
 ---
 
 ## Performance & Architecture
