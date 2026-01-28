@@ -11,7 +11,7 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { objectNameMap } from "../helpers/mapillaryObjectNameMap";
 import * as Icons from './components/icons'
-import { legendCircleStyle, mobileOverrideStyles } from "../helpers/styles";
+import { legendCircleStyle, glassStyles, getGlassSelectStyles, mobileOverrideStyles } from "../helpers/styles";
 import { Viewer } from 'mapillary-js';
 import 'mapillary-js/dist/mapillary.css';
 
@@ -435,7 +435,7 @@ export default class Widget extends React.PureComponent<
 
                 // Draw new green pulsing point at NEW location
                 this.currentGreenGraphic = this.drawPulsingPoint(newImg.lon, newImg.lat, [0, 255, 0, 1]);
-                this.checkForTimeTravel(newImg.lon, newImg.lat, newImg.captured_at);
+                this.checkForTimeTravel(newId);
 
                 // Get bearing and draw cone at NEW location
                 this.mapillaryViewer.getBearing().then((b: number) => {
@@ -2131,7 +2131,7 @@ export default class Widget extends React.PureComponent<
     });
 
     private legendTextStyle = () => ({
-        fontSize: '10px',
+        fontSize: '9px',
         color: 'rgba(255,255,255,0.9)',
         whiteSpace: 'nowrap' as const,
         fontWeight: 400
@@ -3138,45 +3138,85 @@ export default class Widget extends React.PureComponent<
     };
 
     /**
-        * Checks if there are other sequences within ~20 meters of the current location.
-        * If yes, enables the Time Travel button.
+        * Official Mapillary Time Travel Logic:
+        * 1. Distance < 12 meters.
+        * 2. Compass Angle Difference < 22.5°.
+        * 3. Must be from a different date (to be "Time Travel").
     */
-    private checkForTimeTravel = async (lon: number, lat: number, currentCapturedAt?: number) => {
-        if (!lon || !lat || !currentCapturedAt) {
+    private checkForTimeTravel = async (currentImageId: string) => {
+        if (!currentImageId) {
             this.setState({ hasTimeTravel: false });
             return;
         }
 
-        // Create a small bounding box (~20 meters)
-        const offset = 0.0002; 
-        const bbox = `${lon - offset},${lat - offset},${lon + offset},${lat + offset}`;
-
         try {
-            // Fetch nearby images with their capture date
-            const url = `https://graph.mapillary.com/images?bbox=${bbox}&fields=captured_at&limit=30&access_token=${this.accessToken}`;
+            // 1. Fetch current image including COMPUTED fields and SEQUENCE
+            const currentResp = await fetch(
+                `https://graph.mapillary.com/${currentImageId}?fields=geometry,computed_geometry,captured_at,computed_compass_angle,compass_angle,is_pano,sequence&access_token=${this.accessToken}`
+            );
+            if (!currentResp.ok) return;
+            const cData = await currentResp.json();
             
-            const response = await fetch(url);
-            if (!response.ok) return;
+            // Mapillary only allows Time Travel for images successfully reconstructed (Computed)
+            // If computed_geometry is missing, the official web app usually hides Time Travel.
+            if (!cData.computed_geometry) {
+                this.setState({ hasTimeTravel: false });
+                return;
+            }
+
+            const cCoords = cData.computed_geometry.coordinates;
+            const cAngle = cData.computed_compass_angle ?? cData.compass_angle;
+            const cSeq = cData.sequence;
+            const cTime = new Date(cData.captured_at).getTime();
+
+            // 2. Search candidates (requesting computed fields and sequence)
+            const offset = 0.0002; 
+            const bbox = `${cCoords[0] - offset},${cCoords[1] - offset},${cCoords[0] + offset},${cCoords[1] + offset}`;
+            const candidatesUrl = `https://graph.mapillary.com/images?bbox=${bbox}&fields=id,captured_at,compass_angle,computed_compass_angle,is_pano,geometry,computed_geometry,sequence&limit=50&access_token=${this.accessToken}`;
             
-            const data = await response.json();
-            
-            if (data.data && data.data.length > 0) {
-                // Logic: Time Travel exists if we find an image where the capture time 
-                // differs by more than 24 hours (86,400,000 ms) from the current image.
+            const candidatesResp = await fetch(candidatesUrl);
+            const candidatesData = await candidatesResp.json();
+
+            if (candidatesData.data && candidatesData.data.length > 0) {
                 const ONE_DAY_MS = 86400000;
 
-                const hasDifferentDate = data.data.some((img: any) => {
-                    if (!img.captured_at) return false;
+                const hasValidMatch = candidatesData.data.some((img: any) => {
+                    if (img.id === currentImageId) return false;
+
+                    // RULE 1: Ignore images from the same drive
+                    if (img.sequence === cSeq) return false;
+
+                    // RULE 2: Must be a different day
                     const imgTime = new Date(img.captured_at).getTime();
-                    return Math.abs(imgTime - currentCapturedAt) > ONE_DAY_MS;
+                    if (Math.abs(imgTime - cTime) < ONE_DAY_MS) return false;
+
+                    // RULE 3: Reconstruction Check
+                    // If candidate wasn't reconstructed, Mapillary website won't show it.
+                    if (!img.computed_geometry) return false;
+
+                    // RULE 4: Strict 12m Distance using Computed Geometry
+                    const iCoords = img.computed_geometry.coordinates;
+                    const dist = this.distanceMeters(cCoords[1], cCoords[0], iCoords[1], iCoords[0]);
+                    if (dist > 12) return false;
+
+                    // RULE 5: Strict 22.5° Angle using Computed Angle
+                    if (cData.is_pano || img.is_pano) return true;
+                    
+                    const iAngle = img.computed_compass_angle ?? img.compass_angle;
+                    if (cAngle !== null && iAngle !== null) {
+                        const diff = Math.abs(cAngle - iAngle) % 360;
+                        const shortestDiff = diff > 180 ? 360 - diff : diff;
+                        return shortestDiff <= 22.5;
+                    }
+
+                    return false;
                 });
                 
-                this.setState({ hasTimeTravel: hasDifferentDate });
+                this.setState({ hasTimeTravel: hasValidMatch });
             } else {
                 this.setState({ hasTimeTravel: false });
             }
         } catch (err) {
-            console.warn("Time travel check failed", err);
             this.setState({ hasTimeTravel: false });
         }
     }
@@ -3714,8 +3754,8 @@ export default class Widget extends React.PureComponent<
             // --- Check for Time Travel for the starting image ---
             const currentImg = updatedSequence.find(img => img.id === startImageId);
             if (currentImg) {
-                // Pass captured_at instead of sequenceId
-                this.checkForTimeTravel(currentImg.lon, currentImg.lat, currentImg.captured_at);
+                // Passing captured_at instead of sequenceId
+                this.checkForTimeTravel(startImageId);
                 
                 this.currentGreenGraphic = this.drawPulsingPoint(currentImg.lon, currentImg.lat, [0, 255, 0, 1]);
             }
@@ -3743,7 +3783,11 @@ export default class Widget extends React.PureComponent<
                             maxWidth: 200,
                             minWidth: 200,
                         },   
-                        cover: false
+                        cover: false,
+                        sequence: {
+                            minWidth: 45,
+                            maxWidth: 117
+                        }
                     }
                 });
                 
@@ -5134,11 +5178,10 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        // OPTIMIZATION: Sort by distance AND slice to return only the top 2 closest sequences.
-        // This prevents handleMapClick from waiting on 5-6 sequences at intersections.
+        // Sort by distance AND slice to return only the top 10 closest sequences.
         return Object.values(grouped)
             .sort((a, b) => a.minDistance - b.minDistance)
-            .slice(0, 2); 
+            .slice(0, 10); 
     }
 
     // --- Fetch full coordinate list of a sequence ---
@@ -5263,12 +5306,12 @@ export default class Widget extends React.PureComponent<
                     <div className="legend-container" 
                         style={{
                             position: "absolute",
-                            bottom: "10px",
+                            bottom: "5px",
                             left: "5px",
-                            background: "rgba(0, 0, 0, 0.35)",
-                            backdropFilter: "blur(8px)",
+                            background: "rgba(0, 0, 0, 0.30)",
+                            backdropFilter: "blur(5px)",
                             borderRadius: "4px",
-                            padding: "6px 10px", // Uniform padding
+                            padding: "4px 6px", // Uniform padding
                             boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
                             border: "1px solid rgba(255,255,255,0.1)",
                             zIndex: 10002,
@@ -5282,7 +5325,7 @@ export default class Widget extends React.PureComponent<
                             opacity: 0.4,
                             fontSize: '8px',
                             fontWeight: 700,
-                            marginBottom: '6px', // Gap before items start
+                            marginBottom: '2px', // Gap before items start
                             color: 'white',
                             textTransform: 'uppercase',
                             letterSpacing: '1px',
@@ -5314,140 +5357,84 @@ export default class Widget extends React.PureComponent<
                 )}
 
                 {this.state.turboLoading && (
-                    <div style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        width: "100%",
-                        height: "100%",
-                        background: "rgba(0,0,0,0.5)",
-                        display: "flex",
-                        flexDirection: "column",
-                        justifyContent: "center",
-                        alignItems: "center",
-                        zIndex: 9999,
-                        color: "#fff",
-                        fontSize: "14px"
-                    }}>
-                        {/* Spinner */}
-                        <div style={{
-                            border: "4px solid #f3f3f3",
-                            borderTop: "4px solid #ffcc00",
-                            borderRadius: "50%",
-                            width: "36px",
-                            height: "36px",
-                            animation: "spin 1s linear infinite",
-                            marginBottom: "8px"
-                        }} />
-                        Turbo Mode is loading coverage points…
-                        <style>{`
-                            @keyframes spin {
-                            0% { transform: rotate(0deg); }
-                            100% { transform: rotate(360deg); }
-                            }
-                        `}</style>
+                    <div style={glassStyles.loadingContainer}>
+                        {/* Use the new Compact Card style */}
+                        <div style={glassStyles.compactLoadingCard}>
+                            
+                            {/* Turbo Gold Spinner - slightly smaller override (32px) */}
+                            <div style={{
+                                ...glassStyles.turboSpinner,
+                                width: "32px",
+                                height: "32px",
+                                borderWidth: "3px" 
+                            }} />
+                            
+                            {/* Compact Text */}
+                            <div style={glassStyles.compactLoadingText}>
+                                Turbo Mode is loading coverage points...
+                            </div>
+                            
+                            <style>{`
+                                @keyframes spin {
+                                    0% { transform: rotate(0deg); }
+                                    100% { transform: rotate(360deg); }
+                                }
+                            `}</style>
+                        </div>
                     </div>
                 )}
 
                 {this.state.isLoading && (
-                    <div style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        width: "100%",
-                        height: "100%",
-                        background: "rgba(0,0,0,0.4)",
-                        display: "flex",
-                        flexDirection: "column", // Stack spinner + text
-                        justifyContent: "center",
-                        alignItems: "center",
-                        zIndex: 9999
-                    }}>
-                        {/* Spinner Circle */}
-                        <div style={{
-                                border: "4px solid #f3f3f3",
-                                borderTop: "4px solid #0275d8",
-                                borderRadius: "50%",
-                                width: "36px",
-                                height: "36px",
-                                animation: "spin 1s linear infinite",
-                                marginBottom: "10px" // Space before text
-                            }} 
-                        />
-                        {/* Loading Text */}
-                        <div style={{
-                                color: "white",
-                                fontSize: "14px",
-                                fontWeight: "500",
-                                textAlign: "center"
-                            }}>
-                            Loading imagery...
+                    <div style={glassStyles.loadingContainer}>
+                        <div style={glassStyles.loadingCard}>
+                            
+                            {/* Premium Glowing Spinner */}
+                            <div style={glassStyles.loadingSpinner} />
+                            
+                            {/* Text */}
+                            <div style={glassStyles.loadingText}>
+                                Loading imagery...
+                            </div>
+                            
+                            {/* Animation Keyframes */}
+                            <style>{`
+                                @keyframes spin {
+                                    0% { transform: rotate(0deg); }
+                                    100% { transform: rotate(360deg); }
+                                }
+                            `}</style>
                         </div>
-                        <style>{`
-                            @keyframes spin {
-                            0% { transform: rotate(0deg); }
-                            100% { transform: rotate(360deg); }
-                            }
-                        `}</style>
                     </div>
                 )}
 
-                {!this.state.imageId && !this.state.isLoading && !this.state.turboLoading && !this.state.noImageMessageVisible &&  (
-                    <div
-                        style={{
-                            position: "absolute",
-                            top: 0,
-                            left: 0,
-                            width: "100%",
-                            height: "100%",
-                            display: "flex",
-                            justifyContent: "center",
-                            alignItems: "center",
-                            color: "#fff",
-                            fontSize: "16px",
-                            background: "rgba(0,0,0,0.4)",
-                            textAlign: "center",   // ensure text lines are centered
-                            flexDirection: "column" // stack items vertically
-                        }}
-                        >
-                        <span
-                            style={{
-                                fontSize: "12px",
-                                opacity: 0.7,
-                                color: "#fff"
-                            }}
-                        >
-                        Click a point to view imagery
-                        </span>
-					    <span style={{fontSize: "10px", opacity: 0.7}}>
-						    (Mapillary imagery will appear here)
-				        </span>
+                {!this.state.imageId && !this.state.isLoading && !this.state.turboLoading && !this.state.noImageMessageVisible && (
+                    <div style={glassStyles.initialStateContainer}>
+                        <div style={glassStyles.initialStateCard}>
+                            <span style={glassStyles.initialStateTextPrimary}>
+                                Click a point to view imagery
+                            </span>
+                            <span style={glassStyles.initialStateTextSecondary}>
+                                (Mapillary imagery will appear here)
+                            </span>
+                        </div>
                     </div>
                 )}
 
                 {this.state.noImageMessageVisible && (
-                <div
-                    style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        width: "100%",
-                        height: "100%",
-                        display: "flex",
-                        justifyContent: "center",
-                        alignItems: "center",
-                        fontSize: "14px",
-                        color: "#666",
-                        background: "#f9f9f9",
-                        textAlign: "center",
-                        opacity: 1,
-                        transition: "opacity 0.6s ease-in-out"
-                    }}
-                >
-                     <span style={{fontSize: "11px", fontWeight: "bold"}}>
-                        <Icons.NoImage /> No nearby Mapillary image found at this location. 
-                     </span>
-                </div>
+                    <div style={glassStyles.noImageContainer}>
+                        <div style={glassStyles.noImageContent}>
+                            {/* Icon with a subtle glow */}
+                            <div style={{ 
+                                filter: "drop-shadow(0 0 8px rgba(255,255,255,0.3))",
+                                color: "#fff",
+                                opacity: 0.9
+                            }}>
+                                <Icons.NoImage size={32} />
+                            </div>
+                            
+                            <span>No nearby Mapillary imagery found.</span>
+                        </div>
+                    </div>
                 )}
 
                 {/* --- DOWNLOAD CURRENT IMAGE BUTTON --- */}
@@ -5558,15 +5545,22 @@ export default class Widget extends React.PureComponent<
                     flexDirection: "column",
                     border: brdColor !== 'transparent' ? `3px solid ${brdColor}` : 'none',
                     boxSizing: 'border-box',
-                    overflow: 'hidden'      
+                    overflow: 'hidden',
+                    containerType: 'inline-size'  
                 }}
                 >
-                {mapWidgetId ? (
-                    <JimuMapViewComponent
-                        useMapWidgetId={mapWidgetId}
-                        onActiveViewChange={this.onActiveViewChange}
-                    />
-                ) : (
+                {/* wraping this logic component in display:none so it doesn't break the Flex layout */}
+                <div style={{ display: 'none' }}>
+                    {mapWidgetId ? (
+                        <JimuMapViewComponent
+                            useMapWidgetId={mapWidgetId}
+                            onActiveViewChange={this.onActiveViewChange}
+                        />
+                    ) : null}
+                </div>
+
+                {/* showing error only if strictly needed, separate from the logic component */}
+                {!mapWidgetId && (
                     <div style={{padding: "10px", color: "red"}}>
                         Please link a Map widget in Experience Builder settings
                     </div>
@@ -5577,147 +5571,131 @@ export default class Widget extends React.PureComponent<
                     <div
                         className="warning-message-container"
                         style={{
+                            // Positioning
                             position: "absolute",
-                            top: "6px",
-                            left: "42px",
-                            background: "rgba(255,165,0,0.95)",
-                            color: "#fff",
-                            padding: "4px 6px",
-                            borderRadius: "4px",
-                            fontSize: "10px",
-                            boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
+                            top: "6px", // Aligned with the top of your glass container
+                            left: "48px", // Pushed out to the right of the buttons
                             zIndex: 9999,
-                            animation: "fadeIn 0.3s",
-                            maxWidth: "90px",
-                            lineHeight: "1.2",
-                            textAlign: "center"
+                            
+                            // Glassmorphism - Warning Style
+                            background: "linear-gradient(135deg, rgba(255, 140, 0, 0.9) 0%, rgba(255, 69, 0, 0.4) 100%)", // Orange-to-Redish Glass
+                            backdropFilter: "blur(14px)",
+                            WebkitBackdropFilter: "blur(14px)",
+                            border: "1px solid rgba(255, 165, 0, 0.3)", // Subtle orange border
+                            boxShadow: "0 4px 15px rgba(0, 0, 0, 0.3), inset 0 0 10px rgba(255, 165, 0, 0.1)", // Depth + Inner Glow
+                            
+                            // Typography & Layout
+                            color: "#fff",
+                            padding: "3px 4px",
+                            borderRadius: "10px",
+                            fontSize: "9.5px",
+                            fontWeight: "500",
+                            maxWidth: "90px", // Slightly wider for better readability
+                            lineHeight: "1.3",
+                            textAlign: "center",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            
+                            // Animation
+                            animation: "fadeIn 0.3s ease-out",
+                            transformOrigin: "left center"
                         }}
-                        >
-                        <Icons.Warning /> {this.state.zoomWarningMessage}
+                    >
+                        {/* Icon wrapper to keep it from shrinking */}
+                        <span style={{  filter: 'drop-shadow(0 0 4px rgba(255,165,0,0.6))' }}>  <Icons.Warning size={16} /> {this.state.zoomWarningMessage}</span>
                     </div>
                 )}
 
                 {/* Revolver-style sequence picker */}
                 {this.state.availableSequences && this.state.availableSequences.length > 1 && (
-                <div
-                    style={{
-                        background: "rgba(7,111,229)",
-                        padding: "2px",
-                        zIndex: 10000,
-                        color: "#fff",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        justifyContent: "center"
-                    }}
-                >
-                    {/* Prev arrow, only show if more than 3 sequences */}
-                    {this.state.availableSequences.length > 3 && (
-                        <button
-                            onClick={() => {
-                                this.setState(prev => ({
-                                    sequenceOffset:
-                                    (prev.sequenceOffset! - 1 + this.state.availableSequences!.length) %
-                                    this.state.availableSequences!.length
-                                }));
-                            }}
-                            style={{
-                                background: "rgba(255,255,255,0.2)",
-                                border: "none",
-                                color: "#fff",
-                                fontSize: "10px",
-                                borderRadius: "4px",
-                                cursor: "pointer",
-                                padding: "2px 6px"
-                            }}
-                        >
-                            ◀
-                        </button>
-                    )}
-
-                    {/* Sequence slots at most #available, max 3 */}
-                    {Array.from({ length: Math.min(3, this.state.availableSequences!.length) }).map((_, slotIdx) => {
-                        const seqIndex = (this.state.sequenceOffset! + slotIdx) % this.state.availableSequences!.length;
-                        const seq = this.state.availableSequences![seqIndex];
-                        const colorArr = seq._color || this.pickSequenceColor(seqIndex);
-                        const cssColor = `rgba(${colorArr[0]}, ${colorArr[1]}, ${colorArr[2]}, ${colorArr[3] ?? 1})`;
-                        const date = seq.capturedAt
-                            ? new Date(seq.capturedAt).toLocaleDateString("en-US", { month: "short", year: "numeric" })
-                            : "Unknown date";
-                        const isActive = this.state.selectedSequenceId === seq.sequenceId;
-
-                        return (
-                            <div
-                            key={seq.sequenceId}
-                            onClick={async () => {
-                                this.setState({ selectedSequenceId: seq.sequenceId });
-                                this.clearGreenPulse();
-                                const { clickLon, clickLat } = this.state;
-                                if (clickLon != null && clickLat != null) {
-                                    const updatedSequence = await this.getSequenceWithCoords(seq.sequenceId, this.accessToken);
-                                    if (updatedSequence.length) {
-                                        const closestImg = updatedSequence.reduce((closest, img) => {
-                                            const dist = this.distanceMeters(img.lat, img.lon, clickLat, clickLon);
-                                            return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
-                                        }, null as any);
-                                        if (closestImg) {
-                                            await this.loadSequenceById(seq.sequenceId, closestImg.id);
-                                        }
-                                    }
-                                }
-                            }}
-                            style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "4px",
-                                background: isActive ? "rgba(255,255,255,0.2)" : "transparent",
-                                padding: "4px 6px",
-                                borderRadius: "4px",
-                                cursor: "pointer",
-                                minWidth: "60px"
-                            }}
-                            >
-                            {/* Color swatch */}
-                            <span
-                                style={{
-                                    display: "inline-block",
-                                    width: "12px",
-                                    height: "12px",
-                                    borderRadius: "50%",
-                                    backgroundColor: cssColor,
-                                    border: "1px solid #fff"
+                    <div style={glassStyles.sequencePickerContainer}>
+                        
+                        {/* Prev arrow */}
+                        {this.state.availableSequences.length > 3 && (
+                            <button
+                                onClick={() => {
+                                    this.setState(prev => ({
+                                        sequenceOffset:
+                                        (prev.sequenceOffset! - 1 + this.state.availableSequences!.length) %
+                                        this.state.availableSequences!.length
+                                    }));
                                 }}
-                            />
-                            {/* Label */}
-                            <span style={{ whiteSpace: "nowrap", fontSize:"10px" }}>
-                                {seqIndex + 1}. ({date})
-                            </span>
-                            </div>
-                        );
-                    })}
+                                style={glassStyles.sequenceArrow}
+                                onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.2)"}
+                                onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
+                            >
+                                ◀
+                            </button>
+                        )}
 
-                    {/* Next arrow only show if more than 3 sequences */}
-                    {this.state.availableSequences.length > 3 && (
-                    <button
-                        onClick={() => {
-                            this.setState(prev => ({
-                                sequenceOffset: (prev.sequenceOffset! + 1) % this.state.availableSequences!.length
-                            }));
-                        }}
-                        style={{
-                            background: "rgba(255,255,255,0.2)",
-                            border: "none",
-                            color: "#fff",
-                            fontSize: "10px",
-                            borderRadius: "4px",
-                            cursor: "pointer",
-                            padding: "2px 6px"
-                        }}
-                    >
-                        ▶
-                    </button>
-                    )}
-                </div>
+                        {/* Sequence slots */}
+                        {Array.from({ length: Math.min(3, this.state.availableSequences!.length) }).map((_, slotIdx) => {
+                            const seqIndex = (this.state.sequenceOffset! + slotIdx) % this.state.availableSequences!.length;
+                            const seq = this.state.availableSequences![seqIndex];
+                            
+                            const colorArr = seq._color || this.pickSequenceColor(seqIndex);
+                            const cssColor = `rgba(${colorArr[0]}, ${colorArr[1]}, ${colorArr[2]}, ${colorArr[3] ?? 1})`;
+                            
+                            // COMPACT DATE FORMAT: "Aug 16" instead of "Aug 2016"
+                            const date = seq.capturedAt
+                                ? new Date(seq.capturedAt).toLocaleDateString("en-US", { month: "short", year: "2-digit" })
+                                : "N/A";
+                                
+                            const isActive = this.state.selectedSequenceId === seq.sequenceId;
+
+                            return (
+                                <div
+                                    key={seq.sequenceId}
+                                    style={glassStyles.sequenceSlot(isActive)}
+                                    title={`Sequence ${seqIndex + 1} (${date})`} // Hover shows full info
+                                    onClick={async () => {
+                                        this.setState({ selectedSequenceId: seq.sequenceId });
+                                        this.clearGreenPulse();
+                                        const { clickLon, clickLat } = this.state;
+                                        if (clickLon != null && clickLat != null) {
+                                            const updatedSequence = await this.getSequenceWithCoords(seq.sequenceId, this.accessToken);
+                                            if (updatedSequence.length) {
+                                                const closestImg = updatedSequence.reduce((closest, img) => {
+                                                    const dist = this.distanceMeters(img.lat, img.lon, clickLat, clickLon);
+                                                    return (!closest || dist < closest.dist) ? { ...img, dist } : closest;
+                                                }, null as any);
+                                                if (closestImg) {
+                                                    await this.loadSequenceById(seq.sequenceId, closestImg.id);
+                                                }
+                                            }
+                                        }
+                                    }}
+                                    onMouseEnter={e => {e.currentTarget.style.background = "rgba(255, 255, 255, 0.35)"; }}
+                                    onMouseLeave={e => {e.currentTarget.style.background = isActive ? "rgba(255, 255, 255, 0.25)" : "transparent";}}
+                                >
+                                    {/* Color swatch */}
+                                    <span style={glassStyles.sequenceDot(cssColor)} />
+                                    
+                                    {/* Label - Compact */}
+                                    <span style={glassStyles.sequenceText}>
+                                        {seqIndex + 1}. {date}
+                                    </span>
+                                </div>
+                            );
+                        })}
+
+                        {/* Next arrow */}
+                        {this.state.availableSequences.length > 3 && (
+                            <button
+                                onClick={() => {
+                                    this.setState(prev => ({
+                                        sequenceOffset: (prev.sequenceOffset! + 1) % this.state.availableSequences!.length
+                                    }));
+                                }}
+                                style={glassStyles.sequenceArrow}
+                                onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.2)"}
+                                onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
+                            >
+                                ▶
+                            </button>
+                        )}
+                    </div>
                 )}
 
                 {/* Info box */}
@@ -5727,16 +5705,16 @@ export default class Widget extends React.PureComponent<
                             fontSize: "9px",
                             color: "white",
                             position: "absolute",
-                            top: "10px",
+                            top: "5px",
                             right: "5px",
                             // Modern Dark Neutral with Blur
-                            background: "rgba(0, 0, 0, 0.45)",
+                            background: "rgba(0, 0, 0, 0.35)",
                             backdropFilter: "blur(5px)", 
                             borderRadius: "6px",
-                            width: "120px", // Increased from 80px to prevent awkward wrapping
+                            maxWidth: "80px",
                             textAlign: "left",
-                            padding: "8px",
-                            boxShadow: "0 4px 15px rgba(0,0,0,0.3)",
+                            padding: "5px",
+                            boxShadow: "0 4px 15px rgba(0, 0, 0, 0.3)",
                             border: "1px solid rgba(255,255,255,0.1)",
                             zIndex: 10002,
                             pointerEvents: "none" // Mouse passes through to viewer
@@ -5747,24 +5725,25 @@ export default class Widget extends React.PureComponent<
                             display: 'flex', 
                             justifyContent: 'space-between', 
                             alignItems: 'center',
-                            marginBottom: '6px',
+                            marginBottom: '3px',
                             opacity: 0.8,
                             fontSize: '10px',
                             borderBottom: '1px solid rgba(255,255,255,0.2)',
                             paddingBottom: '4px'
                         }}>
-                            <span style={{fontWeight: 600}}>STATUS</span>
+                            <span style={{fontWeight: 600, fontSize:'8px'}}>STATUS</span>
                             <span>
-                                <Icons.Search size={9} style={{marginRight:'2px'}}/> 
-                                Z: {this.state.currentZoom !== undefined 
-                                    ? this.state.currentZoom.toFixed(1) 
-                                    : this.state.jimuMapView?.view.zoom.toFixed(1)}
+                                <Icons.Search size={9} style={{marginRight:'2px', marginLeft:'2px'}}/> 
+                                    <span style={{fontSize:'8px'}}>Z: {this.state.currentZoom !== undefined 
+                                        ? this.state.currentZoom.toFixed(1) 
+                                        : this.state.jimuMapView?.view.zoom.toFixed(1)}
+                                    </span>
                             </span>
                         </div>
 
                         {/* Address Section */}
                         {this.state.address && (
-                            <div style={{ marginBottom: "6px", color: "#37d582", fontWeight: 500 }}>
+                            <div style={{ marginBottom: "3px", color: "#37d582", fontWeight: 500 }}>
                                 <Icons.Globe size={12} style={{marginRight: '4px'}}/>
                                 {this.state.address}
                             </div>
@@ -5797,8 +5776,8 @@ export default class Widget extends React.PureComponent<
                         {/* Dynamic User Filter Tag (If Turbo Creator set) */}
                         {this.props.config.turboCreator && (
                             <div style={{
-                                marginTop: "8px",
-                                padding: "3px 5px",
+                                marginTop: "4px",
+                                padding: "1px 3px",
                                 background: "rgba(55, 213, 130, 0.2)",
                                 border: "1px solid rgba(55, 213, 130, 0.4)",
                                 borderRadius: "3px",
@@ -5812,514 +5791,332 @@ export default class Widget extends React.PureComponent<
                     </div>
                 )}
                 
-                {/* Filter button + optional aux */}
-                {/* Show textbox + date + is_pano info when filter mode active */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', backgroundColor: 'gold', borderRadius: '5px' }}>
-                    {this.state.showTurboFilterBox && (
-                        <div style={{ position: 'relative', display: 'inline-block' }}>
-                        <input
-                            type="text"
-                            placeholder="Creator username…"
-                            // Disable input if config is set
-                            disabled={!!this.props.config.turboCreator}
-                            value={this.state.turboFilterUsername}
-                            onChange={(e) => {
-                                const val = e.target.value;
-                                this.setState({ turboFilterUsername: val }, () => {
-                                    this.debouncedTurboFilter();
-                                });
-                            }}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    this.debouncedTurboFilter.cancel?.();
-                                    const val = this.state.turboFilterUsername.trim();
-                                    if (this.state.jimuMapView && this.state.turboModeActive) {
-                                        if (val) {
-                                            this.enableTurboCoverageLayer(val);
-                                        } else {
-                                            this.enableTurboCoverageLayer();
-                                        }
-                                    }
-                                }
-                            }}
-                            style={{
-                                background: 'rgba(255,255,255,0.95)',
-                                border: '1px solid #ccc',
-                                borderRadius: '999px',
-                                padding: '4px 15px 4px 10px', // space for X button
-                                marginTop:'2px',
-                                fontSize: '8px',
-                                width: '100px',
-                                boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
-                                transition: 'all 0.2s ease-in-out',
-                                boxSizing: 'border-box',
-                                opacity: this.props.config.turboCreator ? 0.7 : 1,
-                                cursor: this.props.config.turboCreator ? 'not-allowed' : 'text',
-                                color: this.props.config.turboCreator ? '#555' : 'inherit'
-                            }}
-                            autoFocus={!this.props.config.turboCreator} // Don't autofocus if locked
-                            title={this.props.config.turboCreator ? "Locked by widget settings" : "Enter a Mapillary creator username"}
-                        />
-
-                        {/* Date range filter */}
-                        <div style={{ position: 'relative', display: 'inline-block', zIndex: 1000}}>
-                            <label style={{ fontSize: '9px', color: 'black', marginLeft:'5px', fontWeight:'500'}}>From:</label>
-                            <DatePicker
-                                selected={this.state.turboFilterStartDate ? new Date(this.state.turboFilterStartDate) : null}
-                                onChange={(date) => {
-                                    const dateString = date ? date.toISOString().split('T')[0] : '';
-                                    this.setState({ turboFilterStartDate: dateString }, () => {
-                                        this.debouncedTurboFilter();
-                                    });
-                                }}
-                                isClearable
-                                dateFormat="yyyy-MM-dd"
-                                placeholderText="Select start date"
-                                popperPlacement="top"
-                                showYearDropdown
-                                showMonthDropdown
-                                dropdownMode="select"
-                                yearDropdownItemNumber={50}
-                                scrollableYearDropdown
-                                popperModifiers={{
-                                    preventOverflow: {
-                                        enabled: true,
-                                        boundariesElement: 'viewport'
-                                    }
-                                }}
-                                customInput={
-                                    <button
-                                        type="button"
-                                        style={{
-                                            background: 'transparent',
-                                            border: '1px solid #ccc',
-                                            borderRadius: '4px',
-                                            padding: '4px',
-                                            cursor: 'pointer',
-                                            fontSize: '10px',
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            width: '24px',
-                                            height: '20px',
-                                            marginLeft: '2px'
-                                        }}
-                                    >
-                                        📅
-                                    </button>
-                                }
-                            />
-                        </div>
-
-                        <div style={{ position: 'relative', display: 'inline-block', zIndex: 1000 }}>
-                            <label style={{ fontSize: '9px', color: 'black', marginLeft:'5px', fontWeight:'500'}}>To:</label>
-                            <DatePicker
-                                selected={this.state.turboFilterEndDate ? new Date(this.state.turboFilterEndDate) : null}
-                                onChange={(date) => {
-                                    const dateString = date ? date.toISOString().split('T')[0] : '';
-                                    this.setState({ turboFilterEndDate: dateString }, () => {
-                                        this.debouncedTurboFilter();
-                                    });
-                                }}
-                                isClearable
-                                dateFormat="yyyy-MM-dd"
-                                placeholderText="Select end date"
-                                popperPlacement="top"
-                                showYearDropdown
-                                showMonthDropdown
-                                dropdownMode="select"
-                                yearDropdownItemNumber={50}
-                                scrollableYearDropdown
-                                popperModifiers={{
-                                    preventOverflow: {
-                                        enabled: true,
-                                        boundariesElement: 'viewport'
-                                    }
-                                }}
-                                customInput={
-                                    <button
-                                        type="button"
-                                        style={{
-                                            background: 'transparent',
-                                            border: '1px solid #ccc',
-                                            borderRadius: '4px',
-                                            padding: '4px',
-                                            cursor: 'pointer',
-                                            fontSize: '10px',
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            width: '24px',
-                                            height: '20px',
-                                            marginLeft: '2px'
-                                        }}
-                                    >
-                                        📅
-                                    </button>
-                                }
-                            />    
-                        </div>
-
-                        {/* Panorama filter - switch style */}
-                        <span className="show-panorama-only-filter" style={{ fontSize: '9px', color: 'black', marginLeft:'5px', fontWeight:'500'}}>Show panoramas only: </span>
-                        
-                        <label style={{ position: 'relative', display: 'inline-block', width: '34px', height: '18px' }}>
-                            <input
-                                type="checkbox"
-                                checked={this.state.turboFilterIsPano === true}
-                                onChange={(e) => {
-                                    const checked = e.target.checked;
-                                    const val = checked ? true : undefined; // undefined = show all
-                                    this.setState({ turboFilterIsPano: val }, () => {
-                                        this.debouncedTurboFilter();
-                                    });
-                                }}
-                                style={{ opacity: 0, width: 0, height: 0 }}
-                            />
-                            {/* Slider look */}
-                            <span
-                                style={{
-                                    position: 'absolute',
-                                    cursor: 'pointer',
-                                    top: 0,
-                                    left: 0,
-                                    right: 0,
-                                    bottom: 0,
-                                    backgroundColor: this.state.turboFilterIsPano ? '#4CAF50' : '#ccc',
-                                    transition: '0.4s',
-                                    borderRadius: '34px'
-                                }}
-                            >
-                            <span
-                                style={{
-                                    position: 'absolute',
-                                    height: '14px',
-                                    width: '14px',
-                                    left: this.state.turboFilterIsPano ? '18px' : '4px',
-                                    bottom: '2px',
-                                    backgroundColor: 'white',
-                                    transition: '0.4s',
-                                    borderRadius: '50%'
-                                }}
-                            />
-                            </span>
-                        </label>
-
-                        {!this.props.config.turboCreator && this.state.turboFilterUsername && (
-                            <button
-                            onClick={() => {
-                                this.setState({ turboFilterUsername: "" }, () => {
-                                    this.enableTurboCoverageLayer();
-                                });
-                            }}
-                            style={{
-                                    position: 'absolute',
-                                    left: '80px',
-                                    top: '50%',
-                                    transform: 'translateY(-50%)',
-                                    cursor: 'pointer',
-                                    border: 'none',
-                                    padding: 0,
-                                    fontSize: '14px',
-                                    color: '#888',
-                                    background: 'transparent',
-                                    lineHeight: 1,
-                                    height: '16px',
-                                    width: '16px'
-                                }}
-                            title="Clear filter"
-                            >
-                            ×
-                            </button>
-                        )}
-                        {/* Date-based coloring toggle */}
-                        <span className="show-color-by-date-filter" style={{ fontSize: '9px', color: 'black', marginLeft:'5px', fontWeight:'500'}}> Color by date: </span>
-                        
-                        <label style={{ position: 'relative', display: 'inline-block', width: '34px', height: '18px' }}>
-                            <input
-                                type="checkbox"
-                                checked={this.state.turboColorByDate === true}
-                                onChange={(e) => {
-                                    const checked = e.target.checked;
-                                    this.setState({ turboColorByDate: checked }, () => {
-                                        this.debouncedTurboFilter();
-                                    });
-                                }}
-                                style={{ opacity: 0, width: 0, height: 0 }}
-                            />
-                            {/* Slider look */}
-                            <span
-                                style={{
-                                    position: 'absolute',
-                                    cursor: 'pointer',
-                                    top: 0,
-                                    left: 0,
-                                    right: 0,
-                                    bottom: 0,
-                                    backgroundColor: this.state.turboColorByDate ? '#4CAF50' : '#ccc',
-                                    transition: '0.4s',
-                                    borderRadius: '34px'
-                                }}
-                            >
-                                <span
-                                    style={{
-                                        position: 'absolute',
-                                        height: '14px',
-                                        width: '14px',
-                                        left: this.state.turboColorByDate ? '18px' : '4px',
-                                        bottom: '2px',
-                                        backgroundColor: 'white',
-                                        transition: '0.4s',
-                                        borderRadius: '50%'
-                                    }}
-                                />
-                            </span>
-                        </label>
-                        </div>
-                    )}
-                    {/* Traffic Signs Filter Box */}
-                    {this.state.showTrafficSignsFilterBox && (
-                    <div style={{
-                            position: 'relative',
-                            display: 'inline-block',
-                            background: 'orange',
-                            padding: '3px',
-                            borderRadius: '4px',
-                            overflow: 'visible' // allow drop-up menu to show
-                        }}>
-                        <Select
-                        value={this.state.trafficSignsFilterValue} 
-                        onChange={async (selected) => {
-                            this.setState({ trafficSignsFilterValue: selected }, async () => {
-                                if (!this.state.jimuMapView) return;
-
-                                const newName = selected.value; // use .value from the object
-                                let filterCode: string;
+                {/* --- UNIFIED FILTER BAR --- */}
+                {/* Only show this container if at least one filter box is active */}
+                {(this.state.showTurboFilterBox || this.state.showTrafficSignsFilterBox || this.state.showObjectsFilterBox) && (
+                    <div  
+                        className="glass-scroll-container"
+                        style={glassStyles.filterBarContainer}
+                    >
+                    {/* === TURBO MODE FILTER GROUP (GOLD) === */}
+                        {this.state.showTurboFilterBox && (
+                            <div style={glassStyles.filterGroup('#FFD700')}>
                                 
-                                if (newName === "All traffic signs") {
-                                    filterCode = "All traffic signs";
-                                } else {
-                                    const spriteBaseUrl =
-                                    "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
-                                    const jsonResp = await fetch(`${spriteBaseUrl}.json`);
-                                    const spriteData = await jsonResp.json();
-                                    const code = Object.keys(spriteData).find(c => this.formatTrafficSignName(c) === newName);
-                                    filterCode = code || newName;
-                                }
-
-                                this.filterTrafficSignsVTLayer(filterCode);
-
-                                // 2. Reload the FeatureLayer if zoomed in and layer is active
-                                if (this.state.trafficSignsActive && this.state.jimuMapView.view.zoom >= 16) {
-                                    // Remove old FeatureLayer
-                                    if (this.mapillaryTrafficSignsFeatureLayer && this.state.jimuMapView.view.map.layers.includes(this.mapillaryTrafficSignsFeatureLayer)) {
-                                        this.state.jimuMapView.view.map.remove(this.mapillaryTrafficSignsFeatureLayer);
-                                    }
-                                    this.mapillaryTrafficSignsFeatureLayer = null;
-
-                                    // Reload with new filter
-                                    this._cancelTrafficSignsFetch = false;
-                                    await this.loadMapillaryTrafficSignsFromTilesBBox(true);
-                                    if (this.mapillaryTrafficSignsFeatureLayer) {
-                                        this.state.jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
-                                    }
-                                }
-                            });
-                        }}
-                        options={this.state.trafficSignsOptions}
-                        formatOptionLabel={(option) => (
-                            <div style={{ display: 'flex', alignItems: 'center' }}
-                                title={option.label}>
-                                {option.iconUrl && (
-                                    <img
-                                        src={option.iconUrl}
-                                        alt=""
-                                        style={{width: 20, height: 20, marginRight: 8, objectFit: 'contain'}}
+                                {/* Username Input */}
+                                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                    <input
+                                        type="text"
+                                        placeholder="User..."
+                                        disabled={!!this.props.config.turboCreator}
+                                        value={this.state.turboFilterUsername}
+                                        className="glass-input-placeholder" // Use CSS for placeholder color if needed
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            this.setState({ turboFilterUsername: val }, () => {
+                                                this.debouncedTurboFilter();
+                                            });
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter") {
+                                                e.preventDefault();
+                                                this.debouncedTurboFilter.cancel?.();
+                                                const val = this.state.turboFilterUsername.trim();
+                                                if (this.state.jimuMapView && this.state.turboModeActive) {
+                                                    if (val) this.enableTurboCoverageLayer(val);
+                                                    else this.enableTurboCoverageLayer();
+                                                }
+                                            }
+                                        }}
+                                        style={{
+                                            ...glassStyles.glassInput,
+                                                width: '80px', // Reduce default width
+                                                minWidth: '60px', // Allow shrinking
+                                                flexShrink: 1,
+                                            // Dimmed state if locked
+                                            opacity: this.props.config.turboCreator ? 0.6 : 1,
+                                            cursor: this.props.config.turboCreator ? 'not-allowed' : 'text'
+                                        }}
+                                        autoFocus={!this.props.config.turboCreator}
                                     />
-                                )}
-                                <span
-                                    style={{
-                                        whiteSpace: 'nowrap',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        maxWidth: 120
+                                    
+                                    {/* Clear 'X' Button */}
+                                    {!this.props.config.turboCreator && this.state.turboFilterUsername && (
+                                        <button
+                                            onClick={() => {
+                                                this.setState({ turboFilterUsername: "" }, () => {
+                                                    this.enableTurboCoverageLayer();
+                                                });
+                                            }}
+                                            style={{
+                                                position: 'absolute',
+                                                right: '10px',
+                                                background: 'transparent',
+                                                border: 'none',
+                                                color: 'rgba(255,255,255,0.6)',
+                                                fontSize: '10px',
+                                                cursor: 'pointer',
+                                                padding: 0,
+                                                display: 'flex'
+                                            }}
+                                        >
+                                            ✕
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Date Filters */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                    <DatePicker
+                                        selected={this.state.turboFilterStartDate ? new Date(this.state.turboFilterStartDate) : null}
+                                        onChange={(date) => {
+                                            const dateString = date ? date.toISOString().split('T')[0] : '';
+                                            this.setState({ turboFilterStartDate: dateString }, () => this.debouncedTurboFilter());
+                                        }}
+                                        isClearable
+                                        dateFormat="yyyy-MM-dd"
+                                        placeholderText="Start"
+                                        popperPlacement="bottom-end"
+                                        popperProps={{
+                                            strategy: "fixed" // Helps escape overflow:hidden containers
+                                        }}
+                                        portalId="root-portal"
+                                        customInput={
+                                            <button type="button" style={glassStyles.glassIconBtn} title="Start Date">
+                                                📅
+                                            </button>
+                                        }
+                                    />
+                                    <DatePicker
+                                        selected={this.state.turboFilterEndDate ? new Date(this.state.turboFilterEndDate) : null}
+                                        onChange={(date) => {
+                                            const dateString = date ? date.toISOString().split('T')[0] : '';
+                                            this.setState({ turboFilterEndDate: dateString }, () => this.debouncedTurboFilter());
+                                        }}
+                                        isClearable
+                                        dateFormat="yyyy-MM-dd"
+                                        placeholderText="End"
+                                        popperPlacement="bottom-end"
+                                        popperProps={{
+                                            strategy: "fixed"
+                                        }}
+                                        portalId="root-portal"
+                                        customInput={
+                                            <button type="button" style={glassStyles.glassIconBtn} title="End Date">
+                                                📅
+                                            </button>
+                                        }
+                                    />
+                                </div>
+
+                                {/* Vertical Divider */}
+                                <div style={{ width: '1px', height: '16px', background: 'rgba(255,255,255,0.1)', margin: '0 2px' }}></div>
+
+                                {/* Panorama Switch */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <span style={glassStyles.labelSmall}>Is Pano:</span>
+                                    <label style={{ position: 'relative', display: 'inline-block', width: '24px', height: '14px', marginBottom: 0 }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={this.state.turboFilterIsPano === true}
+                                            onChange={(e) => {
+                                                const val = e.target.checked ? true : undefined;
+                                                this.setState({ turboFilterIsPano: val }, () => this.debouncedTurboFilter());
+                                            }}
+                                            style={{ opacity: 0, width: 0, height: 0 }}
+                                        />
+                                        <span style={{
+                                            position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0,
+                                            backgroundColor: this.state.turboFilterIsPano ? '#4CAF50' : 'rgba(255,255,255,0.2)',
+                                            borderRadius: '34px', transition: '0.3s'
+                                        }}></span>
+                                        <span style={{
+                                            position: 'absolute', content: '""', height: '12px', width: '12px',
+                                            left: this.state.turboFilterIsPano ? '12px' : '2px', bottom: '2px',
+                                            backgroundColor: 'white', transition: '0.3s', borderRadius: '50%'
+                                        }}></span>
+                                    </label>
+                                </div>
+
+                                {/* Color By Date Switch */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <span style={glassStyles.labelSmall}>Date Color:</span>
+                                    <label style={{ position: 'relative', display: 'inline-block', width: '28px', height: '16px', marginBottom: 0 }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={this.state.turboColorByDate === true}
+                                            onChange={(e) => {
+                                                this.setState({ turboColorByDate: e.target.checked }, () => this.debouncedTurboFilter());
+                                            }}
+                                            style={{ opacity: 0, width: 0, height: 0 }}
+                                        />
+                                        <span style={{
+                                            position: 'absolute', cursor: 'pointer', top: 0, left: 0, right: 0, bottom: 0,
+                                            backgroundColor: this.state.turboColorByDate ? '#4CAF50' : 'rgba(255,255,255,0.2)',
+                                            borderRadius: '34px', transition: '0.3s'
+                                        }}></span>
+                                        <span style={{
+                                            position: 'absolute', content: '""', height: '12px', width: '12px',
+                                            left: this.state.turboColorByDate ? '14px' : '2px', bottom: '2px',
+                                            backgroundColor: 'white', transition: '0.3s', borderRadius: '50%'
+                                        }}></span>
+                                    </label>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* === TRAFFIC SIGNS FILTER GROUP (ORANGE) === */}
+                        {this.state.showTrafficSignsFilterBox && (
+                            <div style={glassStyles.filterGroup('#FFA500')}>
+                                <Select
+                                    value={this.state.trafficSignsFilterValue}
+                                    onChange={async (selected) => {
+                                        this.setState({ trafficSignsFilterValue: selected }, async () => {
+                                            if (!this.state.jimuMapView) return;
+                                            const newName = selected.value;
+                                            let filterCode = newName === "All traffic signs" ? newName : newName; // Simplified logic, reuse yours if needed
+                                            
+                                            // ... (Your Existing Filter Logic) ...
+                                            if (newName !== "All traffic signs") {
+                                                const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
+                                                const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+                                                const spriteData = await jsonResp.json();
+                                                const code = Object.keys(spriteData).find(c => this.formatTrafficSignName(c) === newName);
+                                                filterCode = code || newName;
+                                            }
+                                            this.filterTrafficSignsVTLayer(filterCode);
+                                            // Reload FeatureLayer logic...
+                                            if (this.state.trafficSignsActive && this.state.jimuMapView.view.zoom >= 16) {
+                                                if (this.mapillaryTrafficSignsFeatureLayer) this.state.jimuMapView.view.map.remove(this.mapillaryTrafficSignsFeatureLayer);
+                                                this.mapillaryTrafficSignsFeatureLayer = null;
+                                                this._cancelTrafficSignsFetch = false;
+                                                await this.loadMapillaryTrafficSignsFromTilesBBox(true);
+                                                if (this.mapillaryTrafficSignsFeatureLayer) this.state.jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
+                                            }
+                                        });
                                     }}
-                                    title={option.label} // show full name on hover
-                                >
-                                    {option.label}
-                                </span>
-                            </div>
-                        )}
-                        menuPlacement="top"  // force drop-up for mobile
-                        styles={{
-                            container: base => ({...base, width: '150px', fontSize: '10px'}),
-                            control: base => ({...base, minHeight: '34px', height: '34px', fontSize: '10px'}),
-                            menu: base => ({...base, zIndex: 10005}),
-                            menuList: base => ({
-                                ...base, 
-                                maxHeight: '250px', 
-                                // Mobile override
-                                '@media only screen and (max-width: 768px)': {
-                                    maxHeight: '180px' 
-                                }
-                            })
-                        }}
-                        />
-                    </div>
-                    )}
-
-                    {/* Objects Filter Box */}
-                    {this.state.showObjectsFilterBox && (
-                    <div style={{
-                            position: 'relative',
-                            display: 'inline-block',
-                            background: 'red',
-                            padding: '3px',
-                            borderRadius: '4px',
-                            overflow: 'visible'
-                        }}>
-                        <Select
-                        value={this.state.objectsFilterValue}      // object, not string
-                        onChange={async (selected) => {
-                            this.setState({ objectsFilterValue: selected }, async () => {
-                                if (!this.state.jimuMapView) return;
-
-                                const newName = selected.value; // safe: from object
-                                let filterCode: string;
-                                if (newName === "All points") {
-                                    filterCode = "All points";
-                                } else {
-                                    const spriteBaseUrl =
-                                    "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
-                                    const jsonResp = await fetch(`${spriteBaseUrl}.json`);
-                                    const spriteData = await jsonResp.json();
-                                    const code = Object.keys(spriteData).find(c => (this.objectNameMap[c] || c) === newName);
-                                    filterCode = code || newName;
-                                }
-
-                                this.filterObjectsVTLayer(filterCode);
-
-                                // 2. Reload the FeatureLayer if zoomed in and layer is active
-                                if (this.state.objectsActive && this.state.jimuMapView.view.zoom >= 16) {
-                                    // Remove old FeatureLayer
-                                    if (this.mapillaryObjectsFeatureLayer && this.state.jimuMapView.view.map.layers.includes(this.mapillaryObjectsFeatureLayer)) {
-                                        this.state.jimuMapView.view.map.remove(this.mapillaryObjectsFeatureLayer);
-                                    }
-                                    this.mapillaryObjectsFeatureLayer = null;
-
-                                    // Reload with new filter
-                                    this._cancelObjectsFetch = false;
-                                    await this.loadMapillaryObjectsFromTilesBBox(true);
-                                    if (this.mapillaryObjectsFeatureLayer) {
-                                        this.state.jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
-                                    }
-                                }
-                            });
-                        }}
-                        options={this.state.objectsOptions}  // array of objects
-                        formatOptionLabel={(option) => (
-                            <div style={{ display: 'flex', alignItems: 'center' }}
-                            title={option.label}>
-                            {option.iconUrl && (
-                                <img
-                                src={option.iconUrl}
-                                alt=""
-                                style={{ width: 20, height: 20, marginRight: 8, objectFit: 'contain'}}
+                                    menuPortalTarget={document.body}
+                                    options={this.state.trafficSignsOptions}
+                                    // Apply Glass Styles (Pass the accent color)
+                                    styles={getGlassSelectStyles('#FFA500')} 
+                                    menuPlacement="top"
+                                    formatOptionLabel={(option) => (
+                                        <div style={{ display: 'flex', alignItems: 'center' }} title={option.label}>
+                                            {option.iconUrl && (
+                                                <img src={option.iconUrl} alt="" style={{ width: 16, height: 16, marginRight: 8, objectFit: 'contain' }} />
+                                            )}
+                                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>{option.label}</span>
+                                        </div>
+                                    )}
                                 />
-                            )}
-                            <span
-                                style={{
-                                    whiteSpace: 'nowrap',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    maxWidth: 120
-                                }}
-                                title={option.label}
-                            >
-                                {option.label}
-                            </span>
                             </div>
                         )}
-                        menuPlacement="top"
-                        styles={{
-                            container: base => ({...base, width: '150px', fontSize: '10px'}),
-                            control: base => ({...base, minHeight: '34px', height: '34px', fontSize: '10px'}),
-                            menu: base => ({...base, zIndex: 10005}),
-                            menuList: base => ({
-                                ...base,
-                                maxHeight: '250px', 
-                                '@media only screen and (max-width: 768px)': {
-                                    maxHeight: '180px' 
-                                }
-                            })
-                        }}
-                        />
+
+                        {/* === OBJECTS FILTER GROUP (RED) === */}
+                        {this.state.showObjectsFilterBox && (
+                            <div style={glassStyles.filterGroup('#FF3C3C')}>
+                                <Select
+                                    value={this.state.objectsFilterValue}
+                                    onChange={async (selected) => {
+                                        this.setState({ objectsFilterValue: selected }, async () => {
+                                            if (!this.state.jimuMapView) return;
+                                            const newName = selected.value;
+                                            let filterCode = newName === "All points" ? newName : newName;
+                                            
+                                            // ... (Your Existing Filter Logic) ...
+                                            if (newName !== "All points") {
+                                                const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
+                                                const jsonResp = await fetch(`${spriteBaseUrl}.json`);
+                                                const spriteData = await jsonResp.json();
+                                                const code = Object.keys(spriteData).find(c => (this.objectNameMap[c] || c) === newName);
+                                                filterCode = code || newName;
+                                            }
+                                            this.filterObjectsVTLayer(filterCode);
+                                            // Reload FeatureLayer logic...
+                                            if (this.state.objectsActive && this.state.jimuMapView.view.zoom >= 16) {
+                                                if (this.mapillaryObjectsFeatureLayer) this.state.jimuMapView.view.map.remove(this.mapillaryObjectsFeatureLayer);
+                                                this.mapillaryObjectsFeatureLayer = null;
+                                                this._cancelObjectsFetch = false;
+                                                await this.loadMapillaryObjectsFromTilesBBox(true);
+                                                if (this.mapillaryObjectsFeatureLayer) this.state.jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
+                                            }
+                                        });
+                                    }}
+                                    menuPortalTarget={document.body}
+                                    options={this.state.objectsOptions}
+                                    // Apply Glass Styles (Pass the accent color)
+                                    styles={getGlassSelectStyles('#FF3C3C')}
+                                    menuPlacement="top"
+                                    formatOptionLabel={(option) => (
+                                        <div style={{ display: 'flex', alignItems: 'center' }} title={option.label}>
+                                            {option.iconUrl && (
+                                                <img src={option.iconUrl} alt="" style={{ width: 16, height: 16, marginRight: 8, objectFit: 'contain' }} />
+                                            )}
+                                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>{option.label}</span>
+                                        </div>
+                                    )}
+                                />
+                            </div>
+                        )}
                     </div>
-                    )}
-                </div>
+                )}
 
                 {/* Splash(Intro) Screen */}
                 {this.state.showIntro && (
                     <div style={{
-                        position: "absolute",
-                        top: 0, left: 0, width: "100%", height: "100%",
-                        background: "rgba(0,0,0,0.9)", 
-                        zIndex: 20000,
-                        display: "flex",
-                        flexDirection: "column", // Stacks Logo -> Spinner -> Text
-                        justifyContent: "center", // Centers vertically
-                        alignItems: "center",     // Centers horizontally
-                        color: "white",
-                        backdropFilter: "blur(5px)",
-                        opacity: this.state.filtersLoaded ? 0 : 1, 
-                        transition: "opacity 0.8s ease-in-out", 
-                        pointerEvents: "none" 
+                        ...glassStyles.splashContainer,
+                        // Zoom/Fade out effect when loaded
+                        opacity: this.state.filtersLoaded ? 0 : 1,
+                        transform: this.state.filtersLoaded ? "scale(1.1)" : "scale(1)"
                     }}>
-                        {/* --- LOGO --- */}
-                        <img className="splash-screen-logo"
-                            src="https://images2.imgbox.com/ec/73/iwr0gH9D_o.gif" 
-                            alt="Logo"
-                            style={{
-                                width: "120px",       // Adjust size as needed
-                                height: "auto",       // Maintains aspect ratio
-                                marginBottom: "30px", // Space between logo and spinner
-                                objectFit: "contain",  // Prevents stretching
-                                borderRadius: "50%"
-                            }}
-                        />
-
-                        {/* Spinner */}
-                        <div className="splash-screen-spinner" style={{
-                            width: "50px", height: "50px",
-                            border: "4px solid rgba(255,255,255,0.2)",
-                            borderTop: "4px solid #35AF6D", 
-                            borderRadius: "50%",
-                            animation: "spin 1s linear infinite",
-                            marginBottom: "20px"
-                        }} />
-                        
-                        {/* Text */}
-                        <div className="splash-screen-text" style={{ 
-                            fontWeight: "700", 
-                            fontSize: "18px", 
-                            letterSpacing: "1px",
-                        }}>
-                            MAPILLARY EXPLORER
-                        </div>
-                        <div style={{ 
-                            fontSize: "11px", 
-                            opacity: 0.7, 
-                            marginTop: "6px", 
-                            fontStyle: "italic" 
-                        }}>
-                            Preparing assets...
+                        <div style={glassStyles.splashCard}>
+                            
+                            {/* --- LOGO AREA WITH SONAR RIPPLES --- */}
+                            <div style={glassStyles.logoWrapper}>
+                                {/* Two ripples for depth */}
+                                <div style={glassStyles.splashRipple} /> 
+                                <div style={{ ...glassStyles.splashRipple, animationDelay: "1s" }} /> 
+                                
+                                <img 
+                                    className="splash-screen-logo"
+                                    src="https://images2.imgbox.com/ec/73/iwr0gH9D_o.gif" 
+                                    alt="Logo"
+                                    style={glassStyles.splashLogo}
+                                />
+                            </div>
+                            
+                            {/* --- SHIMMERING TITLE --- */}
+                            <div className="splash-screen-text" style={glassStyles.splashTitle}>
+                                MAPILLARY Explorer
+                            </div>
+                            
+                            {/* --- GLOWING PROGRESS BAR --- */}
+                            <div style={glassStyles.progressTrack}>
+                                <div style={glassStyles.progressBar} />
+                            </div>
+                            
+                            <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", marginTop: "8px", fontStyle: "italic" }}>
+                                Initializing...
+                            </div>
                         </div>
 
+                        {/* --- ANIMATIONS --- */}
                         <style>{`
-                            @keyframes spin { 
-                                0% { transform: rotate(0deg); } 
-                                100% { transform: rotate(360deg); } 
+                            @keyframes ripple {
+                                0% { transform: scale(1); opacity: 0.8; }
+                                100% { transform: scale(3.5); opacity: 0; }
+                            }
+                            @keyframes float {
+                                0%, 100% { transform: translateY(0px); }
+                                50% { transform: translateY(-6px); }
+                            }
+                            @keyframes shimmer {
+                                0% { background-position: 0% center; }
+                                100% { background-position: 200% center; }
+                            }
+                            @keyframes loading {
+                                0% { left: -50%; }
+                                50% { left: 25%; width: 50%; }
+                                100% { left: 100%; width: 20%; }
                             }
                         `}</style>
                     </div>
@@ -6327,19 +6124,7 @@ export default class Widget extends React.PureComponent<
 
                 {/* Unified control buttons container */}
                 <div
-                    style={{
-                        position: 'absolute',
-                        top: '2px',
-                        left: '2px',
-                        zIndex: 10000,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '6px',
-                        background: 'rgba(0, 0, 0, 0.35)',
-                        padding: '4px 4px 2px 4px',
-                        borderRadius: '8px',
-                        boxShadow: '0 2px 6px rgba(0,0,0,0.4)'
-                    }}
+                    style={glassStyles.container}
                     >
                     {/* Individual buttons (no grouping) */}
                     {[
@@ -6373,24 +6158,7 @@ export default class Widget extends React.PureComponent<
                                 key={i}
                                 title={btn.title}
                                 onClick={btn.onClick}
-                                style={{
-                                    background: btn.active ? btn.bg : btn.bg.replace('0.9', '0.5'),
-                                    color: '#fff',
-                                    width: '26px',
-                                    height: '26px',
-                                    display: 'flex',
-                                    padding: '0',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    borderRadius: '6px',
-                                    border: '1px solid rgba(255,255,255,0.3)',
-                                    cursor: 'pointer',
-                                    boxShadow: btn.active
-                                        ? '0 0 6px rgba(255,255,255,0.4)'
-                                        : '0 2px 4px rgba(0,0,0,0.3)',
-                                    transform: btn.active ? 'scale(1.1)' : 'scale(1)',
-                                    transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
-                                }}
+                                style={glassStyles.getButtonStyle(btn.active, btn.bg)}
                                 onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                 onMouseLeave={e => (e.currentTarget.style.transform = btn.active ? 'scale(1.1)' : 'scale(1)')}
                             >
@@ -6401,13 +6169,7 @@ export default class Widget extends React.PureComponent<
                     }
 
                     {/* Turbo Mode Group */}
-                    <div style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '2px',
-                        borderRadius: '6px',
-                        background: this.state.turboModeActive ? 'rgba(255,215,0,0.2)' : 'rgba(100,100,100,0.1)',
-                    }}>
+                    <div style={glassStyles.groupContainer(this.state.turboModeActive)}>
                         {/* Main Turbo Button */}
                         {!this.props.config.turboModeOnly && (
                             <button className="unified-control-buttons"
@@ -6490,24 +6252,7 @@ export default class Widget extends React.PureComponent<
                                         });
                                     }
                                 }}
-                                style={{
-                                    background: this.state.turboModeActive ? 'rgba(255,215,0,0.9)' : 'rgba(255,215,0,0.5)',
-                                    color: '#fff',
-                                    width: '26px',
-                                    height: '26px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    borderRadius: '6px',
-                                    border: '1px solid rgba(255,255,255,0.3)',
-                                    padding: '0',
-                                    cursor: 'pointer',
-                                    boxShadow: this.state.turboModeActive
-                                        ? '0 0 6px rgba(255,255,255,0.4)'
-                                        : '0 2px 4px rgba(0,0,0,0.3)',
-                                    transform: this.state.turboModeActive ? 'scale(1.1)' : 'scale(1)',
-                                    transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
-                                }}
+                                style={glassStyles.getButtonStyle(this.state.turboModeActive, 'rgba(255, 215, 0, 0.9)')} // Gold
                                 onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                 onMouseLeave={e => (e.currentTarget.style.transform = this.state.turboModeActive ? 'scale(1.1)' : 'scale(1)')}
                             >
@@ -6524,24 +6269,9 @@ export default class Widget extends React.PureComponent<
                                     this.setState(prev => ({ showTurboFilterBox: !prev.showTurboFilterBox }));
                                 }}
                                 style={{
-                                    background: this.state.turboModeActive 
-                                        ? (this.state.showTurboFilterBox ? 'rgba(255,215,0,0.9)' : 'rgba(255,215,0,0.3)')
-                                        : 'rgba(200,200,200,0.3)',
-                                    color: '#fff',
-                                    height: this.props.config.turboModeOnly ? '26px' : '18px',
-                                    width: this.props.config.turboModeOnly ? '26px' : '18px', 
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    padding: '0',
-                                    borderRadius: this.props.config.turboModeOnly ? '6px' : '4px',
-                                    border: '1px solid rgba(255,255,255,0.3)',
-                                    cursor: this.state.turboModeActive ? 'pointer' : 'not-allowed',
-                                    opacity: this.state.turboModeActive ? 1 : 0.5,
-                                    boxShadow: this.state.showTurboFilterBox
-                                        ? '0 0 4px rgba(255,255,255,0.3)'
-                                        : '0 1px 2px rgba(0,0,0,0.2)',
-                                    transition: 'all 0.15s ease',
+                                    ...glassStyles.getButtonStyle(this.state.showTurboFilterBox, 'rgba(255, 215, 0, 0.9)', true),
+                                    opacity: this.state.turboModeActive ? 1 : 0.3,
+                                    cursor: this.state.turboModeActive ? 'pointer' : 'default',
                                     marginTop: '2px'
                                 }}
                             >
@@ -6563,24 +6293,7 @@ export default class Widget extends React.PureComponent<
                             <button className="unified-control-buttons"
                                 title="Toggle Mapillary Traffic Signs Layer"
                                 onClick={this.toggleMapillaryTrafficSigns}
-                                style={{
-                                    background: this.state.trafficSignsActive ? 'rgba(255, 165, 0, 0.9)' : 'rgba(255, 165, 0, 0.5)',
-                                    color: '#fff',
-                                    width: '26px',
-                                    height: '26px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    borderRadius: '6px',
-                                    padding: '0',
-                                    border: '1px solid rgba(255,255,255,0.3)',
-                                    cursor: 'pointer',
-                                    boxShadow: this.state.trafficSignsActive
-                                        ? '0 0 6px rgba(255,255,255,0.4)'
-                                        : '0 2px 4px rgba(0,0,0,0.3)',
-                                    transform: this.state.trafficSignsActive ? 'scale(1.1)' : 'scale(1)',
-                                    transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
-                                }}
+                                style={glassStyles.getButtonStyle(this.state.trafficSignsActive, 'rgba(255, 165, 0, 0.9)')} // Orange
                                 onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                 onMouseLeave={e => (e.currentTarget.style.transform = this.state.trafficSignsActive ? 'scale(1.1)' : 'scale(1)')}
                             >
@@ -6595,24 +6308,9 @@ export default class Widget extends React.PureComponent<
                                     this.setState(prev => ({ showTrafficSignsFilterBox: !prev.showTrafficSignsFilterBox }));
                                 }}
                                 style={{
-                                    background: this.state.trafficSignsActive 
-                                        ? (this.state.showTrafficSignsFilterBox ? 'rgba(255,165,0,0.9)' : 'rgba(255,165,0,0.3)')
-                                        : 'rgba(200,200,200,0.3)',
-                                    color: '#fff',
-                                    width: '20px',
-                                    height: '20px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    borderRadius: '4px',
-                                    padding: '0',
-                                    border: '1px solid rgba(255,255,255,0.3)',
-                                    cursor: this.state.trafficSignsActive ? 'pointer' : 'not-allowed',
-                                    opacity: this.state.trafficSignsActive ? 1 : 0.5,
-                                    boxShadow: this.state.showTrafficSignsFilterBox
-                                        ? '0 0 4px rgba(255,255,255,0.3)'
-                                        : '0 1px 2px rgba(0,0,0,0.2)',
-                                    transition: 'all 0.15s ease',
+                                    ...glassStyles.getButtonStyle(this.state.showTrafficSignsFilterBox, 'rgba(255, 165, 0, 0.9)', true),
+                                    opacity: this.state.trafficSignsActive ? 1 : 0.3,
+                                    cursor: this.state.trafficSignsActive ? 'pointer' : 'default',
                                     marginTop: '2px'
                                 }}
                             >
@@ -6634,24 +6332,7 @@ export default class Widget extends React.PureComponent<
                             <button className="unified-control-buttons"
                                 title="Toggle Mapillary Objects Layer"
                                 onClick={this.toggleMapillaryObjects}
-                                style={{
-                                    background: this.state.objectsActive ? 'rgba(255, 0, 0, 0.9)' : 'rgba(255, 0, 0, 0.5)',
-                                    color: '#fff',
-                                    width: '26px',
-                                    height: '26px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    borderRadius: '6px',
-                                    padding: '0',
-                                    border: '1px solid rgba(255,255,255,0.3)',
-                                    cursor: 'pointer',
-                                    boxShadow: this.state.objectsActive
-                                        ? '0 0 6px rgba(255,255,255,0.4)'
-                                        : '0 2px 4px rgba(0,0,0,0.3)',
-                                    transform: this.state.objectsActive ? 'scale(1.1)' : 'scale(1)',
-                                    transition: 'transform 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease'
-                                }}
+                                style={glassStyles.getButtonStyle(this.state.objectsActive, 'rgba(255, 60, 60, 0.9)')} // Red
                                 onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                 onMouseLeave={e => (e.currentTarget.style.transform = this.state.objectsActive ? 'scale(1.1)' : 'scale(1)')}
                             >
@@ -6666,24 +6347,9 @@ export default class Widget extends React.PureComponent<
                                     this.setState(prev => ({ showObjectsFilterBox: !prev.showObjectsFilterBox }));
                                 }}
                                 style={{
-                                    background: this.state.objectsActive 
-                                        ? (this.state.showObjectsFilterBox ? 'rgba(255,0,0,0.9)' : 'rgba(255,0,0,0.3)')
-                                        : 'rgba(200,200,200,0.3)',
-                                    color: '#fff',
-                                    width: '20px',
-                                    height: '20px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    padding: '0',
-                                    borderRadius: '4px',
-                                    border: '1px solid rgba(255, 255, 255, 0.3)',
-                                    cursor: this.state.objectsActive ? 'pointer' : 'not-allowed',
-                                    opacity: this.state.objectsActive ? 1 : 0.5,
-                                    boxShadow: this.state.showObjectsFilterBox
-                                        ? '0 0 4px rgba(255,255,255,0.3)'
-                                        : '0 1px 2px rgba(0,0,0,0.2)',
-                                    transition: 'all 0.15s ease',
+                                    ...glassStyles.getButtonStyle(this.state.showObjectsFilterBox, 'rgba(255, 60, 60, 0.9)', true),
+                                    opacity: this.state.objectsActive ? 1 : 0.3,
+                                    cursor: this.state.objectsActive ? 'pointer' : 'default',
                                     marginTop: '2px'
                                 }}
                             >
@@ -6700,21 +6366,7 @@ export default class Widget extends React.PureComponent<
                             <button className="unified-control-buttons"
                                 title="Download features in current view (GeoJSON)"
                                 onClick={this.downloadCurrentFeatures}
-                                style={{
-                                    background: 'rgba(0, 123, 255, 0.7)',
-                                    color: '#fff',
-                                    width: '26px',
-                                    height: '26px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    borderRadius: '6px',
-                                    padding: '0',
-                                    border: '1px solid rgba(255,255,255,0.3)',
-                                    cursor: 'pointer',
-                                    boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-                                    transition: 'transform 0.1s ease'
-                                }}
+                                style={glassStyles.getButtonStyle(false, 'rgba(0, 123, 255, 0.7)')} // Uses blue logic but currently inactive style
                                 onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.1)')}
                                 onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
                             >
@@ -6728,7 +6380,7 @@ export default class Widget extends React.PureComponent<
 
         /**
          * FULLSCREEN MODE BLOCK (portal to body)
-         */
+        */
         const fullscreenMode = ReactDOM.createPortal(
             <div
                 style={{
