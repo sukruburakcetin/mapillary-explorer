@@ -3,7 +3,7 @@
   Mapillary Explorer
 </h1>
 
-![Version](https://img.shields.io/badge/version-3.4.0-blue.svg)
+![Version](https://img.shields.io/badge/version-3.5.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![ArcGIS](https://img.shields.io/badge/ArcGIS-Experience%20Builder-007AC2)
 ![React](https://img.shields.io/badge/React-17+-61DAFB)
@@ -160,7 +160,7 @@ Below is an example of the `manifest.json` file used for configuration:
   "name": "mapillary-explorer",
   "label": "Mapillary Explorer",
   "type": "widget",
-  "version": "3.4.0",
+  "version": "3.5.0",
   "exbVersion": "1.18.0",
   "author": "Sukru Burak Cetin",
   "description": "Mapillary Explorer is a custom ArcGIS Experience Builder widget that brings street-level Mapillary imagery directly into your web maps.",
