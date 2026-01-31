@@ -10,7 +10,7 @@
 ![Esri Enterprise](https://img.shields.io/badge/Esri-Enterprise_12.0+-61DAFB)
 ![Esri](https://img.shields.io/badge/Esri-ExB_Developer_Edition_1.18-61BAFB)
 
-A high-performance custom widget for **ArcGIS Experience Builder** that seamlessly integrates Mapillary street-level imagery with ArcGIS maps. Designed for speed and interactivity, this widget allows users to explore image sequences, visualize high-volume coverage data in real-time ("Turbo Mode"), and interact with detected map features like traffic signs and infrastructure assets.
+A high-performance custom widget for **ArcGIS Experience Builder** that seamlessly integrates **Mapillary imagery** with ArcGIS maps. Designed for speed and interactivity, this widget allows users to explore image sequences, visualize high-volume coverage data in real-time, and interact with detected map features like traffic signs and infrastructure assets.
 
 ## Table of Contents
 
@@ -31,7 +31,7 @@ A high-performance custom widget for **ArcGIS Experience Builder** that seamless
 ### New Settings Panel Capabilities:
 *  **Turbo Mode Only:** Lock the widget into coverage analysis mode and disable standard navigation.
 *  **Default Creator:** Pre-fill the username filter to load specific user data on startup automatically.
-*  **Force Coverage Layer:** Keep the Mapillary street geometry layer always visible.
+*  **Force Coverage Layer:** Keep the Mapillary imagery geometry layer always visible.
 *  **UI Customization:** Hide the "Traffic Signs" or "Mapillary Objects" buttons to declutter the interface.
 
 ### Turbo Mode (High-Speed Coverage)
@@ -85,8 +85,8 @@ However, if you want to view it on ArcGIS Developer Edition (localhost:3001), fo
 ### 1. Prepare the Widget Folder
 
 1.1. Copy the exported release version of the widget folder (e.g., `mapillary-explorer`) to your web server or IIS directory.  
-   Example path:
-   ```
+Example path:
+```
    C:\inetpub\wwwroot\mapillary-explorer\
 ```
 
@@ -169,7 +169,8 @@ Below is an example of the `manifest.json` file used for configuration:
   "version": "3.6.0",
   "exbVersion": "1.18.0",
   "author": "Sukru Burak Cetin",
-  "description": "Mapillary Explorer is a custom ArcGIS Experience Builder widget that brings street-level Mapillary imagery directly into your web maps.",
+  "description": "Mapillary Explorer is a custom ArcGIS Experience Builder widget that brings
+    Mapillary imagery directly into your web maps.",
   "copyright": "",
   "license": "http://www.apache.org/licenses/LICENSE-2.0",
   "dependency": [
@@ -188,17 +189,10 @@ Below is an example of the `manifest.json` file used for configuration:
   }
 }
 ```
-
----
-
-### Mapillary Explorer Demo Video
-
+## Mapillary Explorer Demo Video
 [![Watch the video](https://img.youtube.com/vi/ypu2tmyYTMg/hqdefault.jpg)](https://www.youtube.com/watch?v=ypu2tmyYTMg)
 
----
+## 📦 [Download Built Widget Latest Version](https://github.com/sukruburakcetin/mapillary-explorer/releases/latest)
 
-### 📦 [Download Built Widget Latest Version](https://github.com/sukruburakcetin/mapillary-explorer/releases/latest)
----
-### License
-
+## License
 This project is licensed under the **MIT License**.
