@@ -3,11 +3,12 @@
   Mapillary Explorer
 </h1>
 
-![Version](https://img.shields.io/badge/version-3.5.0-blue.svg)
+![Version](https://img.shields.io/badge/version-3.6.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![ArcGIS](https://img.shields.io/badge/ArcGIS-Experience%20Builder-007AC2)
-![React](https://img.shields.io/badge/React-17+-61DAFB)
-![Esri Enterprise](https://img.shields.io/badge/Esri-Enterprise_12.2+-61DAFB)
+![React](https://img.shields.io/badge/React-18-61DAFB)
+![Esri Enterprise](https://img.shields.io/badge/Esri-Enterprise_12.0+-61DAFB)
+![Esri](https://img.shields.io/badge/Esri-ExB_Developer_Edition_1.18-61BAFB)
 
 A high-performance custom widget for **ArcGIS Experience Builder** that seamlessly integrates Mapillary street-level imagery with ArcGIS maps. Designed for speed and interactivity, this widget allows users to explore image sequences, visualize high-volume coverage data in real-time ("Turbo Mode"), and interact with detected map features like traffic signs and infrastructure assets.
 
@@ -165,7 +166,7 @@ Below is an example of the `manifest.json` file used for configuration:
   "name": "mapillary-explorer",
   "label": "Mapillary Explorer",
   "type": "widget",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "exbVersion": "1.18.0",
   "author": "Sukru Burak Cetin",
   "description": "Mapillary Explorer is a custom ArcGIS Experience Builder widget that brings street-level Mapillary imagery directly into your web maps.",
