@@ -27,13 +27,6 @@ export interface Config {
     * Accessed in widget via: this.props.config.turboCreator
   */
   turboCreator?: string; 
-  
-  /**
-    * Optional border color for the Mapillary viewer or widget container.
-    * Useful for visual integration with the host application theme.
-    * Accessed in widget via: this.props.config.borderColor
-  */
-  borderColor?: string;
 
   /**
     * If true, synchronizes the map view with the currently displayed image.

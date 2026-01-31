@@ -60,13 +60,6 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     });
   }
 
-  onBorderColorChange = (color: string) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      config: this.props.config.set('borderColor', color)
-    });
-  }
-
   onToggleHideLegend = (evt: React.ChangeEvent<HTMLInputElement>) => {
     this.props.onSettingChange({
       id: this.props.id,
@@ -174,17 +167,10 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
             </SettingRow>
         </SettingSection>
 
-        <SettingSection title="Appearance Settings">
-          <SettingRow label="Frame Color">
-            <ColorPicker 
-              color={config.borderColor || '#ffffff00'} 
-              onChange={this.onBorderColorChange} 
-            />
-          </SettingRow>
-          
+        <SettingSection title="Appearance Settings">    
           <SettingRow>
             <span className="text-muted" style={{ fontSize: '12px', marginTop: '5px' }}>
-              You can customize your widget's ambient light to match your theme.
+              Toggle UI elements and action tools to simplify the interface.
             </span>
           </SettingRow>
 
