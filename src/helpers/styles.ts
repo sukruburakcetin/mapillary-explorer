@@ -376,13 +376,13 @@ export const glassStyles = {
         padding: "3px 4px", // Reduced padding
         borderRadius: "20px",
         border: "1px solid rgba(255, 255, 255, 0.15)",
-        boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+        boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
         zIndex: 10000,
         display: "flex",
         alignItems: "center",
         gap: "4px", // Reduced gap
         justifyContent: "center",
-        marginTop: "5px",
+        marginTop: "2px",
         overflow: "hidden" // Prevent spillover
     } as React.CSSProperties,
 
@@ -446,17 +446,43 @@ export const glassStyles = {
         justifyContent: 'center', // Centers items when stacked
         gap: '6px',              // Vertical/Horizontal gap between chips
         // Glass Style
-        background: "rgba(20, 20, 30, 0.7)", 
+        background: "rgba(20, 20, 30, 0.65)", 
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         padding: "2px",
+        marginTop: "2px",
         border: "1px solid rgba(255, 255, 255, 0.1)",
-        boxShadow: "0 4px 15px rgba(0,0,0,0.3)",
+        borderRadius : "20px",
+        boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
         pointerEvents: "auto",
         zIndex: 10001,           // Ensured bar is above map but below dropdowns
         // Ensured standard behavior (No scrolling)
         overflow: "visible"
     } as React.CSSProperties,
+
+    // filterBarContainer: {
+    //     position: 'absolute',
+    //     bottom: '10px',
+    //     left: '50%',
+    //     transform: 'translateX(-50%)',
+    //     display: 'flex',
+    //     flexWrap: 'wrap',
+    //     alignItems: 'center',
+    //     justifyContent: 'center',
+    //     gap: '6px',
+    //     width: 'auto',
+    //     maxWidth: 'calc(100% - 20px)', 
+    //     background: "rgba(20, 20, 30, 0.8)", 
+    //     backdropFilter: "blur(15px)",
+    //     WebkitBackdropFilter: "blur(15px)",
+    //     borderRadius: "16px",
+    //     padding: "6px 10px",
+    //     border: "1px solid rgba(255, 255, 255, 0.15)",
+    //     boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    //     pointerEvents: "auto",
+    //     zIndex: 10005,
+    //     overflow: "visible"
+    // } as React.CSSProperties,
 
     // Helper for the colored sections (Turbo/Signs/Objects)
     filterGroup: (baseColor: string): React.CSSProperties => ({
@@ -464,7 +490,6 @@ export const glassStyles = {
         display: 'flex',
         alignItems: 'center',
         gap: '6px',
-        padding: '3px 6px',
         borderRadius: '8px',
         // Tinted Glass background based on the feature color
         background: `linear-gradient(135deg, ${baseColor}1A 0%, ${baseColor}05 100%)`, // ~10% opacity
@@ -656,32 +681,264 @@ export const mobileOverrideStyles = `
         .mapillary-sequence-playback,
         .widget-mapillary.jimu-widget 
         .mapillary-sequence-timeline {
-        transform: translateX(-50%) scale(0.75) !important;
+            transform: translateX(-50%) scale(0.75) !important;
+        }
+    }
+
+    /* When the widget is narrower than 350px (Small) */
+    @container (max-width: 350px) {
+        .unified-control-buttons-mapped, 
+        .unified-control-buttons {
+            width: 24px !important;
+            height: 24px !important;
+        }
+        .unified-control-buttons-filters {
+            width: 18px !important;
+            height: 18px !important;
+        }
+        /* Scale down the icons inside */
+        .unified-control-buttons-mapped svg, 
+        .unified-control-buttons svg {
+            width: 16px !important;
+            height: 16px !important;
+        }
+        .unified-control-buttons-filters svg {
+            width: 12px !important;
+            height: 12px !important;
+        }
+    }
+
+    /* When the widget is narrower than 250px (Tiny) */
+    @container (max-width: 250px) {
+        .unified-control-buttons-mapped, 
+        .unified-control-buttons {
+            width: 20px !important;
+            height: 20px !important;
+            border-radius: 6px !important;
+        }
+        .unified-control-buttons-filters {
+            width: 16px !important;
+            height: 16px !important;
+        }
+        .unified-control-buttons-mapped svg, 
+        .unified-control-buttons svg {
+            width: 14px !important;
+            height: 14px !important;
+        }
+    }
+    
+    .p-1 { padding: 0px !important; }
+
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] {
+        border: none !important;
+        box-shadow: none !important;
+        background: transparent !important;
+    }
+
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .jimu-floating-panel-content {
+        background: transparent !important;
+    }
+
+    /* This removes the 0.25rem padding that Experience Builder forces on widgets */
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .widget-content.p-1 {
+        padding: 0 !important;
+    }
+
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .widget-content.p-1 {
+        padding: 0 !important;
+    }
+
+
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resizer-0.bottom-right {
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 15px !important;
+        height: 15px !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resize-handle {
+        position: absolute !important;
+        right: 0px !important;
+        bottom: 0px !important;
+        padding: 0 !important;
+    }
+
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resize-handle svg path {
+        fill: #35AF6D !important;
+    }
+
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resizer-0.bottom-right:hover svg path{
+        fill: #82e8ec !important;
+    }
+
+    /* 1. The Sidebar Container */
+    .glass-control-panel {
+        /* If height is very small, allow internal scrolling as a last resort */
+        max-height: calc(100% - 10px) !important;
+        overflow-y: auto !important;
+        scrollbar-width: none;
+        gap: 4px !important; 
+        padding: 4px !important;
+    }
+    
+    .glass-control-panel::-webkit-scrollbar { display: none; }
+
+    /* 2. DYNAMIC SCALING:
+       We use 'cqh' (Container Query Height). 
+       The buttons will automatically become 6% of the widget's height, 
+       but never smaller than 18px or larger than 28px. 
+    */
+    .glass-control-panel .unified-control-buttons,
+    .glass-control-panel .unified-control-buttons-mapped {
+        width: clamp(22px, 6cqh, 28px) !important;
+        height: clamp(22px, 6cqh, 28px) !important;
+        flex-shrink: 0 !important;
+    }
+
+    /* Scaling the small filter buttons */
+    .glass-control-panel .unified-control-buttons-filters {
+        width: clamp(18px, 4cqh, 22px) !important;
+        height: clamp(18px, 4cqh, 22px) !important;
+        flex-shrink: 0 !important;
+    }
+
+    /* 3. Scale the Icons automatically */
+    .glass-control-panel svg {
+        width: 70% !important;
+        height: 70% !important;
+    }
+
+    /* 4. Tighten gaps inside button groups (Turbo, Signs, etc.) */
+    .glass-control-panel > div {
+        gap: 2px !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+        
+    /* 1. Fluid scaling for the "Click a point" and "Loading" cards */
+    .initial-state-card, 
+    .loading-card, 
+    .no-image-card {
+        /* Padding scales with widget size: Min 10px, Max 30px */
+        padding: clamp(10px, 5cqh, 30px) clamp(12px, 5cqw, 40px) !important;
+        gap: clamp(4px, 2cqh, 16px) !important;
+        max-width: 85% !important;
+        border-radius: clamp(8px, 3cqmin, 20px) !important;
+    }
+
+    /* 2. Fluid Typography (Primary Text) */
+    .initial-state-card span:first-of-type,
+    .loading-card div,
+    .no-image-card span {
+        font-size: clamp(10px, 4cqmin, 14px) !important;
+        line-height: 1.2 !important;
+    }
+
+    /* 3. Fluid Typography (Secondary/Subtitle Text) */
+    .initial-state-card span:last-of-type {
+        font-size: clamp(8px, 3cqmin, 11px) !important;
+    }
+
+    /* 4. Responsive Spinner Sizing */
+    .loading-card .premium-spinner,
+    .loading-card .turbo-spinner {
+        width: clamp(20px, 8cqmin, 40px) !important;
+        height: clamp(20px, 8cqmin, 40px) !important;
+        border-width: clamp(2px, 0.8cqmin, 4px) !important;
+    }
+
+    /* 5. Responsive Icon Sizing (No Image icon, etc) */
+    .no-image-card svg,
+    .initial-state-card svg {
+        width: clamp(18px, 6cqmin, 32px) !important;
+        height: clamp(18px, 6cqmin, 32px) !important;
+    }
+
+    /* 6. If the widget is too short, hide the subtitle to save space */
+    @container (max-height: 200px) {
+        .initial-state-card span:last-of-type {
+            display: none !important;
+        }
+        .initial-state-card, .loading-card {
+            padding: 8px !important;
+        }
+    }
+
+    /* 1. Fluid scaling for the Legend Container */
+    .legend-container {
+        padding: clamp(2px, 1.5cqmin, 6px) !important;
+        gap: clamp(1px, 1cqh, 4px) !important;
+        border-radius: clamp(4px, 2cqmin, 8px) !important;
+        /* Pin it tighter to the corner when small */
+        bottom: clamp(2px, 2cqh, 10px) !important;
+        left: clamp(2px, 2cqw, 5px) !important;
+        max-width: 40% !important; /* Prevent it from covering the center */
+    }
+
+    /* 2. Shrink or Hide the "Legend" Header */
+    .legend-container div[style*="opacity: 0.4"] {
+        font-size: clamp(6px, 2cqmin, 8px) !important;
+        margin-bottom: 1px !important;
+        padding-bottom: 1px !important;
+    }
+    
+    /* Hide the header completely if height is very small */
+    @container (max-height: 330px) {
+        .legend-container div[style*="opacity: 0.4"] {
+            display: none !important;
+        }
+        .legend-container{
+            bottom: 0 !important;
+        }
+    }
+
+    /* 3. Fluid scaling for Legend Text */
+    .legend-container span[style*="font-size"] {
+        font-size: clamp(7px, 2.5cqmin, 10px) !important;
+    }
+
+    /* 4. Fluid scaling for Legend Circles (the color dots) */
+    .legend-container span[style*="border-radius: 50%"] {
+        width: clamp(6px, 2.5cqmin, 10px) !important;
+        height: clamp(6px, 2.5cqmin, 10px) !important;
+        margin-right: 2px !important;
+    }
+
+    /* 5. Shrink the "Clear Cache" button significantly */
+    .legend-container button {
+        font-size: clamp(6px, 2cqmin, 8px) !important;
+        padding: 1px 0 !important;
+        margin-top: 2px !important;
+    }
+    
+    /* Hide the button if space is critical */
+    @container (max-height: 250px) {
+        .legend-container button {
+            display: none !important;
         }
     }
 
     @media (max-width: 768px) {
-            .widget-mapillary input[type="date"]::-webkit-datetime-edit { display: none !important; }
-            .show-panorama-only-filter { font-size: 0 !important; }
-            .show-panorama-only-filter::after { content: "Panoramas:"; font-size: 9px !important; }
-            .show-color-by-date-filter { font-size: 0 !important; }
-            .show-color-by-date-filter::after { content: "CBD:"; font-size: 9px !important; }
-            .react-datepicker { transform: scale(0.6) !important; }
-            .react-datepicker-popper { height: 230px !important; }
-            .unified-control-buttons{ height: 20px !important; width: 20px !important; font-size: 12px !important; }
-            .unified-control-buttons-mapped{ height: 21px !important; width: 21px !important; font-size: 12px !important; }
-            .unified-control-buttons-filters{ height: 16px !important; width: 16px !important; font-size: 10px !important; }
-            .unified-button-controls-svg-icons{ height: 12px !important; width: 12px !important; }
-            .info-box{ font-size: 8px !important; max-width: 110px !important; }
-            .legend-container { display: none !important; }
-            .esri-popup__main-container { width: 250px !important; top: 8% !important; left: 17% !important; max-height:42% !important; }
-            .splash-screen-spinner { width: 25px !important; height: 25px !important; }
-            .splash-screen-logo { margin-bottom: 15px !important; }
-            .splash-screen-text { font-size: 10px !important; }
-            .minimap-container { 
+        .widget-mapillary input[type="date"]::-webkit-datetime-edit { display: none !important; }
+        .show-panorama-only-filter { font-size: 0 !important; }
+        .show-panorama-only-filter::after { content: "Panoramas:"; font-size: 9px !important; }
+        .show-color-by-date-filter { font-size: 0 !important; }
+        .show-color-by-date-filter::after { content: "CBD:"; font-size: 9px !important; }
+        .react-datepicker { transform: scale(0.6) !important; }
+        .react-datepicker-popper { height: 230px !important; }
+
+        .info-box{ font-size: 8px !important; max-width: 110px !important; }
+        .legend-container { display: none !important; }
+        .esri-popup__main-container { width: 250px !important; top: 8% !important; left: 17% !important; max-height:42% !important; }
+        .splash-screen-spinner { width: 25px !important; height: 25px !important; }
+        .splash-screen-logo { margin-bottom: 15px !important; }
+        .splash-screen-text { font-size: 10px !important; }
+        .minimap-container { 
                 top: 50px !important; left: 50% !important; right: auto !important; transform: translateX(-50%) !important; 
                 width: 90% !important; max-width: 350px !important; height: 150px !important; 
-            }
-            .warning-message-container { font-size: 8px !important; }
         }
+        .warning-message-container { font-size: 8px !important; }
+    }
 `;

@@ -5,7 +5,6 @@ import ReactDOM from "react-dom";
 import * as webMercatorUtils from "esri/geometry/support/webMercatorUtils";
 import Pbf from 'pbf';
 import { VectorTile } from '@mapbox/vector-tile';
-import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import Select from 'react-select';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
@@ -2312,7 +2311,7 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        const [FeatureLayer] = await loadArcGISJSAPIModules(["esri/layers/FeatureLayer"]);
+        const { FeatureLayer } = this.ArcGISModules;
 
         const fields = [
             { name: "id", type: "string", alias: "ID" },
@@ -2554,7 +2553,7 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        const [FeatureLayer] = await loadArcGISJSAPIModules(["esri/layers/FeatureLayer"]);
+        const { FeatureLayer } = this.ArcGISModules;
 
         const fields = [
             { name: 'id', type: 'string', alias: 'ID' },
@@ -3672,6 +3671,9 @@ export default class Widget extends React.PureComponent<
             this.setState({ turboYearLegend: [] });
         }
 
+        // Extract FeatureLayer from the modules loaded in componentDidMount
+        const { FeatureLayer } = this.ArcGISModules;
+
         // --- Layer Creation ---
         this.turboCoverageLayer = new FeatureLayer({
             id: "turboCoverage",
@@ -3862,18 +3864,20 @@ export default class Widget extends React.PureComponent<
     // and attaches resize/fullscreen event listeners.
     async componentDidMount() {
         try {
-            const [Graphic, Point, SimpleMarkerSymbol, VectorTileLayer] =
+            const [Graphic, Point, SimpleMarkerSymbol, VectorTileLayer, FeatureLayer] =
                 await loadArcGISJSAPIModules([
                     "esri/Graphic",
                     "esri/geometry/Point",
                     "esri/symbols/SimpleMarkerSymbol",
-                    "esri/layers/VectorTileLayer"
+                    "esri/layers/VectorTileLayer",
+                    "esri/layers/FeatureLayer"
                 ]);
             this.ArcGISModules = {
                 Graphic, 
                 Point, 
                 SimpleMarkerSymbol, 
-                VectorTileLayer
+                VectorTileLayer,
+                FeatureLayer
             };
             this.log("ArcGIS API modules loaded");
 
@@ -5282,10 +5286,7 @@ export default class Widget extends React.PureComponent<
     //   - Info box + legend (only when image loaded)
     render() {
         const mapWidgetId = this.props.useMapWidgetIds?.[0];
-
-        // Set default to #37d582 to match settings
-        const brdColor = this.props.config.borderColor || '#ffffff00';
-
+        
         // This is the viewer container. It will be placed either in normal widget or fullscreen portal.
         const viewerArea = (
             <div
@@ -5296,11 +5297,13 @@ export default class Widget extends React.PureComponent<
                     background: "#000",
                     boxSizing: "border-box"
                 }}>
+
                 {/* This empty div is controlled by Mapillary, React will never touch its internals */}
                 <div
                     ref={this.viewerContainer}
                     style={{width: "100%", height: "100%", position: "relative"}}
                 />
+
                 {/* Legend Section */}
                 {this.state.imageId && !this.props.config.hideLegend && (
                     <div className="legend-container" 
@@ -5314,18 +5317,17 @@ export default class Widget extends React.PureComponent<
                             padding: "4px 6px", // Uniform padding
                             boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
                             border: "1px solid rgba(255,255,255,0.1)",
-                            zIndex: 10002,
+                            zIndex: 999,
                             pointerEvents: "auto",
                             display: "flex",
                             flexDirection: "column"
                         }}
                     >
-                        {/* Header - Moved to Top */}
                         <div style={{
                             opacity: 0.4,
                             fontSize: '8px',
                             fontWeight: 700,
-                            marginBottom: '2px', // Gap before items start
+                            marginBottom: '2px',
                             color: 'white',
                             textTransform: 'uppercase',
                             letterSpacing: '1px',
@@ -5356,13 +5358,14 @@ export default class Widget extends React.PureComponent<
                     </div>
                 )}
 
+                {/* --- TURBO LOADING IMAGERY REGION --- */}
                 {this.state.turboLoading && (
                     <div style={glassStyles.loadingContainer}>
                         {/* Use the new Compact Card style */}
-                        <div style={glassStyles.compactLoadingCard}>
+                        <div className="loading-card" style={glassStyles.compactLoadingCard}>
                             
                             {/* Turbo Gold Spinner - slightly smaller override (32px) */}
-                            <div style={{
+                            <div className="turbo-spinner" style={{
                                 ...glassStyles.turboSpinner,
                                 width: "32px",
                                 height: "32px",
@@ -5384,12 +5387,13 @@ export default class Widget extends React.PureComponent<
                     </div>
                 )}
 
+                {/* --- LOADING IMAGERY REGION --- */}
                 {this.state.isLoading && (
                     <div style={glassStyles.loadingContainer}>
-                        <div style={glassStyles.loadingCard}>
+                        <div className="loading-card" style={glassStyles.loadingCard}>
                             
                             {/* Premium Glowing Spinner */}
-                            <div style={glassStyles.loadingSpinner} />
+                            <div className="premium-spinner" style={glassStyles.loadingSpinner} />
                             
                             {/* Text */}
                             <div style={glassStyles.loadingText}>
@@ -5407,9 +5411,10 @@ export default class Widget extends React.PureComponent<
                     </div>
                 )}
 
+                {/* --- CLICK A POINT TO VIEW IMAGERY REGION --- */}
                 {!this.state.imageId && !this.state.isLoading && !this.state.turboLoading && !this.state.noImageMessageVisible && (
                     <div style={glassStyles.initialStateContainer}>
-                        <div style={glassStyles.initialStateCard}>
+                        <div className="initial-state-card" style={glassStyles.initialStateCard}>
                             <span style={glassStyles.initialStateTextPrimary}>
                                 Click a point to view imagery
                             </span>
@@ -5420,9 +5425,10 @@ export default class Widget extends React.PureComponent<
                     </div>
                 )}
 
+                {/* --- NO IMAGE VISIBLE WARNING REGION --- */}
                 {this.state.noImageMessageVisible && (
                     <div style={glassStyles.noImageContainer}>
-                        <div style={glassStyles.noImageContent}>
+                        <div className="no-image-card" style={glassStyles.noImageContent}>
                             {/* Icon with a subtle glow */}
                             <div style={{ 
                                 filter: "drop-shadow(0 0 8px rgba(255,255,255,0.3))",
@@ -5543,10 +5549,12 @@ export default class Widget extends React.PureComponent<
                     position: "relative",
                     display: "flex",
                     flexDirection: "column",
-                    border: brdColor !== 'transparent' ? `3px solid ${brdColor}` : 'none',
+                    border: 'none', 
                     boxSizing: 'border-box',
                     overflow: 'hidden',
-                    containerType: 'inline-size'  
+                    margin: '0',
+                    padding: '0',
+                    containerType: 'size'
                 }}
                 >
                 {/* wraping this logic component in display:none so it doesn't break the Flex layout */}
@@ -5785,31 +5793,28 @@ export default class Widget extends React.PureComponent<
                                 color: "#37d582",
                                 textAlign: "center"
                             }}>
-                                User: {this.props.config.turboCreator}
+                                {this.props.config.turboCreator}
                             </div>
                         )}
                     </div>
                 )}
                 
                 {/* --- UNIFIED FILTER BAR --- */}
-                {/* Only show this container if at least one filter box is active */}
                 {(this.state.showTurboFilterBox || this.state.showTrafficSignsFilterBox || this.state.showObjectsFilterBox) && (
                     <div  
                         className="glass-scroll-container"
                         style={glassStyles.filterBarContainer}
                     >
-                    {/* === TURBO MODE FILTER GROUP (GOLD) === */}
+                        {/* === TURBO MODE FILTER GROUP (GOLD) === */}
                         {this.state.showTurboFilterBox && (
                             <div style={glassStyles.filterGroup('#FFD700')}>
-                                
-                                {/* Username Input */}
                                 <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                                     <input
                                         type="text"
                                         placeholder="User..."
                                         disabled={!!this.props.config.turboCreator}
                                         value={this.state.turboFilterUsername}
-                                        className="glass-input-placeholder" // Use CSS for placeholder color if needed
+                                        className="glass-input-placeholder"
                                         onChange={(e) => {
                                             const val = e.target.value;
                                             this.setState({ turboFilterUsername: val }, () => {
@@ -5829,17 +5834,14 @@ export default class Widget extends React.PureComponent<
                                         }}
                                         style={{
                                             ...glassStyles.glassInput,
-                                                width: '80px', // Reduce default width
-                                                minWidth: '60px', // Allow shrinking
-                                                flexShrink: 1,
-                                            // Dimmed state if locked
+                                            width: '80px', 
+                                            minWidth: '60px', 
+                                            flexShrink: 1,
                                             opacity: this.props.config.turboCreator ? 0.6 : 1,
                                             cursor: this.props.config.turboCreator ? 'not-allowed' : 'text'
                                         }}
                                         autoFocus={!this.props.config.turboCreator}
                                     />
-                                    
-                                    {/* Clear 'X' Button */}
                                     {!this.props.config.turboCreator && this.state.turboFilterUsername && (
                                         <button
                                             onClick={() => {
@@ -5864,7 +5866,6 @@ export default class Widget extends React.PureComponent<
                                     )}
                                 </div>
 
-                                {/* Date Filters */}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
                                     <DatePicker
                                         selected={this.state.turboFilterStartDate ? new Date(this.state.turboFilterStartDate) : null}
@@ -5876,15 +5877,9 @@ export default class Widget extends React.PureComponent<
                                         dateFormat="yyyy-MM-dd"
                                         placeholderText="Start"
                                         popperPlacement="bottom-end"
-                                        popperProps={{
-                                            strategy: "fixed" // Helps escape overflow:hidden containers
-                                        }}
+                                        popperProps={{ strategy: "fixed" }}
                                         portalId="root-portal"
-                                        customInput={
-                                            <button type="button" style={glassStyles.glassIconBtn} title="Start Date">
-                                                📅
-                                            </button>
-                                        }
+                                        customInput={<button type="button" style={glassStyles.glassIconBtn} title="Start Date">📅</button>}
                                     />
                                     <DatePicker
                                         selected={this.state.turboFilterEndDate ? new Date(this.state.turboFilterEndDate) : null}
@@ -5896,22 +5891,14 @@ export default class Widget extends React.PureComponent<
                                         dateFormat="yyyy-MM-dd"
                                         placeholderText="End"
                                         popperPlacement="bottom-end"
-                                        popperProps={{
-                                            strategy: "fixed"
-                                        }}
+                                        popperProps={{ strategy: "fixed" }}
                                         portalId="root-portal"
-                                        customInput={
-                                            <button type="button" style={glassStyles.glassIconBtn} title="End Date">
-                                                📅
-                                            </button>
-                                        }
+                                        customInput={<button type="button" style={glassStyles.glassIconBtn} title="End Date">📅</button>}
                                     />
                                 </div>
 
-                                {/* Vertical Divider */}
                                 <div style={{ width: '1px', height: '16px', background: 'rgba(255,255,255,0.1)', margin: '0 2px' }}></div>
 
-                                {/* Panorama Switch */}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                     <span style={glassStyles.labelSmall}>Is Pano:</span>
                                     <label style={{ position: 'relative', display: 'inline-block', width: '24px', height: '14px', marginBottom: 0 }}>
@@ -5930,14 +5917,13 @@ export default class Widget extends React.PureComponent<
                                             borderRadius: '34px', transition: '0.3s'
                                         }}></span>
                                         <span style={{
-                                            position: 'absolute', content: '""', height: '12px', width: '12px',
-                                            left: this.state.turboFilterIsPano ? '12px' : '2px', bottom: '2px',
+                                            position: 'absolute', height: '12px', width: '12px',
+                                            left: this.state.turboFilterIsPano ? '14px' : '2px', bottom: '2px',
                                             backgroundColor: 'white', transition: '0.3s', borderRadius: '50%'
                                         }}></span>
                                     </label>
                                 </div>
 
-                                {/* Color By Date Switch */}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                     <span style={glassStyles.labelSmall}>Date Color:</span>
                                     <label style={{ position: 'relative', display: 'inline-block', width: '28px', height: '16px', marginBottom: 0 }}>
@@ -5955,7 +5941,7 @@ export default class Widget extends React.PureComponent<
                                             borderRadius: '34px', transition: '0.3s'
                                         }}></span>
                                         <span style={{
-                                            position: 'absolute', content: '""', height: '12px', width: '12px',
+                                            position: 'absolute', height: '12px', width: '12px',
                                             left: this.state.turboColorByDate ? '14px' : '2px', bottom: '2px',
                                             backgroundColor: 'white', transition: '0.3s', borderRadius: '50%'
                                         }}></span>
@@ -5973,9 +5959,7 @@ export default class Widget extends React.PureComponent<
                                         this.setState({ trafficSignsFilterValue: selected }, async () => {
                                             if (!this.state.jimuMapView) return;
                                             const newName = selected.value;
-                                            let filterCode = newName === "All traffic signs" ? newName : newName; // Simplified logic, reuse yours if needed
-                                            
-                                            // ... (Your Existing Filter Logic) ...
+                                            let filterCode = newName === "All traffic signs" ? newName : newName;
                                             if (newName !== "All traffic signs") {
                                                 const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_signs/package_signs";
                                                 const jsonResp = await fetch(`${spriteBaseUrl}.json`);
@@ -5984,7 +5968,6 @@ export default class Widget extends React.PureComponent<
                                                 filterCode = code || newName;
                                             }
                                             this.filterTrafficSignsVTLayer(filterCode);
-                                            // Reload FeatureLayer logic...
                                             if (this.state.trafficSignsActive && this.state.jimuMapView.view.zoom >= 16) {
                                                 if (this.mapillaryTrafficSignsFeatureLayer) this.state.jimuMapView.view.map.remove(this.mapillaryTrafficSignsFeatureLayer);
                                                 this.mapillaryTrafficSignsFeatureLayer = null;
@@ -5996,14 +5979,11 @@ export default class Widget extends React.PureComponent<
                                     }}
                                     menuPortalTarget={document.body}
                                     options={this.state.trafficSignsOptions}
-                                    // Apply Glass Styles (Pass the accent color)
                                     styles={getGlassSelectStyles('#FFA500')} 
                                     menuPlacement="top"
                                     formatOptionLabel={(option) => (
                                         <div style={{ display: 'flex', alignItems: 'center' }} title={option.label}>
-                                            {option.iconUrl && (
-                                                <img src={option.iconUrl} alt="" style={{ width: 16, height: 16, marginRight: 8, objectFit: 'contain' }} />
-                                            )}
+                                            {option.iconUrl && <img src={option.iconUrl} alt="" style={{ width: 16, height: 16, marginRight: 8, objectFit: 'contain' }} />}
                                             <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>{option.label}</span>
                                         </div>
                                     )}
@@ -6021,8 +6001,6 @@ export default class Widget extends React.PureComponent<
                                             if (!this.state.jimuMapView) return;
                                             const newName = selected.value;
                                             let filterCode = newName === "All points" ? newName : newName;
-                                            
-                                            // ... (Your Existing Filter Logic) ...
                                             if (newName !== "All points") {
                                                 const spriteBaseUrl = "https://raw.githubusercontent.com/sukruburakcetin/mapillary-explorer-sprite-source/main/sprites/package_objects/package_objects";
                                                 const jsonResp = await fetch(`${spriteBaseUrl}.json`);
@@ -6031,7 +6009,6 @@ export default class Widget extends React.PureComponent<
                                                 filterCode = code || newName;
                                             }
                                             this.filterObjectsVTLayer(filterCode);
-                                            // Reload FeatureLayer logic...
                                             if (this.state.objectsActive && this.state.jimuMapView.view.zoom >= 16) {
                                                 if (this.mapillaryObjectsFeatureLayer) this.state.jimuMapView.view.map.remove(this.mapillaryObjectsFeatureLayer);
                                                 this.mapillaryObjectsFeatureLayer = null;
@@ -6043,14 +6020,11 @@ export default class Widget extends React.PureComponent<
                                     }}
                                     menuPortalTarget={document.body}
                                     options={this.state.objectsOptions}
-                                    // Apply Glass Styles (Pass the accent color)
                                     styles={getGlassSelectStyles('#FF3C3C')}
                                     menuPlacement="top"
                                     formatOptionLabel={(option) => (
                                         <div style={{ display: 'flex', alignItems: 'center' }} title={option.label}>
-                                            {option.iconUrl && (
-                                                <img src={option.iconUrl} alt="" style={{ width: 16, height: 16, marginRight: 8, objectFit: 'contain' }} />
-                                            )}
+                                            {option.iconUrl && <img src={option.iconUrl} alt="" style={{ width: 16, height: 16, marginRight: 8, objectFit: 'contain' }} />}
                                             <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>{option.label}</span>
                                         </div>
                                     )}
@@ -6124,6 +6098,7 @@ export default class Widget extends React.PureComponent<
 
                 {/* Unified control buttons container */}
                 <div
+                    className="glass-control-panel"
                     style={glassStyles.container}
                     >
                     {/* Individual buttons (no grouping) */}
