@@ -8,11 +8,13 @@ Thank you for your interest in contributing to this widget! Here’s how to get 
   Follow [Esri’s guide](https://developers.arcgis.com/experience-builder/guide/install-guide/) to install both the server and client services locally.
   ```
   Recommendation is: "exbVersion": "1.18.0".
+ 
   ```
+  *- Since the current latest version of ESRI Experience Builder Developer Edition (1.19) does not support react-select(due to fact that reach 19 does not support it), we do not recommend using ExB Dev. Edition version 1.19 for development or maintaince purposes now.*
 
 - **Node.js**  
   Make sure you have Node.js installed (check the version required by your Experience Builder release).
-    ```
+  ```
   Recommendation is: "node version": "v22 or higher".
   ```
 
@@ -39,12 +41,12 @@ By default, this is located under:
 ---
 ### Running & Testing Changes Locally
 ### Start the Experience Builder Server
-1. In one terminal, go to the server directory of Experience Builder and start the Experience Builder Server:
+1. In one terminal, go to the server directory of Experience Builder and start the Experience Builder Client:
 ```bash
-cd <experience-builder-root>/server
+cd <experience-builder-root>/client
 npm install      # install dependencies (only needed the first time)
 npm install mapillary-js pbf @mapbox/vector-tile react-select react-datepicker
-npm start        # start the server
+npm start        # start the client development server
  ```
 ```text
 The version is used in this project:
@@ -54,12 +56,12 @@ The version is used in this project:
 - react-select@5.10.2
 - react-datepicker@8.9.0
 ```
-2. Go to the server directory of Experience Builder, and start the Experience Builder Client:
+2. Go to the server directory of Experience Builder, and start the Experience Builder Server:
    Open a new terminal window and run:
 ```bash
-cd <experience-builder-root>/client
+cd <experience-builder-root>/server
 npm install      # install dependencies (only needed the first time)
-npm start        # start the client development server
+npm start        # start the server
  ```
 Once both services are running, open the Experience Builder interface in your browser at:
 ```text
