@@ -38,7 +38,7 @@ export const Turbo = ({ size = 16, color = "white", ...props }: IconProps) => (
 );
 
 // 5. Turbo Filter (Funnel / Magnifying Glass)
-export const TurboFilter = ({ size = 14, color = "#fff", ...props }: IconProps) => (
+export const Filter = ({ size = 14, color = "#fff", ...props }: IconProps) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" {...props}>
       <path d="M3 4h18L14 12v7l-4 2v-9L3 4z" fill={color}/>
   </svg>
@@ -126,19 +126,7 @@ export const NoImage = ({ size = 16, color = "currentColor", ...props }: IconPro
   </svg>
 );
 
-// 14. Controls / Settings (List style)
-export const Controls = ({ size = 16, color = "white", ...props }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" {...props}>
-    <rect x="3" y="5" width="18" height="2.8" rx="1.4" fill={color}/>
-    <circle cx="9" cy="6.4" r="2.4" fill={color}/>
-    <rect x="3" y="11" width="18" height="2.8" rx="1.4" fill={color}/>
-    <circle cx="15" cy="12.4" r="2.4" fill={color}/>
-    <rect x="3" y="17" width="18" height="2.8" rx="1.4" fill={color}/>
-    <circle cx="11" cy="18.4" r="2.4" fill={color}/>
-  </svg>
-);
-
-// 15. Current Address / World
+// 14. Current Address / World
 export const Globe = ({ size = 24, color = "currentColor", ...props }) => (
   <svg
     width={size}
@@ -154,5 +142,29 @@ export const Globe = ({ size = 24, color = "currentColor", ...props }) => (
     <circle cx="12" cy="12" r="10" />
     <line x1="2" y1="12" x2="22" y2="12" />
     <path d="M12 2a15.3 15.3 0 0 1 0 20a15.3 15.3 0 0 1 0-20z" />
+  </svg>
+);
+
+// 15. Map Open (Show Minimap)
+export const MapOpen = ({ size = 16, color = "currentColor", ...props }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
+    <line x1="8" y1="2" x2="8" y2="18"></line>
+    <line x1="16" y1="6" x2="16" y2="22"></line>
+  </svg>
+);
+
+// 16. Map Closed (Hide Minimap)
+export const MapClosed = ({ size = 16, color = "currentColor", ...props }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+    <line x1="1" y1="1" x2="23" y2="23"></line>
+  </svg>
+);
+
+// 17. Detections
+export const Detection = ({ size = 16, color = "white", ...props }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
   </svg>
 );

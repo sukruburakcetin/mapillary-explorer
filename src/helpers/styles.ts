@@ -1,8 +1,8 @@
 // src/helpers/styles.ts
 import React from "react";
 
-// --- Legend & UI helper styles ---
-// src/helpers/styles.ts
+// --- SECTION: LEGEND PRIMITIVES ---
+// Used to create the small colored dots in the map legend (e.g., green for active frame, blue for sequence).
 export const legendCircleStyle = (color: string): React.CSSProperties => ({
     display: "inline-block",
     width: "10px",
@@ -14,33 +14,36 @@ export const legendCircleStyle = (color: string): React.CSSProperties => ({
     flexShrink: 0    // Prevents circle from squishing
 });
 
-// --- Glassmorphism UI Styles ---
+// --- SECTION: GLASSMORPHISM UI COMPONENTS ---
+// This object contains all the logic for the "Glass" look (blur + transparency).
 export const glassStyles = {
+    // The main vertical sidebar on the right side of the viewer that holds control buttons.
     container: {
         position: 'absolute',
-        top: '5px',
-        left: '5px',
+        top: '2px',
         zIndex: 10000,
         display: 'flex',
         flexDirection: 'column',
         gap: '6px',
-        // Glass Effect
+        alignItems: 'center', // Centers the buttons horizontally in the strip
+        padding: '2px 0px 0px 2px', 
+        // Glass Effect logic
         background: 'rgba(20, 20, 20, 0.4)',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        padding: '4px',
+        backdropFilter: 'blur(1px)',
+        WebkitBackdropFilter: 'blur(11px)',
         borderRadius: '12px',
         border: '1px solid rgba(255, 255, 255, 0.1)',
-        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)'
+        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
+        willChange: 'width, height', // Hints to GPU for smoother rendering
+        transform: 'translateZ(0)',  // Forces hardware acceleration
     } as React.CSSProperties,
 
-    // Helper to generate button styles dynamically
+    // Generates styling for individual buttons. 
+    // Logic: If 'active', it applies a colorful gradient and glow; otherwise, a subtle transparent look.
     getButtonStyle: (active: boolean, baseColor: string, isSmall: boolean = false): React.CSSProperties => ({
-        // Logic: Active = Colorful Glass, Inactive = Dark Glass
         background: active 
             ? `linear-gradient(135deg, ${baseColor.replace('0.9', '0.85')}, ${baseColor.replace('0.9', '0.6')})`
             : 'rgba(255, 255, 255, 0.05)',
-        
         color: active ? '#fff' : 'rgba(255, 255, 255, 0.7)',
         width: isSmall ? '22px' : '28px',
         height: isSmall ? '22px' : '28px',
@@ -49,108 +52,84 @@ export const glassStyles = {
         justifyContent: 'center',
         padding: 0,
         borderRadius: '8px',
-        
-        // The "Glass Edge" border
-        border: active 
-            ? '1px solid rgba(255, 255, 255, 0.3)' 
-            : '1px solid rgba(255, 255, 255, 0.05)',
-        
         cursor: 'pointer',
         backdropFilter: 'blur(4px)',
         WebkitBackdropFilter: 'blur(4px)',
-        
-        // Glow effect when active
+        // Glow effect when the layer is turned on
         boxShadow: active 
             ? `0 0 10px ${baseColor.replace('0.9', '0.4')}, inset 0 0 10px rgba(255,255,255,0.1)` 
             : '0 2px 5px rgba(0,0,0,0.1)',
-            
         transition: 'all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1)',
         transform: active ? 'scale(1.05)' : 'scale(1)'
     }),
 
+    // Wraps related buttons (like Turbo Mode and its Filter) into a unified visual group.
     groupContainer: (active: boolean): React.CSSProperties => ({
         display: 'flex',
         flexDirection: 'column',
         gap: '4px',
         borderRadius: '10px',
-        // Subtle background for grouped items
-        background: active ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
-        border: active ? '1px solid rgba(255,255,255,0.05)' : '1px solid transparent',
-        transition: 'all 0.3s ease'
+        // Fixed syntax below:
+        background: active 
+            ? 'linear-gradient(135deg, rgba(240, 185, 5, 0.3), rgba(251, 0, 0, 0.1))' 
+            : 'transparent',
+        border: active ? '1px solid rgba(255, 255, 255, 0.24)' : '1px solid transparent',
+        transition: 'all 0.3s ease',
+        alignItems: 'center',
+        padding: '2px' // Added a little padding so buttons aren't touching the border
     }),
 
+    // Overlay style for when a user clicks the map but no imagery exists at that location.
     noImageContainer: {
         position: "absolute",
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        zIndex: 5, // Lower than controls (10000) but above map (0)
-        
-        // Deep Dark Glass Effect
+        top: 0, left: 0, width: "100%", height: "100%",
+        display: "flex", justifyContent: "center", alignItems: "center",
+        zIndex: 5,
         background: "rgba(18, 20, 24, 0.75)", // Dark slate tint
-        backdropFilter: "blur(12px) grayscale(50%)", // Blurs the map and desaturates it
+        backdropFilter: "blur(12px) grayscale(50%)", 
         WebkitBackdropFilter: "blur(12px) grayscale(50%)",
-        
         opacity: 1,
         transition: "opacity 0.6s ease-in-out"
     } as React.CSSProperties,
 
+    // The text and icon container inside the 'noImageContainer'.
     noImageContent: {
         display: "flex",
-        flexDirection: "column", // Stack icon above text
+        flexDirection: "column",
         alignItems: "center",
         gap: "12px",
-        
-        // Typography
         color: "rgba(255, 255, 255, 0.8)",
         fontSize: "13px",
         fontWeight: 500,
         letterSpacing: "0.5px",
         textAlign: "center",
-        
-        // Text Shadow for readability
         textShadow: "0 2px 4px rgba(0,0,0,0.5)",
-        
-        // Optional: Put the text inside a mini-glass card
         padding: "20px 30px",
         borderRadius: "16px",
         border: "1px solid rgba(255,255,255,0.05)",
         background: "rgba(255,255,255,0.03)",
         boxShadow: "0 8px 32px rgba(0,0,0,0.2)"
     } as React.CSSProperties,
-    // --- Initial "Click to View" State ---
+
+    // Initial overlay shown when the widget is opened before any map click occurs.
     initialStateContainer: {
         position: "absolute",
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center",
-        alignItems: "center",
-        zIndex: 4, // Low z-index so it doesn't block controls
-        
-        // Light Glass Effect (So user sees the map clearly)
+        top: 0, left: 0, width: "100%", height: "100%",
+        display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center",
+        zIndex: 4, 
         background: "rgba(0, 0, 0, 0.2)",
         backdropFilter: "blur(6px)",
         WebkitBackdropFilter: "blur(6px)",
         transition: "all 0.3s ease"
     } as React.CSSProperties,
 
+    // The card showing "Click a point to view imagery".
     initialStateCard: {
         padding: "16px 18px",
         borderRadius: "16px",
-        
-        // Card Glass Look
-        background: "rgba(30, 30, 35, 0.6)", // Dark semi-transparent card
+        background: "rgba(30, 30, 35, 0.6)", 
         border: "1px solid rgba(255, 255, 255, 0.1)",
         boxShadow: "0 8px 32px 0 rgba(0, 0, 0, 0.25)",
-        
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -172,24 +151,19 @@ export const glassStyles = {
         marginTop: "2px"
     } as React.CSSProperties,
 
+    // Full-screen loading overlay used during imagery fetches.
     loadingContainer: {
         position: "absolute",
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
+        top: 0, left: 0, width: "100%", height: "100%",
+        display: "flex", justifyContent: "center", alignItems: "center",
         zIndex: 9999,
-        
-        // Dark blurred background to focus attention on the loader
         background: "rgba(10, 10, 15, 0.6)",
         backdropFilter: "blur(8px)",
         WebkitBackdropFilter: "blur(8px)",
         transition: "all 0.3s ease"
     } as React.CSSProperties,
 
+    // The central card holding the loading spinner and text.
     loadingCard: {
         display: "flex",
         flexDirection: "column",
@@ -198,24 +172,20 @@ export const glassStyles = {
         gap: "16px",
         padding: "24px 32px",
         borderRadius: "20px",
-        
-        // The Glass Card
         background: "rgba(255, 255, 255, 0.04)",
         border: "1px solid rgba(255, 255, 255, 0.1)",
         boxShadow: "0 20px 50px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.05)",
         backdropFilter: "blur(16px)"
     } as React.CSSProperties,
 
+    // The blue animated spinning ring.
     loadingSpinner: {
         width: "40px",
         height: "40px",
         borderRadius: "50%",
-        // Base ring (faint)
         border: "3px solid rgba(255, 255, 255, 0.1)",
-        // Active ring (Neon Blue)
         borderTop: "3px solid #3b82f6", 
-        borderRight: "3px solid rgba(59, 130, 246, 0.3)", // Fade out effect
-        // Glow effect
+        borderRight: "3px solid rgba(59, 130, 246, 0.3)", 
         boxShadow: "0 0 15px rgba(59, 130, 246, 0.4)", 
         animation: "spin 1s linear infinite"
     } as React.CSSProperties,
@@ -229,64 +199,53 @@ export const glassStyles = {
         opacity: 0.9
     } as React.CSSProperties,
 
+    // A smaller loader used specifically for Turbo Mode updates.
     compactLoadingCard: {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: "8px",           // Reduced from 16px
-        padding: "12px 16px", // Reduced from 24px 32px
+        gap: "8px",
+        padding: "12px 16px",
         borderRadius: "16px",
         textAlign: "center",
-        
-        // Same Glass Look
         background: "rgba(255, 255, 255, 0.04)",
         border: "1px solid rgba(255, 255, 255, 0.1)",
         boxShadow: "0 15px 40px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,255,255,0.05)",
         backdropFilter: "blur(16px)"
     } as React.CSSProperties,
 
-    // Optional: Slightly smaller text for the compact view
     compactLoadingText: {
         color: "#ffffff",
-        fontSize: "10px", // Reduced from 13px
         fontWeight: 500,
         letterSpacing: "0.5px",
         textShadow: "0 2px 4px rgba(0,0,0,0.5)",
         opacity: 0.9,
-        maxWidth: "240px" // Forces text to wrap neatly if too wide
+        maxWidth: "110px"
     } as React.CSSProperties,
 
+    // The gold animated spinning ring for Turbo Mode.
     turboSpinner: {
         width: "40px",
         height: "40px",
         borderRadius: "50%",
-        // Base ring
         border: "3px solid rgba(255, 255, 255, 0.1)",
-        // Active ring (Gold/Yellow)
         borderTop: "3px solid #FFD700", 
         borderRight: "3px solid rgba(255, 215, 0, 0.3)", 
-        // Gold Glow
         boxShadow: "0 0 15px rgba(255, 215, 0, 0.5)", 
-        // Slightly faster animation for "Turbo" feel
         animation: "spin 0.7s linear infinite"
     } as React.CSSProperties,
 
-      splashContainer: {
+    // Intro/Splash Screen container shown when the widget first boots up.
+    splashContainer: {
         position: "absolute",
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
+        top: 0, left: 0, width: "100%", height: "100%",
         zIndex: 20000,
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        // Deep, rich background
+        display: "flex", justifyContent: "center", alignItems: "center",
         background: "radial-gradient(circle at center, rgba(20, 30, 40, 0.85) 0%, rgba(5, 5, 10, 0.95) 100%)",
         backdropFilter: "blur(15px)",
         WebkitBackdropFilter: "blur(15px)",
-        transition: "all 0.8s cubic-bezier(0.6, -0.28, 0.735, 0.045)", // "Zoom in" exit effect
+        transition: "all 0.8s cubic-bezier(0.6, -0.28, 0.735, 0.045)",
         pointerEvents: "none"
     } as React.CSSProperties,
 
@@ -299,13 +258,11 @@ export const glassStyles = {
         borderRadius: "24px",
         background: "rgba(255, 255, 255, 0.02)",
         border: "1px solid rgba(255, 255, 255, 0.05)",
-        // A subtle glow behind the card
         boxShadow: "0 0 50px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.03)",
         backdropFilter: "blur(20px)",
-        animation: "float 6s ease-in-out infinite" // Floating motion
+        animation: "float 6s ease-in-out infinite"
     } as React.CSSProperties,
 
-    // Container for the Logo + Ripples
     logoWrapper: {
         position: "relative",
         display: "flex",
@@ -322,13 +279,13 @@ export const glassStyles = {
         boxShadow: "0 10px 20px rgba(0,0,0,0.3)"
     } as React.CSSProperties,
 
-    // The Sonar Ripple Effect
+    // Sonar ripple effect behind the splash logo.
     splashRipple: {
         position: "absolute",
         width: "60px",
         height: "60px",
         borderRadius: "50%",
-        border: "1px solid rgba(53, 175, 109, 0.6)", // Mapillary Green
+        border: "1px solid rgba(53, 175, 109, 0.6)", 
         zIndex: 1,
         animation: "ripple 2s cubic-bezier(0, 0.2, 0.8, 1) infinite"
     } as React.CSSProperties,
@@ -342,11 +299,10 @@ export const glassStyles = {
         backgroundSize: "200% auto",
         WebkitBackgroundClip: "text",
         WebkitTextFillColor: "transparent",
-        animation: "shimmer 3s linear infinite", // Text shine effect
+        animation: "shimmer 3s linear infinite",
         marginBottom: "12px"
     } as React.CSSProperties,
 
-    // Sleek Progress Bar Container
     progressTrack: {
         width: "140px",
         height: "4px",
@@ -356,36 +312,34 @@ export const glassStyles = {
         position: "relative"
     } as React.CSSProperties,
 
-    // The Moving Bar
     progressBar: {
         position: "absolute",
-        top: 0,
-        left: 0,
-        height: "100%",
-        width: "50%",
-        background: "#35AF6D", // Mapillary Green
-        boxShadow: "0 0 10px #35AF6D", // Glowing bar
+        top: 0, left: 0, height: "100%", width: "50%",
+        background: "#35AF6D", 
+        boxShadow: "0 0 10px #35AF6D", 
         borderRadius: "2px",
         animation: "loading 1.5s ease-in-out infinite"
     } as React.CSSProperties,
 
+    // The horizontal "revolver" style picker at the top of the viewer for selecting different sequences.
     sequencePickerContainer: {
         background: "rgba(20, 20, 30, 0.65)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
-        padding: "3px 4px", // Reduced padding
+        padding: "3px 4px", 
         borderRadius: "20px",
         border: "1px solid rgba(255, 255, 255, 0.15)",
         boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
         zIndex: 10000,
         display: "flex",
         alignItems: "center",
-        gap: "4px", // Reduced gap
+        gap: "4px",
         justifyContent: "center",
         marginTop: "2px",
-        overflow: "hidden" // Prevent spillover
+        overflow: "hidden"
     } as React.CSSProperties,
 
+    // Styling for individual sequence items in the picker.
     sequenceSlot: (isActive: boolean): React.CSSProperties => ({
         display: "flex",
         alignItems: "center",
@@ -407,9 +361,9 @@ export const glassStyles = {
         border: "1px solid rgba(255, 255, 255, 0.1)",
         color: "#fff",
         borderRadius: "50%",
-        width: "18px", // Smaller buttons
+        width: "18px",
         height: "18px",
-        flexShrink: 0, // Don't let arrows shrink
+        flexShrink: 0,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -420,7 +374,7 @@ export const glassStyles = {
 
     sequenceDot: (color: string): React.CSSProperties => ({
         display: "inline-block",
-        width: "8px", // Smaller dot
+        width: "8px",
         height: "8px",
         borderRadius: "50%",
         backgroundColor: color,
@@ -431,7 +385,7 @@ export const glassStyles = {
 
     sequenceText: {
         whiteSpace: "nowrap", 
-        fontSize: "9px", // Smaller font
+        fontSize: "9px",
         color: "#fff",
         fontWeight: 500,
         textShadow: "0 1px 2px rgba(0,0,0,0.5)",
@@ -439,13 +393,13 @@ export const glassStyles = {
         textOverflow: "ellipsis"
     } as React.CSSProperties,
 
+    // The horizontal bar at the bottom containing advanced filters (User, Date, Traffic Sign filter, etc.).
     filterBarContainer: {
         display: 'flex',
         flexWrap: 'wrap',
         alignItems: 'center',
-        justifyContent: 'center', // Centers items when stacked
-        gap: '6px',              // Vertical/Horizontal gap between chips
-        // Glass Style
+        justifyContent: 'center',
+        gap: '6px',
         background: "rgba(20, 20, 30, 0.65)", 
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
@@ -455,49 +409,23 @@ export const glassStyles = {
         borderRadius : "20px",
         boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
         pointerEvents: "auto",
-        zIndex: 10001,           // Ensured bar is above map but below dropdowns
-        // Ensured standard behavior (No scrolling)
+        zIndex: 10001,
         overflow: "visible"
     } as React.CSSProperties,
 
-    // filterBarContainer: {
-    //     position: 'absolute',
-    //     bottom: '10px',
-    //     left: '50%',
-    //     transform: 'translateX(-50%)',
-    //     display: 'flex',
-    //     flexWrap: 'wrap',
-    //     alignItems: 'center',
-    //     justifyContent: 'center',
-    //     gap: '6px',
-    //     width: 'auto',
-    //     maxWidth: 'calc(100% - 20px)', 
-    //     background: "rgba(20, 20, 30, 0.8)", 
-    //     backdropFilter: "blur(15px)",
-    //     WebkitBackdropFilter: "blur(15px)",
-    //     borderRadius: "16px",
-    //     padding: "6px 10px",
-    //     border: "1px solid rgba(255, 255, 255, 0.15)",
-    //     boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-    //     pointerEvents: "auto",
-    //     zIndex: 10005,
-    //     overflow: "visible"
-    // } as React.CSSProperties,
-
-    // Helper for the colored sections (Turbo/Signs/Objects)
+    // Sub-containers within the filter bar for grouping related filters (e.g., all Turbo filters together).
     filterGroup: (baseColor: string): React.CSSProperties => ({
         position: 'relative',
         display: 'flex',
         alignItems: 'center',
         gap: '6px',
         borderRadius: '8px',
-        // Tinted Glass background based on the feature color
-        background: `linear-gradient(135deg, ${baseColor}1A 0%, ${baseColor}05 100%)`, // ~10% opacity
-        border: `1px solid ${baseColor}33`, // ~20% opacity border
+        background: `linear-gradient(135deg, ${baseColor}1A 0%, ${baseColor}05 100%)`, 
+        border: `1px solid ${baseColor}33`, 
         boxShadow: `inset 0 0 10px ${baseColor}0D`
     }),
 
-    // The text input for Username
+    // Transparent inputs inside the filter bar.
     glassInput: {
         background: "rgba(0, 0, 0, 0.2)",
         border: "1px solid rgba(255, 255, 255, 0.15)",
@@ -511,7 +439,7 @@ export const glassStyles = {
         boxShadow: "inset 0 2px 4px rgba(0,0,0,0.2)"
     } as React.CSSProperties,
 
-    // Small icon buttons (Calendar)
+    // Small square buttons for icon triggers (like the Calendar icon).
     glassIconBtn: {
         background: "rgba(255, 255, 255, 0.1)",
         border: "1px solid rgba(255, 255, 255, 0.2)",
@@ -535,19 +463,18 @@ export const glassStyles = {
     } as React.CSSProperties
 };
 
-// --- Custom Styles for React-Select to match Glassmorphism ---
+// --- SECTION: REACT-SELECT THEME ---
+// Heavily customizes the 'react-select' component to match the dark glass UI.
 export const getGlassSelectStyles = (baseColor: string = "#fff") => ({
     container: (base: any) => ({
         ...base,
         width: '150px',
         fontSize: '10px'
     }),
-
     control: (base: any, state: any) => ({
         ...base,
         minHeight: '28px',
         height: '28px',
-        // Glass Background
         backgroundColor: "rgba(0, 0, 0, 0.2)", 
         borderColor: state.isFocused ? baseColor : "rgba(255, 255, 255, 0.15)",
         borderRadius: "8px",
@@ -557,32 +484,27 @@ export const getGlassSelectStyles = (baseColor: string = "#fff") => ({
             borderColor: "rgba(255, 255, 255, 0.3)"
         }
     }),
-
     singleValue: (base: any) => ({
         ...base,
-        color: "#fff", // White text
+        color: "#fff",
         fontWeight: 500
     }),
-
     input: (base: any) => ({
         ...base,
         color: "#fff",
         margin: 0,
         padding: 0
     }),
-
     indicatorSeparator: () => ({ display: "none" }),
     dropdownIndicator: (base: any) => ({
         ...base,
         color: "rgba(255,255,255,0.5)",
         padding: "4px"
     }),
-
     menuPortal: (base: any) => ({
         ...base,
         zIndex: 100005
     }),
-
     menu: (base: any) => ({
         ...base,
         backgroundColor: "rgba(30, 30, 35, 0.95)",
@@ -591,10 +513,7 @@ export const getGlassSelectStyles = (baseColor: string = "#fff") => ({
         border: `1px solid ${baseColor}40`,
         marginTop: "4px",
         boxShadow: "0 8px 32px rgba(0,0,0,0.5)"
-        // Note: zIndex here doesn't matter much if using portal, 
-        // but 'menuPortal' above does.
     }),
-
     menuList: (base: any) => ({
         ...base,
         maxHeight: '250px',
@@ -602,10 +521,9 @@ export const getGlassSelectStyles = (baseColor: string = "#fff") => ({
         "::-webkit-scrollbar": { width: "6px" },
         "::-webkit-scrollbar-thumb": { background: "rgba(255,255,255,0.2)", borderRadius: "3px" }
     }),
-
     option: (base: any, state: any) => ({
         ...base,
-        backgroundColor: state.isFocused ? `${baseColor}33` : "transparent", // Highlight color
+        backgroundColor: state.isFocused ? `${baseColor}33` : "transparent",
         color: state.isFocused ? "#fff" : "rgba(255,255,255,0.8)",
         fontSize: "10px",
         borderRadius: "4px",
@@ -614,331 +532,228 @@ export const getGlassSelectStyles = (baseColor: string = "#fff") => ({
     })
 });
 
-// --- Mobile / Responsive Styles ---
+// --- SECTION: GLOBAL CSS STRING ---
+// Contains CSS animations, responsive container queries, and specific fixes for ArcGIS Experience Builder panels.
 export const mobileOverrideStyles = `
-    .mobile-panel-content-header {
-        height: 30px !important;
-    }
-    .expand-mobile-panel-touch-container{
-        height: 30px !important;
-    }
-    .expand-mobile-panel[style*="height: 150px"] {
-        height: 280px !important;
-    }
+    /* EXPERIENCE BUILDER UI FIXES */
+    .mobile-panel-content-header { height: 30px !important; }
+    .expand-mobile-panel-touch-container { height: 30px !important; }
+    .expand-mobile-panel[style*="height: 150px"] { height: 280px !important; }
 
+    /* MAPILLARY-JS OVERRIDES */
     .mapillary-js .DirectionsPerspective {
-        z-index: 1 !important; /* Ensure arrows are below our Widget UI but above the image */
+        z-index: 1 !important;
     }
-
-    /* Force standard chevrons to be more visible on bright backgrounds */
     .mapillary-js .DirectionsPerspectiveArrow {
         filter: drop-shadow(0px 0px 2px rgba(0,0,0,0.8)) !important;
     }
-
-    /* Ensure the navigation arrows center themselves properly in short widgets */
     .mapillary-js .DirectionsPerspectiveContainer {
         bottom: 10px !important;
     }
 
-    .legend-container { 
-        display: flex !important; 
-    }
-
+    /* Z-INDEX STACKING FIXES */
+    .legend-container { display: flex !important; }
     .react-datepicker-popper { z-index: 100005 !important; }
-    
     .react-select__menu-portal { z-index: 100005 !important; }
+    .glass-scroll-container::-webkit-scrollbar { display: none; }
+    .glass-scroll-container { -ms-overflow-style: none; scrollbar-width: none; }
 
-    .glass-scroll-container::-webkit-scrollbar {
-        display: none;
-    }
-        
-    .glass-scroll-container {
-        -ms-overflow-style: none;  /* IE and Edge */
-        scrollbar-width: none;  /* Firefox */
-    }
-
-    .widget-mapillary.jimu-widget 
-    .mapillary-sequence-playback,
-    .widget-mapillary.jimu-widget 
-    .mapillary-sequence-timeline {
+    /* RESPONSIVE SCALING FOR VIEWER CONTROLS */
+    .widget-mapillary.jimu-widget .mapillary-sequence-playback,
+    .widget-mapillary.jimu-widget .mapillary-sequence-timeline {
         --scale: clamp(0.5, 100cqw / 850, 0.9);
         transform: translateX(-50%) scale(var(--scale)) !important;
         transform-origin: top center !important;
         transition: transform 0.15s ease-out;
     }
 
+    /* CONTAINER QUERIES: RESPONSIVE SIZING BASED ON WIDGET WIDTH */
     @container (max-width: 599px) {
-        .widget-mapillary.jimu-widget 
-        .mapillary-sequence-playback,
-        .widget-mapillary.jimu-widget 
-        .mapillary-sequence-timeline {
+        .widget-mapillary.jimu-widget .mapillary-sequence-playback,
+        .widget-mapillary.jimu-widget .mapillary-sequence-timeline {
             transform: translateX(-50%) scale(0.5) !important;
         }
     }
 
     @container (min-width: 600px) {
-        .widget-mapillary.jimu-widget 
-        .mapillary-sequence-playback,
-        .widget-mapillary.jimu-widget 
-        .mapillary-sequence-timeline {
+        .widget-mapillary.jimu-widget .mapillary-sequence-playback,
+        .widget-mapillary.jimu-widget .mapillary-sequence-timeline {
             transform: translateX(-50%) scale(0.75) !important;
         }
     }
 
-    /* When the widget is narrower than 350px (Small) */
+    /* MINI BUTTONS FOR SMALL WIDGETS */
     @container (max-width: 350px) {
-        .unified-control-buttons-mapped, 
-        .unified-control-buttons {
-            width: 24px !important;
-            height: 24px !important;
-        }
-        .unified-control-buttons-filters {
-            width: 18px !important;
-            height: 18px !important;
-        }
-        /* Scale down the icons inside */
-        .unified-control-buttons-mapped svg, 
-        .unified-control-buttons svg {
-            width: 16px !important;
-            height: 16px !important;
-        }
-        .unified-control-buttons-filters svg {
-            width: 12px !important;
-            height: 12px !important;
-        }
+        .unified-control-buttons-mapped, .unified-control-buttons { width: 24px !important; height: 24px !important; }
+        .unified-control-buttons-filters { width: 20px !important; height: 20px !important; }
+        .unified-control-buttons-mapped svg, .unified-control-buttons svg { width: 20px !important; height: 20px !important; }
+        .unified-control-buttons-filters svg { width: 16px !important; height: 16px !important; }
     }
 
-    /* When the widget is narrower than 250px (Tiny) */
+    /* TINY BUTTONS FOR NARROW SIDEBARS */
     @container (max-width: 250px) {
-        .unified-control-buttons-mapped, 
-        .unified-control-buttons {
-            width: 20px !important;
-            height: 20px !important;
-            border-radius: 6px !important;
-        }
-        .unified-control-buttons-filters {
-            width: 16px !important;
-            height: 16px !important;
-        }
-        .unified-control-buttons-mapped svg, 
-        .unified-control-buttons svg {
-            width: 14px !important;
-            height: 14px !important;
-        }
+        .unified-control-buttons-mapped, .unified-control-buttons { width: 20px !important; height: 20px !important; border-radius: 6px !important; }
+        .unified-control-buttons-filters { width: 16px !important; height: 16px !important; }
+        .unified-control-buttons-mapped svg, .unified-control-buttons svg { width: 12px !important; height: 12px !important; }
     }
     
+    /* EXPERIENCE BUILDER PANEL OVERRIDES */
     .p-1 { padding: 0px !important; }
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] { border: none !important; box-shadow: none !important; background: transparent !important; }
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .jimu-floating-panel-content { background: transparent !important; }
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .widget-content.p-1 { padding: 0 !important; }
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resizer-0.bottom-right { right: 0 !important; bottom: 0 !important; width: 15px !important; height: 15px !important; padding: 0 !important; margin: 0 !important; }
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resize-handle { position: absolute !important; right: 0px !important; bottom: 0px !important; padding: 0 !important; }
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resize-handle svg path { fill: #35AF6D !important; }
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resizer-0.bottom-right:hover svg path{ fill: #82e8ec !important; }
 
-    div.jimu-floating-panel[aria-label="Mapillary Explorer"] {
-        border: none !important;
-        box-shadow: none !important;
-        background: transparent !important;
-    }
-
-    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .jimu-floating-panel-content {
-        background: transparent !important;
-    }
-
-    /* This removes the 0.25rem padding that Experience Builder forces on widgets */
-    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .widget-content.p-1 {
-        padding: 0 !important;
-    }
-
-    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .widget-content.p-1 {
-        padding: 0 !important;
-    }
-
-
-    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resizer-0.bottom-right {
-        right: 0 !important;
-        bottom: 0 !important;
-        width: 15px !important;
-        height: 15px !important;
-        padding: 0 !important;
-        margin: 0 !important;
-    }
-
-    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resize-handle {
-        position: absolute !important;
-        right: 0px !important;
-        bottom: 0px !important;
-        padding: 0 !important;
-    }
-
-    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resize-handle svg path {
-        fill: #35AF6D !important;
-    }
-
-    div.jimu-floating-panel[aria-label="Mapillary Explorer"] .resizer-0.bottom-right:hover svg path{
-        fill: #82e8ec !important;
-    }
-
-    /* 1. The Sidebar Container */
+    /* SIDEBAR BUTTON CLAMPING (FLUID SCALING) */
     .glass-control-panel {
-        /* If height is very small, allow internal scrolling as a last resort */
         max-height: calc(100% - 10px) !important;
         overflow-y: auto !important;
         scrollbar-width: none;
-        gap: 4px !important; 
-        padding: 4px !important;
+        gap: 3px !important; 
     }
-    
     .glass-control-panel::-webkit-scrollbar { display: none; }
-
-    /* 2. DYNAMIC SCALING:
-       We use 'cqh' (Container Query Height). 
-       The buttons will automatically become 6% of the widget's height, 
-       but never smaller than 18px or larger than 28px. 
-    */
     .glass-control-panel .unified-control-buttons,
     .glass-control-panel .unified-control-buttons-mapped {
-        width: clamp(22px, 6cqh, 28px) !important;
-        height: clamp(22px, 6cqh, 28px) !important;
+        width: clamp(22px, 8cqh, 30px) !important;
+        height: clamp(22px, 8cqh, 30px) !important;
         flex-shrink: 0 !important;
     }
-
-    /* Scaling the small filter buttons */
     .glass-control-panel .unified-control-buttons-filters {
-        width: clamp(18px, 4cqh, 22px) !important;
-        height: clamp(18px, 4cqh, 22px) !important;
+        width: clamp(18px, 6cqh, 24px) !important;
+        height: clamp(18px, 6cqh, 24px) !important;
         flex-shrink: 0 !important;
     }
-
-    /* 3. Scale the Icons automatically */
     .glass-control-panel svg {
-        width: 70% !important;
-        height: 70% !important;
+        width: clamp(12px, 70%, 22px) !important;
+        height: clamp(12px, 60%, 22px) !important;
+        display: block;
+        transition: all 0.2s ease;
+    }
+    .glass-control-panel .unified-control-buttons-filters svg {
+        width: clamp(10px, 60%, 16px) !important;
+        height: clamp(10px, 60%, 16px) !important;
+    }
+    .glass-control-panel > div { gap: 2px !important; display: flex !important; flex-direction: column !important; }
+    .unified-control-buttons, .unified-control-buttons-mapped { margin-left: 0 !important; }
+
+    /* GLASS UTILITY PANEL */
+    .glass-image-utility-panel {
+        padding: clamp(2px, 1cqmin, 4px) !important;
+        gap: clamp(2px, 1cqh, 6px) !important;
+        borderRadius: clamp(6px, 2cqmin, 12px) !important;
+        right: clamp(40px, 10cqw, 60px) !important;
+        bottom: clamp(20px, 5cqh, 27px) !important;
     }
 
-    /* 4. Tighten gaps inside button groups (Turbo, Signs, etc.) */
-    .glass-control-panel > div {
-        gap: 2px !important;
-        display: flex !important;
-        flex-direction: column !important;
+    .glass-image-utility-panel .utility-button {
+        width: clamp(18px, 6cqh, 24px) !important;
+        height: clamp(18px, 6cqh, 24px) !important;
     }
-        
-    /* 1. Fluid scaling for the "Click a point" and "Loading" cards */
-    .initial-state-card, 
-    .loading-card, 
-    .no-image-card {
-        /* Padding scales with widget size: Min 10px, Max 30px */
+
+    .glass-image-utility-panel .utility-button svg {
+        width: clamp(12px, 70%, 18px) !important;
+        height: clamp(12px, 70%, 18px) !important;
+    }
+
+    .utility-spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid #fff;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+
+    /* OVERLAY CARD FLUID SCALING */
+    .initial-state-card, .loading-card, .no-image-card {
         padding: clamp(10px, 5cqh, 30px) clamp(12px, 5cqw, 40px) !important;
         gap: clamp(4px, 2cqh, 16px) !important;
         max-width: 85% !important;
         border-radius: clamp(8px, 3cqmin, 20px) !important;
     }
-
-    /* 2. Fluid Typography (Primary Text) */
-    .initial-state-card span:first-of-type,
-    .loading-card div,
-    .no-image-card span {
-        font-size: clamp(10px, 4cqmin, 14px) !important;
+    .initial-state-card span:first-of-type, .loading-card div, .no-image-card span {
+        font-size: clamp(8px, 4cqmin, 12px) !important;
         line-height: 1.2 !important;
     }
-
-    /* 3. Fluid Typography (Secondary/Subtitle Text) */
-    .initial-state-card span:last-of-type {
-        font-size: clamp(8px, 3cqmin, 11px) !important;
-    }
-
-    /* 4. Responsive Spinner Sizing */
-    .loading-card .premium-spinner,
-    .loading-card .turbo-spinner {
-        width: clamp(20px, 8cqmin, 40px) !important;
-        height: clamp(20px, 8cqmin, 40px) !important;
+    .initial-state-card span:last-of-type { font-size: clamp(7px, 3cqmin, 10px) !important; }
+    .loading-card .premium-spinner, .loading-card .turbo-spinner {
+        width: clamp(20px, 8cqmin, 40px) !important; height: clamp(20px, 8cqmin, 40px) !important;
         border-width: clamp(2px, 0.8cqmin, 4px) !important;
     }
+    .no-image-card svg, .initial-state-card svg { width: clamp(18px, 6cqmin, 32px) !important; height: clamp(18px, 6cqmin, 32px) !important; }
 
-    /* 5. Responsive Icon Sizing (No Image icon, etc) */
-    .no-image-card svg,
-    .initial-state-card svg {
-        width: clamp(18px, 6cqmin, 32px) !important;
-        height: clamp(18px, 6cqmin, 32px) !important;
-    }
-
-    /* 6. If the widget is too short, hide the subtitle to save space */
+    /* HIDE SUBTITLES ON SHORT WIDGETS */
     @container (max-height: 200px) {
-        .initial-state-card span:last-of-type {
-            display: none !important;
-        }
-        .initial-state-card, .loading-card {
-            padding: 8px !important;
-        }
+        .initial-state-card span:last-of-type { display: none !important; }
+        .initial-state-card, .loading-card { padding: 8px !important; }
     }
 
-    /* 1. Fluid scaling for the Legend Container */
+    /* LEGEND FLUID SCALING */
     .legend-container {
-        padding: clamp(2px, 1.5cqmin, 6px) !important;
+        padding: clamp1px, 0.5cqmin, 2px) !important;
         gap: clamp(1px, 1cqh, 4px) !important;
         border-radius: clamp(4px, 2cqmin, 8px) !important;
-        /* Pin it tighter to the corner when small */
-        bottom: clamp(2px, 2cqh, 10px) !important;
-        left: clamp(2px, 2cqw, 5px) !important;
-        max-width: 40% !important; /* Prevent it from covering the center */
+        bottom: clamp(2px, 2cqh, 2px) !important;
+        left: clamp(2px, 2cqw, 2px) !important;
+        max-width: 40% !important;
+    }
+    .legend-container div[style*="opacity: 0.4"] { font-size: clamp(4px, 2cqmin, 8px) !important; margin-bottom: 1px !important; padding-bottom: 1px !important; }
+    @container (max-height: 340px) {
+        .legend-container div[style*="opacity: 0.4"] { display: none !important; }
+        .legend-container { bottom: 0 !important; }
+    }
+    .legend-container span[style*="font-size"] { font-size: clamp(6px, 3cqmin, 9px) !important; }
+    .legend-container span[style*="border-radius: 50%"] { width: clamp(6px, 3cqmin, 9px) !important; height: clamp(6px, 3cqmin, 9px) !important; margin-right: 2px !important; }
+    .legend-container button { font-size: clamp(6px, 2cqmin, 8px) !important; padding: 1px 0 !important; margin-top: 2px !important; }
+    @container (max-height: 250px) { .legend-container button { display: none !important; } }
+
+    /* KEYFRAME DEFINITIONS */
+    @keyframes activePulse {
+        0% { box-shadow: 0 0 5px var(--glow); }
+        50% { box-shadow: 0 0 15px var(--glow); }
+        100% { box-shadow: 0 0 5px var(--glow); }
+    }
+    .unified-control-buttons.active-layer { animation: activePulse 2s infinite ease-in-out; }
+
+    /* FORCE SMOOTH RESIZE */
+    div.jimu-floating-panel[aria-label="Mapillary Explorer"] {
+        transition: width 0.05s ease-out, height 0.05s ease-out !important;
     }
 
-    /* 2. Shrink or Hide the "Legend" Header */
-    .legend-container div[style*="opacity: 0.4"] {
-        font-size: clamp(6px, 2cqmin, 8px) !important;
-        margin-bottom: 1px !important;
-        padding-bottom: 1px !important;
+    /* PREVENT BLACK FLASH */
+    .widget-mapillary .mapillary-js {
+        background: #000 !important;
+        overflow: hidden !important;
     }
+
+    /* HIDE BLACK STRIPES DURING RESIZE */
+    .widget-mapillary .mapillary-viewer {
+        overflow: hidden !important;
+        background: #1a1a1a !important; /* Darker gray instead of pure black */
+    }
+
+    .widget-mapillary .mapillary-viewer canvas {
+        transition: none !important; /* Remove any canvas transitions */
+    }
+
     
-    /* Hide the header completely if height is very small */
-    @container (max-height: 330px) {
-        .legend-container div[style*="opacity: 0.4"] {
-            display: none !important;
-        }
-        .legend-container{
-            bottom: 0 !important;
-        }
-    }
 
-    /* 3. Fluid scaling for Legend Text */
-    .legend-container span[style*="font-size"] {
-        font-size: clamp(7px, 2.5cqmin, 10px) !important;
-    }
-
-    /* 4. Fluid scaling for Legend Circles (the color dots) */
-    .legend-container span[style*="border-radius: 50%"] {
-        width: clamp(6px, 2.5cqmin, 10px) !important;
-        height: clamp(6px, 2.5cqmin, 10px) !important;
-        margin-right: 2px !important;
-    }
-
-    /* 5. Shrink the "Clear Cache" button significantly */
-    .legend-container button {
-        font-size: clamp(6px, 2cqmin, 8px) !important;
-        padding: 1px 0 !important;
-        margin-top: 2px !important;
-    }
-    
-    /* Hide the button if space is critical */
-    @container (max-height: 250px) {
-        .legend-container button {
-            display: none !important;
-        }
-    }
-
+    /* MOBILE (768px) OVERRIDES */
     @media (max-width: 768px) {
         .widget-mapillary input[type="date"]::-webkit-datetime-edit { display: none !important; }
-        .show-panorama-only-filter { font-size: 0 !important; }
         .show-panorama-only-filter::after { content: "Panoramas:"; font-size: 9px !important; }
-        .show-color-by-date-filter { font-size: 0 !important; }
         .show-color-by-date-filter::after { content: "CBD:"; font-size: 9px !important; }
         .react-datepicker { transform: scale(0.6) !important; }
         .react-datepicker-popper { height: 230px !important; }
-
-        .info-box{ font-size: 8px !important; max-width: 110px !important; }
+        .info-box { font-size: 8px !important; max-width: 110px !important; }
         .legend-container { display: none !important; }
         .esri-popup__main-container { width: 250px !important; top: 8% !important; left: 17% !important; max-height:42% !important; }
-        .splash-screen-spinner { width: 25px !important; height: 25px !important; }
         .splash-screen-logo { margin-bottom: 15px !important; }
         .splash-screen-text { font-size: 10px !important; }
-        .minimap-container { 
-                top: 50px !important; left: 50% !important; right: auto !important; transform: translateX(-50%) !important; 
-                width: 90% !important; max-width: 350px !important; height: 150px !important; 
-        }
+        .minimap-container { top: 50px !important; left: 50% !important; right: auto !important; transform: translateX(-50%) !important; width: 90% !important; max-width: 350px !important; height: 150px !important; }
         .warning-message-container { font-size: 8px !important; }
     }
 `;

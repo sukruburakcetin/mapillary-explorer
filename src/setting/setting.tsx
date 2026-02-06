@@ -5,7 +5,6 @@ import { SettingSection, SettingRow } from 'jimu-ui/advanced/setting-components'
 import { MapWidgetSelector } from 'jimu-ui/advanced/setting-components';
 import { Switch, TextInput, NumericInput, Select, Option } from 'jimu-ui';
 import { IMConfig } from '../config';
-import { ColorPicker } from 'jimu-ui/basic/color-picker'; 
 
 export default class Setting extends React.PureComponent<AllWidgetSettingProps<IMConfig>, any> {
 
@@ -111,6 +110,14 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     });
   }
 
+  // Handler for Sync Map Position (West, East, Center, etc.)
+  onSyncPositionChange = (evt: React.ChangeEvent<HTMLSelectElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('syncMapPosition', evt.target.value)
+    });
+  }
+
   onCameraXChange = (value: number) => {
     this.props.onSettingChange({
       id: this.props.id,
@@ -149,27 +156,89 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
             </div>
           </SettingRow>
 
-          <SettingRow label="Lock the map to the view">
-            <Switch 
-              checked={this.props.config.syncMapWithImage === true}
-              onChange={(evt) => {
-                this.props.onSettingChange({
-                  id: this.props.id,
-                  config: this.props.config.set('syncMapWithImage', evt.target.checked)
-                });
-              }} 
-            />
+          <SettingRow label="Lock Map to View" flow="wrap">
+            <div className="d-flex justify-content-between w-100 align-items-center">
+                <span title="Syncs the map center to the current image location">Enable Sync</span>
+                <Switch 
+                  checked={this.props.config.syncMapWithImage === true}
+                  onChange={(evt) => {
+                    this.props.onSettingChange({
+                      id: this.props.id,
+                      config: this.props.config.set('syncMapWithImage', evt.target.checked)
+                    });
+                  }} 
+                />
+            </div>
+            
+            {/* Extended Position Options */}
+            {this.props.config.syncMapWithImage && (
+                <div className="mt-2 w-100" style={{ paddingLeft: '0px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 500, marginBottom: '4px' }}>Lock Position:</div>
+                    <Select 
+                      size="sm" 
+                      value={config.syncMapPosition || 'center'} 
+                      onChange={this.onSyncPositionChange}
+                      style={{ width: '100%' }}
+                    >
+                      <Option value="center">Center (Default)</Option>
+                      <Option value="west">West (Focus Left)</Option>
+                      <Option value="east">East (Focus Right)</Option>
+                      <Option value="north">North (Focus Top)</Option>
+                      <Option value="south">South (Focus Bottom)</Option>
+                    </Select>
+                    
+                    <div className="text mt-2" style={{ fontSize: '10px', fontStyle: 'italic', lineHeight: '1.3', opacity: '0.3' }}>
+                        {config.syncMapPosition === 'east' && "Best if your widget is docked on the Left."}
+                        {config.syncMapPosition === 'west' && "Best if your widget is docked on the Right."}
+                        {config.syncMapPosition === 'north' && "Best if your widget is docked on the Bottom."}
+                        {config.syncMapPosition === 'south' && "Best if your widget is docked on the Top."}
+                        {(!config.syncMapPosition || config.syncMapPosition === 'center') && "Keeps the active frame in the center of the map."}
+                    </div>
+                </div>
+            )}
           </SettingRow>
-           <SettingRow>
-                  <span className="text-muted" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px' }}>
-                    On: When the image changes, the map automatically centers at that point.
+        </SettingSection>
+          <SettingSection title="General Settings">
+            <SettingRow label="Mapillary Coverage" style={{marginTop: '5px'}}>
+                  <Switch 
+                    checked={config.coverageLayerAlwaysOn === true} 
+                    onChange={this.onToggleCoverageAlwaysOn} 
+                  />
+            </SettingRow>
+            <SettingRow>
+                  <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px', opacity: '0.3', fontStyle:'italic' }}>
+                    Always shows standard Mapillary vector tiles and hides the map toggle.
                   </span>
             </SettingRow>
+            <SettingRow label="Turbo Mode Only">
+                <Switch 
+                  checked={config.turboModeOnly === true} 
+                  onChange={this.onToggleTurboModeOnly} 
+                />
+            </SettingRow>
+            <SettingRow>
+                <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px', opacity: '0.3', fontStyle:'italic' }}>
+                  Always enables the turbo coverage layer and hides the toggle. Disables Normal Mode, allowing interaction only by clicking visible coverage points.
+                </span>
+            </SettingRow>
+            {/*Default Creator Field */}
+            <SettingRow flow="wrap">
+              <div style={{ width: '100%' }}>
+                <div style={{ marginBottom: '5px', fontWeight: 500 }}>
+                  Default Creator (Turbo Mode Only)
+                </div>
+                <TextInput 
+                  className="w-100" 
+                  placeholder="e.g. mapillary_user" 
+                  value={config.turboCreator || ''} 
+                  onChange={this.onCreatorChange} 
+                />
+              </div>
+            </SettingRow>
         </SettingSection>
-
         <SettingSection title="Appearance Settings">    
           <SettingRow>
-            <span className="text-muted" style={{ fontSize: '12px', marginTop: '5px' }}>
+            <span className="text" style={{ fontSize: '12px', marginTop: '5px', opacity: '0.3', fontStyle:'italic' }}>
               Toggle UI elements and action tools to simplify the interface.
             </span>
           </SettingRow>
@@ -217,45 +286,6 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
             />
           </SettingRow>
         </SettingSection>
-		
-        <SettingSection title="General Settings">
-            <SettingRow label="Mapillary Coverage" style={{marginTop: '5px'}}>
-                  <Switch 
-                    checked={config.coverageLayerAlwaysOn === true} 
-                    onChange={this.onToggleCoverageAlwaysOn} 
-                  />
-            </SettingRow>
-            <SettingRow>
-                  <span className="text-muted" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px' }}>
-                    Always shows standard Mapillary vector tiles and hides the map toggle.
-                  </span>
-            </SettingRow>
-            <SettingRow label="Turbo Mode Only">
-                <Switch 
-                  checked={config.turboModeOnly === true} 
-                  onChange={this.onToggleTurboModeOnly} 
-                />
-            </SettingRow>
-            <SettingRow>
-                <span className="text-muted" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px' }}>
-                  Always enables the turbo coverage layer and hides the toggle. Disables Normal Mode, allowing interaction only by clicking visible coverage points.
-                </span>
-            </SettingRow>
-            {/*Default Creator Field */}
-            <SettingRow flow="wrap">
-              <div style={{ width: '100%' }}>
-                <div style={{ marginBottom: '5px', fontWeight: 500 }}>
-                  Default Creator (Turbo Mode Only)
-                </div>
-                <TextInput 
-                  className="w-100" 
-                  placeholder="e.g. mapillary_user" 
-                  value={config.turboCreator || ''} 
-                  onChange={this.onCreatorChange} 
-                />
-              </div>
-            </SettingRow>
-        </SettingSection>
 
         <SettingSection title="Feature Detection Layers">
               <SettingRow label="Enable Traffic Signs">
@@ -273,7 +303,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
               </SettingRow>
 
               <SettingRow>
-                <span className="text-muted" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px' }}>
+                <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px', opacity: '0.3', fontStyle:'italic' }}>
                   Disabling these will hide the sign and object layer toggle buttons in the widget interface.
                 </span>
               </SettingRow>
@@ -296,7 +326,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
               </Select>
             </SettingRow>
             <SettingRow>
-              <span className="text-muted" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '-5px' }}>
+              <span className="text" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '-5px', opacity: '0.3', fontStyle:'italic' }}>
                 <b>Fill:</b> Fills the window.<br/>
                 <b>Letterbox:</b> Shows the full original image (may show black bars, recommended for wide widgets).
               </span>
@@ -314,7 +344,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
               </Select>
             </SettingRow>
             <SettingRow>
-              <span className="text-muted" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '-5px' }}>
+              <span className="text" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '-5px', opacity: '0.3', fontStyle:'italic' }}>
                 <b>Default:</b> Uses motion blending between frames.<br/>
                 <b>Instantaneous:</b> Jumps immediately to the next frame (snappier).
               </span>
@@ -344,7 +374,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                       onChange={this.onCameraYChange}
                     />
                 </div>
-                <div className="text-muted" style={{ fontSize: '11px', fontStyle: 'italic' }}>
+                <div className="text" style={{ fontSize: '11px', fontStyle: 'italic', opacity: '0.3', fontStyle:'italic' }}>
                   Standard is 0.5 for both(refers to center). <br/>
                   <b>X:</b> 0 = Left, 1 = Right. <br/>
                   <b>Y:</b> 0 = Sky, 1 = Ground. (Try 0.55 for wide widgets)
@@ -358,7 +388,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                 />
             </SettingRow>
             <SettingRow>
-                <span className="text-muted" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '0px' }}>
+                <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '0px', opacity: '0.3', fontStyle:'italic' }}>
                   Enables developer logging in the browser console (F12).
                 </span>
             </SettingRow>

@@ -11,7 +11,7 @@ import 'react-datepicker/dist/react-datepicker.css';
 import { objectNameMap } from "../helpers/mapillaryObjectNameMap";
 import * as Icons from './components/icons'
 import { legendCircleStyle, glassStyles, getGlassSelectStyles, mobileOverrideStyles } from "../helpers/styles";
-import { Viewer } from 'mapillary-js';
+import { Viewer, OutlineTag, PolygonGeometry } from 'mapillary-js';
 import 'mapillary-js/dist/mapillary.css';
 
 
@@ -68,6 +68,9 @@ interface State {
     currentZoom?: number;
     hasTimeTravel: boolean; 
     isDownloading?: boolean;
+    selectedTurboYear?: string | null;
+    showMinimap: boolean;
+    detectionsActive: boolean;
 }
 
 export default class Widget extends React.PureComponent<
@@ -145,6 +148,9 @@ export default class Widget extends React.PureComponent<
     private debouncedTurboFilter: (() => void) & { cancel?: () => void };
     private zoomDisplayHandle: __esri.WatchHandle | null = null;
 
+    // Turbo request tracking
+    private _turboRequestCount: number = 0;
+
     /**
         * Human‑readable names for Mapillary object classification codes.
         * Mapillary returns raw object `value` codes such as `"object--bench"` or `"marking--discrete--stop-line"`.
@@ -199,7 +205,9 @@ export default class Widget extends React.PureComponent<
         objectsOptions: [{ value: "All points", label: "All points", iconUrl: null }],
         showObjectsFilterBox: false,
         hoveredMapObject: null,
-        hasTimeTravel: false
+        hasTimeTravel: false,
+        showMinimap: true,
+        detectionsActive: false,
     };
 
     constructor(props: AllWidgetProps<any>) {
@@ -427,37 +435,89 @@ export default class Widget extends React.PureComponent<
                 }
             }
 
-            // Update active imageId BEFORE drawing new graphics
+            // Update State with New ID
             this.setState({ imageId: newId }, () => {
-                // Clear any existing green pulse
-                this.clearGreenPulse();
-
-                // Draw new green pulsing point at NEW location
-                this.currentGreenGraphic = this.drawPulsingPoint(newImg.lon, newImg.lat, [0, 255, 0, 1]);
-                this.checkForTimeTravel(newId);
-
-                // Get bearing and draw cone at NEW location
-                this.mapillaryViewer.getBearing().then((b: number) => {
-                    if (typeof b === 'number') {
-                        this._lastBearing = b;
-                    }
-                    // Draw cone at the NEW image location
-                    redrawCone(newImg.lon, newImg.lat);
-                }).catch(() => {
-                    // Draw cone even if bearing fetch fails
-                    redrawCone(newImg.lon, newImg.lat);
-                });
-                // Check the configuration: If syncMapWithImage is TRUE (Default is OFF)
-                if (this.props.config.syncMapWithImage === true) {
-                    view.goTo({
-                        center: [newImg.lon, newImg.lat]
-                        // zoom seviyesini değiştirmiyoruz, sadece ortalıyoruz
-                    }, {
-                        animate: true, // Yumuşak geçiş
-                        duration: 300  // Hızlıca (300ms)
+                
+                // 1. FRESH LOOKUP: Ensure we have the exact coordinates for the active ID
+                // This guarantees the graphics are drawn exactly where the new image is.
+                const activeImg = this.state.sequenceImages.find(s => s.id === newId);
+                
+                if (activeImg) {
+                    // 2. Draw Graphics at New Location
+                    this.clearGreenPulse();
+                    this.currentGreenGraphic = this.drawPulsingPoint(activeImg.lon, activeImg.lat, [0, 255, 0, 1]);
+                    
+                    this.checkForTimeTravel(newId);
+                    
+                    this.mapillaryViewer.getBearing().then((b: number) => {
+                        if (typeof b === 'number') { this._lastBearing = b; }
+                        redrawCone(activeImg.lon, activeImg.lat);
+                    }).catch(() => {
+                        redrawCone(activeImg.lon, activeImg.lat);
                     });
+
+                    // 3. Map Synchronization Logic (With Offset)
+                    if (this.props.config.syncMapWithImage === true) {
+                        const position = this.props.config.syncMapPosition || 'center';
+                        
+                        const targetPoint = new this.ArcGISModules.Point({
+                            longitude: activeImg.lon,
+                            latitude: activeImg.lat
+                        });
+
+                        // Standard Center
+                        if (position === 'center') {
+                            view.goTo({ center: targetPoint }, { animate: true, duration: 300 });
+                        } 
+                        // Offset Logic
+                        else {
+                            try {
+                                const wmPoint = webMercatorUtils.geographicToWebMercator(targetPoint) as __esri.Point;
+                                const extent = view.extent;
+                                
+                                if (wmPoint && extent) {
+                                    const width = extent.width;
+                                    const height = extent.height;
+                                    const offsetFactor = 0.25; // 25% shift
+
+                                    let newCenterX = wmPoint.x;
+                                    let newCenterY = wmPoint.y;
+
+                                    if (position === 'east') {
+                                        // Widget Left -> Show point on Right -> Move Camera Left (West)
+                                        newCenterX = wmPoint.x - (width * offsetFactor);
+                                    } else if (position === 'west') {
+                                        // Widget Right -> Show point on Left -> Move Camera Right (East)
+                                        newCenterX = wmPoint.x + (width * offsetFactor);
+                                    } else if (position === 'north') {
+                                        // Widget Bottom -> Show point on Top -> Move Camera Down (South)
+                                        newCenterY = wmPoint.y - (height * offsetFactor);
+                                    } else if (position === 'south') {
+                                        // Widget Top -> Show point on Bottom -> Move Camera Up (North)
+                                        newCenterY = wmPoint.y + (height * offsetFactor);
+                                    }
+
+                                    const newCenter = new this.ArcGISModules.Point({
+                                        x: newCenterX,
+                                        y: newCenterY,
+                                        spatialReference: { wkid: 3857 }
+                                    });
+
+                                    view.goTo({ center: newCenter }, { animate: true, duration: 300 });
+                                } else {
+                                    view.goTo({ center: targetPoint }, { animate: true, duration: 300 });
+                                }
+                            } catch (e) {
+                                view.goTo({ center: targetPoint }, { animate: true, duration: 300 });
+                            }
+                        }
+                    }
                 }
             });
+
+            if (this.state.detectionsActive) {
+                this.loadDetections(event.image.id);
+            }
 
             // Reverse geocode
             this.fetchReverseGeocode(newImg.lat, newImg.lon);
@@ -1614,6 +1674,123 @@ export default class Widget extends React.PureComponent<
         });
     };
 
+    /**
+        * Toggles the visibility of AI object detections in the Mapillary viewer.
+        * - When activated: Triggers the loading process for the current image.
+        * - When deactivated: Removes all existing detection tags from the viewer.
+    */
+    private toggleDetections = async () => {
+        const newState = !this.state.detectionsActive;
+        this.setState({ detectionsActive: newState });
+
+        if (newState && this.state.imageId) {
+            this.loadDetections(this.state.imageId);
+        } else {
+            // Clear tags if turned off
+            const tagComponent = this.mapillaryViewer?.getComponent("tag");
+            if (tagComponent) tagComponent.removeAll();
+        }
+    };
+
+    /**
+        * Decodes and scales Mapillary detection geometry.
+        * Mapillary API returns geometries as Base64-encoded Vector Tiles (MVT/PBF).
+        * This function:
+        * 1. Converts Base64 to a buffer.
+        * 2. Parses the Vector Tile layer ('mpy-or').
+        * 3. Normalizes coordinates from the tile's internal extent (e.g., 4096) 
+        *    to a 0.0 - 1.0 range required by Mapillary-JS tags.
+        * @param base64Str The raw geometry string from the Mapillary API.
+        * @returns An array of [x, y] coordinate pairs.
+    */
+    private decodeAndNormalizeGeometry(base64Str: string): number[][] {
+        try {
+            const buffer = Uint8Array.from(atob(base64Str), c => c.charCodeAt(0));
+            const tile = new VectorTile(new Pbf(buffer));
+            const layer = tile.layers['mpy-or'];
+            if (!layer) return [];
+
+            const feature = layer.feature(0);
+            const rawGeometry = feature.loadGeometry(); 
+            const extent = layer.extent; 
+
+            // Mapillary-JS uses [x, y] where x is 0-1 (left to right) and y is 0-1 (top to bottom)
+            const points: number[][] = rawGeometry[0].map(p => [
+                p.x / extent, 
+                p.y / extent
+            ]);
+
+            return points;
+        } catch (e) {
+            console.error("MVT Decoding failed:", e);
+            return [];
+        }
+    }
+
+    /**
+        * Fetches AI detection data for a specific image and renders them as interactive tags.
+        * 1. Calls Mapillary Graph API for detection features (value and geometry).
+        * 2. Decodes the MVT geometry for each object.
+        * 3. Creates 'PolygonGeometry' and 'OutlineTag' instances.
+        * 4. Applies custom styling (Mapillary Green theme) and human-friendly labels.
+        * 
+        * @param imageId The ID of the image for which to load detections.
+    */
+    private async loadDetections(imageId: string) {
+        if (!this.mapillaryViewer) return;
+
+        try {
+            const url = `https://graph.mapillary.com/${imageId}/detections?fields=id,value,geometry&access_token=${this.accessToken}`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+
+            const tagComponent = this.mapillaryViewer.getComponent("tag");
+            if (!tagComponent || !data.data) return;
+
+            tagComponent.removeAll(); 
+
+            const tags: OutlineTag[] = [];
+            
+            data.data.forEach((det: any) => {
+                if (!det.geometry) return;
+
+                const points = this.decodeAndNormalizeGeometry(det.geometry);
+
+                // points must be wrapped in PolygonGeometry class
+                if (points.length >= 3) {
+                    try {
+                        // 1. Create the Geometry instance (This adds the .subscribe method needed)
+                        const geometry = new PolygonGeometry(points);
+
+                        // 2. Pass the instance to the Tag
+                        const tag = new OutlineTag(
+                            det.id,
+                            geometry, 
+                            { 
+                                text: det.value.split('--').pop()?.replace(/-/g, ' '), 
+                                textColor: 0xffffff,
+                                lineColor: 0x37d582,
+                                lineWidth: 2,
+                                fillColor: 0x37d582,
+                                fillOpacity: 0.3
+                            }
+                        );
+                        tags.push(tag);
+                    } catch (err) {
+                        console.warn("Could not create tag for detection", det.id, err);
+                    }
+                }
+            });
+
+            if (tags.length > 0) {
+                tagComponent.add(tags);
+                this.log(`Successfully rendered ${tags.length} AI objects.`);
+            }
+        } catch (err) {
+            console.error("Failed to load image detections:", err);
+        }
+    }
+
     // Helper to load image
     private loadImage(url: string): Promise<HTMLImageElement> {
         return new Promise((resolve, reject) => {
@@ -1641,11 +1818,11 @@ export default class Widget extends React.PureComponent<
 
     // Helper: Processes an array in chunks to avoid freezing the UI
     private async processInChunks<T, R>(
-        items: T[], 
-        chunkSize: number, 
-        iterator: (item: T) => Promise<R> | R,
-        onComplete: (results: R[]) => void
-    ) {
+            items: T[], 
+            chunkSize: number, 
+            iterator: (item: T) => Promise<R> | R,
+            onComplete: (results: R[]) => void
+        ) {
         let index = 0;
         const results: R[] = [];
 
@@ -2728,8 +2905,13 @@ export default class Widget extends React.PureComponent<
     private toggleMapillaryTrafficSigns = async () => {
         const { jimuMapView } = this.state;
         if (!jimuMapView) return;
-        if (!this.state.trafficSignsActive && jimuMapView.view.zoom < 16) {
-            this.showZoomWarning("Zoom in closer (≥ 16) to view clickable traffic sign features.");
+        if (!this.state.trafficSignsActive) {
+            const currentZoom = jimuMapView.view.zoom;
+            if (currentZoom < 13) {
+                this.showZoomWarning("Zoom in closer (≥ 13) to see traffic sign coverage.");
+            } else if (currentZoom < 16) {
+                this.showZoomWarning("Zoom in closer (≥ 16) to view clickable traffic sign features.");
+            }
         }
 
         // === Turn OFF ===
@@ -2820,7 +3002,16 @@ export default class Widget extends React.PureComponent<
 
         // Set up zoom watcher
         const zoomHandle = jimuMapView.view.watch("zoom", async (currentZoom) => {
-            if (currentZoom < 16) {
+            if (currentZoom < 13) {
+                // New warning for coverage visibility
+                this.showZoomWarning("Zoom in closer (≥ 13) to see traffic sign coverage.");
+                this._cancelTrafficSignsFetch = true;
+                const specificLayer = jimuMapView.view.map.findLayerById("mapillary-traffic-signs-fl");
+                if (specificLayer) jimuMapView.view.map.remove(specificLayer);
+            } 
+            else if (currentZoom < 16) {
+                // Existing warning for clickable features
+                this.showZoomWarning("Zoom in closer (≥ 16) to view clickable traffic sign features.");
                 this._cancelTrafficSignsFetch = true;
                 const specificLayer = jimuMapView.view.map.findLayerById("mapillary-traffic-signs-fl");
                 if (specificLayer) jimuMapView.view.map.remove(specificLayer);
@@ -2831,6 +3022,8 @@ export default class Widget extends React.PureComponent<
                 }
             } else {
                 this._cancelTrafficSignsFetch = false;
+                // Optionally clear warning if they zoom back in
+                this.clearZoomWarning(); 
             }
         });
         
@@ -2869,8 +3062,13 @@ export default class Widget extends React.PureComponent<
     private toggleMapillaryObjects = async () => {
         const { jimuMapView } = this.state;
         if (!jimuMapView) return;
-        if (!this.state.objectsActive && jimuMapView.view.zoom < 16) {
-            this.showZoomWarning("Zoom in closer (≥ 16) to view clickable object features.");
+        if (!this.state.objectsActive) {
+            const currentZoom = jimuMapView.view.zoom;
+            if (currentZoom < 13) {
+                this.showZoomWarning("Zoom in closer (≥ 13) to see object coverage.");
+            } else if (currentZoom < 16) {
+                this.showZoomWarning("Zoom in closer (≥ 16) to view clickable object features.");
+            }
         }
 
         // === Turn OFF ===
@@ -2959,17 +3157,28 @@ export default class Widget extends React.PureComponent<
 
         // Set up zoom watcher
         const zoomHandle = jimuMapView.view.watch("zoom", async (currentZoom) => {
-            if (currentZoom < 16) {
+            if (currentZoom < 13) {
+                // Warning for coverage visibility
+                this.showZoomWarning("Zoom in closer (≥ 13) to see object coverage.");
+                this._cancelObjectsFetch = true;
+                const specificLayer = jimuMapView.view.map.findLayerById("mapillary-objects-fl");
+                if (specificLayer) jimuMapView.view.map.remove(specificLayer);
+            } 
+            else if (currentZoom < 16) {
+                // Existing warning for clickable features
+                this.showZoomWarning("Zoom in closer (≥ 16) to view clickable object features.");
                 this._cancelObjectsFetch = true;
                 const specificLayer = jimuMapView.view.map.findLayerById("mapillary-objects-fl");
                 if (specificLayer) jimuMapView.view.map.remove(specificLayer);
                 
-                // --- Reset to full list when zoomed out ---
+                // Reset options to full list when zoomed out
                 if (this._fullObjectsOptions.length > 0) {
                     this.setState({ objectsOptions: this._fullObjectsOptions });
                 }
             } else {
+                // Clear warning and allow fetching when zoomed in deep enough
                 this._cancelObjectsFetch = false;
+                this.clearZoomWarning();
             }
         });
 
@@ -3231,8 +3440,7 @@ export default class Widget extends React.PureComponent<
         }
 
         try {
-            // 1. Safely Get Viewer State
-            // We use helper functions or checks to prevent crashes if a method is missing
+            // 1. Get Viewer State
             let bearing = 0;
             let pitch = 0;
             let zoom = 1;
@@ -3240,28 +3448,21 @@ export default class Widget extends React.PureComponent<
             if (typeof this.mapillaryViewer.getBearing === 'function') {
                 try { bearing = await this.mapillaryViewer.getBearing(); } catch (e) {}
             }
-
             if (typeof this.mapillaryViewer.getPitch === 'function') {
                 try { pitch = await this.mapillaryViewer.getPitch(); } catch (e) {}
             }
-
             if (typeof this.mapillaryViewer.getZoom === 'function') {
                 try { zoom = await this.mapillaryViewer.getZoom(); } catch (e) {}
             }
 
-            // 2. Get the correct URL (Handle Iframe context)
-            let currentUrl = window.location.href;
-            try {
-                if (window.self !== window.top && window.parent) {
-                    currentUrl = window.parent.location.href;
-                }
-            } catch (e) {
-                console.warn("Could not access parent URL, using component URL");
-            }
-
-            const url = new URL(currentUrl);
+            // 2. Always use the Widget/Iframe URL (window.location.href)
+            // We removed the code that checks 'window.parent' because the parent
+            // cannot pass parameters down to us automatically.
+            const url = new URL(window.location.href);
             
             // 3. Set params
+            // Note: The URL object automatically handles placing params before the hash (#)
+            // if your URL happens to have one.
             url.searchParams.set('mly_id', this.state.imageId);
             url.searchParams.set('mly_b', bearing.toFixed(1));
             url.searchParams.set('mly_p', pitch.toFixed(1));
@@ -3269,22 +3470,49 @@ export default class Widget extends React.PureComponent<
             
             const urlString = url.toString();
 
-            // 4. Copy to Clipboard
-            if (navigator.clipboard && window.isSecureContext) {
-                await navigator.clipboard.writeText(urlString);
+            // 4. Robust Clipboard Strategy
+            const showSuccessAlert = () => {
                 alert(
                     "Link copied to clipboard!\n\n" +
-                    "This URL saves your current location, camera angle, and zoom level.\n\n" +
-                    "Paste it into a browser address bar to return to this exact view.\n\n" + 
+                    "This link goes directly to this specific view.\n\n" + 
                     urlString
                 );
-            } else {
-                prompt("Copy this link:", urlString);
+            };
+
+            // Strategy A: Async Clipboard
+            if (navigator.clipboard && window.isSecureContext) {
+                try {
+                    await navigator.clipboard.writeText(urlString);
+                    showSuccessAlert();
+                    return; 
+                } catch (clipboardError) {
+                    // Fail silently, try fallback
+                }
             }
 
+            // Strategy B: Textarea Fallback
+            try {
+                const textArea = document.createElement("textarea");
+                textArea.value = urlString;
+                textArea.style.position = "fixed";
+                textArea.style.left = "-9999px";
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                const successful = document.execCommand('copy');
+                document.body.removeChild(textArea);
+                if (successful) {
+                    showSuccessAlert();
+                    return; 
+                }
+            } catch (execError) {}
+
+            // Strategy C: Manual
+            prompt("Copy this link:", urlString);
+
         } catch (err) {
-            console.error("Failed to copy link:", err);
-            alert("Error generating link. Check console for details.");
+            console.error("Error generating link:", err);
+            alert("Error generating link.");
         }
     };
 
@@ -3478,6 +3706,20 @@ export default class Widget extends React.PureComponent<
         };
     }
 
+    // Toggles the year filter on the existing Turbo layer
+    private handleYearLegendClick = (year: string) => {
+        // Toggle: if clicking the already selected year, turn it off (null). Otherwise, select it.
+        const newYear = this.state.selectedTurboYear === year ? null : year;
+        
+        this.setState({ selectedTurboYear: newYear });
+
+        if (this.turboCoverageLayer) {
+            this.turboCoverageLayer.definitionExpression = newYear 
+                ? `date_category = '${newYear}'` 
+                : null; // null clears the filter
+        }
+    }
+
     /*
         * Loads Mapillary "Turbo Mode" coverage points into the map view.
         * - Requires zoom >= minTurboZoom (default 16) or it skips loading.
@@ -3496,6 +3738,9 @@ export default class Widget extends React.PureComponent<
     */
      private async enableTurboCoverageLayer(forceUsernameFilter?: string) {
         if (!this.state.turboModeActive) return;
+
+        // INCREMENT REQUEST ID
+        const requestId = ++this._turboRequestCount;
 
         const {
             jimuMapView,
@@ -3516,11 +3761,18 @@ export default class Widget extends React.PureComponent<
 
         this.setState({ turboLoading: true });
         this.disableTurboCoverageLayer();
+        
+        // CHECK CANCELLATION
+        if (this._turboRequestCount !== requestId) return;
 
         // 1. Resolve Username to ID (One-time check)
         let targetCreatorId: number | null = null;
         if (activeUsername && activeUsername.trim().length > 0) {
             targetCreatorId = await this.getUserIdFromUsername(activeUsername.trim());
+
+            // CHECK CANCELLATION AGAIN AFTER AWAIT
+            if (this._turboRequestCount !== requestId) return;
+
             if (!targetCreatorId) {
                 this.showZoomWarning(`User '${activeUsername}' not found.`, 3000);
                 this.setState({ turboLoading: false });
@@ -3553,6 +3805,10 @@ export default class Widget extends React.PureComponent<
 
         // 3. Process Tiles
         for (const [x, y, z] of tiles) {
+
+            // CHECK CANCELLATION INSIDE LOOP
+            if (this._turboRequestCount !== requestId) return;
+            
             const url = `https://tiles.mapillary.com/maps/vtp/mly1_public/2/${z}/${x}/${y}?access_token=${this.accessToken}`;
             try {
                 const resp = await fetch(url);
@@ -3579,10 +3835,7 @@ export default class Widget extends React.PureComponent<
                                 const t = props.captured_at; 
                                 if (startTime && t < startTime) continue;
                                 if (endTime && t > endTime) continue;
-                                if (turboColorByDate) {
-                                    const d = new Date(t);
-                                    if (!isNaN(d.getTime())) allYears.add(String(d.getFullYear()));
-                                }
+                                // REMOVED: allYears.add() from here
                             } else if (startTime || endTime) {
                                 continue;
                             }
@@ -3594,6 +3847,7 @@ export default class Widget extends React.PureComponent<
                         // ID HANDLING: Convert to string immediately
                         const idStr = String(props.id);
 
+                        // --- BOUNDARY CHECK ---
                         if (
                             !seenIds.has(idStr) &&
                             lon >= bbox[0] && lon <= bbox[2] &&
@@ -3602,8 +3856,14 @@ export default class Widget extends React.PureComponent<
                             seenIds.add(idStr);
 
                             let yearCat: string | null = null;
+                            
+                            // --- FIX: Add to Legend ONLY if point is inside BBOX ---
                             if (turboColorByDate && props.captured_at) {
-                                yearCat = String(new Date(props.captured_at).getFullYear());
+                                const d = new Date(props.captured_at);
+                                if (!isNaN(d.getTime())) {
+                                    yearCat = String(d.getFullYear());
+                                    allYears.add(yearCat); // <--- MOVED HERE
+                                }
                             }
 
                             // --- CREATE FEATURE ---
@@ -3616,7 +3876,7 @@ export default class Widget extends React.PureComponent<
                                 }),
                                 attributes: {
                                     oid: objectIdCounter++, 
-                                    image_id: idStr, // STORE AS STRING 'image_id'
+                                    image_id: idStr, // STORED AS STRING 'image_id'
                                     creator_id: String(props.creator_id), 
                                     sequence_id: String(props.sequence_id || ""),
                                     captured_at: props.captured_at || null, 
@@ -3630,6 +3890,11 @@ export default class Widget extends React.PureComponent<
                     }
                 }
             } catch (err) { }
+        }
+
+        // FINAL CANCELLATION CHECK BEFORE UPDATING MAP
+        if (this._turboRequestCount !== requestId) {
+            return;
         }
 
         if (!features.length) {
@@ -3680,6 +3945,7 @@ export default class Widget extends React.PureComponent<
             title: "Mapillary Turbo Coverage Points",
             source: features,
             objectIdField: "oid",
+            definitionExpression: this.state.selectedTurboYear ? `date_category = '${this.state.selectedTurboYear}'` : undefined,
             fields: [
                 { name: "oid", type: "oid" },
                 { name: "image_id", type: "string" }, // Critical field for lookup
@@ -3697,13 +3963,15 @@ export default class Widget extends React.PureComponent<
             outFields: ["*"] // Ensure all attributes are available on client
         });
 
-        jimuMapView.view.map.add(this.turboCoverageLayer);
-        
-        jimuMapView.view.whenLayerView(this.turboCoverageLayer).then(lv => {
-            this.turboCoverageLayerView = lv;
-        });
-
-        this.setState({ turboLoading: false });
+        // Final safety check
+        if (this._turboRequestCount === requestId) {
+            jimuMapView.view.map.add(this.turboCoverageLayer);
+            
+            jimuMapView.view.whenLayerView(this.turboCoverageLayer).then(lv => {
+                this.turboCoverageLayerView = lv;
+            });
+            this.setState({ turboLoading: false });
+        }
     }
 
     /**
@@ -3786,8 +4054,9 @@ export default class Widget extends React.PureComponent<
                             minWidth: 200,
                         },   
                         cover: false,
+                        tag: true,
                         sequence: {
-                            minWidth: 45,
+                            minWidth: 50,
                             maxWidth: 117
                         }
                     }
@@ -3904,6 +4173,7 @@ export default class Widget extends React.PureComponent<
                 this.mapillaryViewer.resize();
             }
         });
+
         if (this.viewerContainer.current) {
             this.resizeObserver.observe(this.viewerContainer.current);
         }
@@ -3977,7 +4247,7 @@ export default class Widget extends React.PureComponent<
                 if (this.mapillaryViewer) {
                     try { this.mapillaryViewer.resize(); } catch (e) { }
                 }
-            }, 350);
+            }, 100);
         }
 
         if (prevState.isFullscreen !== this.state.isFullscreen) {
@@ -4158,12 +4428,12 @@ export default class Widget extends React.PureComponent<
 	componentWillUnmount() {
 		this.cleanupWidgetEnvironment(true, true);
 
-		// Stop resize observer
-		if (this.resizeObserver && this.viewerContainer.current) {
-			this.resizeObserver.unobserve(this.viewerContainer.current);
-			this.resizeObserver.disconnect();
-			this.resizeObserver = null;
-		}
+        // Stop resize observer
+        if (this.resizeObserver && this.viewerContainer.current) {
+            this.resizeObserver.unobserve(this.viewerContainer.current);
+            this.resizeObserver.disconnect();
+            this.resizeObserver = null;
+        }
 
         if (this.tooltipDiv && this.tooltipDiv.parentNode) {
             this.tooltipDiv.parentNode.removeChild(this.tooltipDiv);
@@ -4771,8 +5041,8 @@ export default class Widget extends React.PureComponent<
                 type: "simple-marker",
                 style: "circle",
                 color: color,
-                size: 10,
-                outline: {color: "white", width: 2},
+                size: 9,
+                outline: {color: "#e3da30", width: 1},
             },
             attributes: sequenceId ? { sequenceId: sequenceId } : undefined
         });
@@ -5305,16 +5575,16 @@ export default class Widget extends React.PureComponent<
                 />
 
                 {/* Legend Section */}
-                {this.state.imageId && !this.props.config.hideLegend && (
+                {this.state.imageId && !this.props.config.hideLegend && !this.state.isFullscreen && (
                     <div className="legend-container" 
                         style={{
                             position: "absolute",
-                            bottom: "5px",
-                            left: "5px",
+                            bottom: "2px",
+                            left: "4px",
                             background: "rgba(0, 0, 0, 0.30)",
                             backdropFilter: "blur(5px)",
                             borderRadius: "4px",
-                            padding: "4px 6px", // Uniform padding
+                            padding: "4px 6px",
                             boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
                             border: "1px solid rgba(255,255,255,0.1)",
                             zIndex: 999,
@@ -5340,17 +5610,17 @@ export default class Widget extends React.PureComponent<
                             {this.state.turboModeActive ? (
                                 <React.Fragment>
                                     <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('#00ff00'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Active frame</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('blue'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Seq. images</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('blue'), border: '1px solid #e3da30'}}></span> <span style={this.legendTextStyle()}>Seq. images</span></div>
                                     <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('#a52a2a'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Turbo coverage</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('transparent'), border: '1.5px solid cyan'}}></span> <span style={this.legendTextStyle()}>Highlighted</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('yellow'), border: '1px solid orange'}}></span> <span style={this.legendTextStyle()}>Navigation</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('transparent'), border: '1.5px solid cyan'}}></span> <span style={this.legendTextStyle()}>First selected</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('yellow'), border: '2px solid orange'}}></span> <span style={this.legendTextStyle()}>Next frame</span></div>
                                 </React.Fragment> 
                             ) : (
                                 <React.Fragment>
                                     <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('black'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Clicked point</span></div>
                                     <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('#00ff00'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Active frame</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('blue'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Active seq</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('yellow'), border: '2px solid orange'}}></span> <span style={this.legendTextStyle()}>Navigation</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('e3da30'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Active seq</span></div>
+                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('yellow'), border: '2px solid orange'}}></span> <span style={this.legendTextStyle()}>Next frame</span></div>
                                     <button onClick={this.clearSequenceCache} style={this.compactButtonStyle()}>CLEAR CACHE</button>
                                 </React.Fragment> 
                             )}
@@ -5374,7 +5644,7 @@ export default class Widget extends React.PureComponent<
                             
                             {/* Compact Text */}
                             <div style={glassStyles.compactLoadingText}>
-                                Turbo Mode is loading coverage points...
+                                Fetching Turbo coverage points...
                             </div>
                             
                             <style>{`
@@ -5443,96 +5713,76 @@ export default class Widget extends React.PureComponent<
                     </div>
                 )}
 
-                {/* --- DOWNLOAD CURRENT IMAGE BUTTON --- */}
-                {!this.props.config.hideImageDownload && this.state.imageId && (
-                    <button
-                        title="Download current image (High Res)"
-                        onClick={this.downloadActiveImage}
-                        style={{
-                            position: "absolute",
-                            bottom: "22px",
-                            right: "52px",
-                            zIndex: 10000,
-                            background: "rgba(0, 0, 0, 0.3)",
-                            color: "white",
-                            border: "1px solid rgba(255,255,255,0.2)",
-                            borderRadius: "4px",
-                            padding: "3px",
-                            cursor: this.state.isDownloading ? 'wait' : 'pointer',
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            transition: "background 0.2s"
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(0, 0, 0, 0.8)"}
-                        onMouseLeave={(e) => e.currentTarget.style.background = "rgba(0, 0, 0, 0.3)"}
-                    >
-                        <Icons.Download />
-                    </button>
-                )}
+                {/* --- IMAGE UTILITY GROUP (Glassmorphism) --- */}
+                {this.state.imageId && (
+                    <div className="glass-image-utility-panel" style={{
+                        position: "absolute",
+                        bottom: "22px",
+                        right: "55px",
+                        zIndex: 10000,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "3px",
+                        padding: "1px 3px 1px 2px",
+                        background: "rgba(20, 20, 20, 0.4)", // Matches your sidebar background
+                        backdropFilter: "blur(1px)",
+                        WebkitBackdropFilter: "blur(1px)",
+                        borderRadius: "12px",
+                        boxShadow: "0 8px 32px 0 rgba(0, 0, 0, 0.30)",
+                    }}>
+                        {/* 1. TimeTravel Button */}
+                        {!this.props.config.hideTimeTravel && this.state.hasTimeTravel && (
+                            <button className="utility-button"
+                                title="Open in Mapillary Time Travel"
+                                onClick={() => {
+                                    const currentImg = this.state.sequenceImages.find(i => i.id === this.state.imageId);
+                                    if (currentImg) {
+                                        const url = `https://www.mapillary.com/app/time-travel?lat=${currentImg.lat}&lng=${currentImg.lon}&z=17&pKey=${this.state.imageId}&focus=photo`;
+                                        window.open(url, '_blank');
+                                    }
+                                }}
+                                style={glassStyles.getButtonStyle(true, 'rgba(240, 185, 5, 0.3)')} // Gold-ish tint
+                                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                                onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1.05)')}
+                            >
+                                <Icons.TimeTravel style={{ color: "#FFD700" }} />
+                            </button>
+                        )}
 
-                {/* SHARE BUTTON */}
-                {!this.props.config.hideShareButton && this.state.imageId && (
-                    <button
-                        title="Share current view"
-                        onClick={this.copyShareLink}
-                        style={{
-                            position: "absolute",
-                            bottom: "46px",
-                            right: "52px", // Positioned to the left of the Download/TimeTravel buttons
-                            zIndex: 10000,
-                            background: "rgba(0, 0, 0, 0.3)",
-                            color: "white",
-                            border: "1px solid rgba(255,255,255,0.2)",
-                            borderRadius: "4px",
-                            padding: "3px",
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            transition: "background 0.2s"
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(0, 0, 0, 0.8)"}
-                        onMouseLeave={(e) => e.currentTarget.style.background = "rgba(0, 0, 0, 0.3)"}
-                    >
-                        <Icons.Share />
-                    </button>
-                )}
+                        {/* 2. Share Button */}
+                        {!this.props.config.hideShareButton && (
+                            <button className="utility-button"
+                                title="Share current view"
+                                onClick={this.copyShareLink}
+                                style={glassStyles.getButtonStyle(false, 'rgba(255, 255, 255, 0.2)')}
+                                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                                onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                            >
+                                <Icons.Share />
+                            </button>
+                        )}
 
-                {/* --- TIMETRAVEL BUTTON --- */}
-                {!this.props.config.hideTimeTravel && this.state.imageId && this.state.hasTimeTravel && (
-                    <button
-                        title="Open in Mapillary Time Travel"
-                        onClick={() => {
-                            const currentImg = this.state.sequenceImages.find(i => i.id === this.state.imageId);
-                            if (currentImg) {
-                                // Construct the specific Time Travel URL
-                                // We use the current image ID as pKey (Photo Key)
-                                const url = `https://www.mapillary.com/app/time-travel?lat=${currentImg.lat}&lng=${currentImg.lon}&z=17&pKey=${this.state.imageId}&focus=photo`;
-                                window.open(url, '_blank');
-                            }
-                        }}
-                        style={{
-                            position: "absolute",
-                            bottom: "70px", 
-                            right: "52px", 
-                            zIndex: 10000,
-                            background: "rgba(0, 0, 0, 0.3)",
-                            color: "#ffc107b7",
-                            border: "1px solid rgba(255,255,255,0.2)",
-                            borderRadius: "4px",
-                            padding: "3px",
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            transition: "background 0.2s"
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(0, 0, 0, 0.8)"}
-                        onMouseLeave={(e) => e.currentTarget.style.background = "rgba(0, 0, 0, 0.3)"}
-                    >
-                        <Icons.TimeTravel />
-                    </button>
+                        {/* 3. Download Button */}
+                        {!this.props.config.hideImageDownload && (
+                            <button className="utility-button"
+                                title="Download current image (High Res)"
+                                onClick={this.downloadActiveImage}
+                                style={glassStyles.getButtonStyle(false, 'rgba(255, 255, 255, 0.2)')}
+                                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                                onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                            >
+                                {this.state.isDownloading ? (
+                                    <div style={{ 
+                                        width: "14px", height: "14px", 
+                                        border: "2px solid #fff", borderTopColor: "transparent", 
+                                        borderRadius: "50%", animation: "spin 1s linear infinite" 
+                                    }} />
+                                ) : (
+                                    <Icons.Download />
+                                )}
+                            </button>
+                        )}
+                    </div>
                 )}
             </div>
         );
@@ -5583,35 +5833,35 @@ export default class Widget extends React.PureComponent<
                             position: "absolute",
                             top: "6px", // Aligned with the top of your glass container
                             left: "48px", // Pushed out to the right of the buttons
-                            zIndex: 9999,
-                            
+                            zIndex: 9999,        
                             // Glassmorphism - Warning Style
                             background: "linear-gradient(135deg, rgba(255, 140, 0, 0.9) 0%, rgba(255, 69, 0, 0.4) 100%)", // Orange-to-Redish Glass
                             backdropFilter: "blur(14px)",
                             WebkitBackdropFilter: "blur(14px)",
                             border: "1px solid rgba(255, 165, 0, 0.3)", // Subtle orange border
                             boxShadow: "0 4px 15px rgba(0, 0, 0, 0.3), inset 0 0 10px rgba(255, 165, 0, 0.1)", // Depth + Inner Glow
-                            
                             // Typography & Layout
                             color: "#fff",
                             padding: "3px 4px",
                             borderRadius: "10px",
-                            fontSize: "9.5px",
-                            fontWeight: "500",
+                            fontSize: "9px",
+                            fontWeight: "600",
                             maxWidth: "90px", // Slightly wider for better readability
-                            lineHeight: "1.3",
+                            fontFamily: '"Poppins", "Montserrat", sans-serif',
+                            lineHeight: "1.25",
+                            letterSpacing: "0.4px",
+                            textShadow: "0px 1px 2px rgba(0,0,0,0.2)", // Lifts the white text off the glass
                             textAlign: "center",
                             display: "flex",
                             alignItems: "center",
                             gap: "6px",
-                            
                             // Animation
                             animation: "fadeIn 0.3s ease-out",
                             transformOrigin: "left center"
                         }}
                     >
                         {/* Icon wrapper to keep it from shrinking */}
-                        <span style={{  filter: 'drop-shadow(0 0 4px rgba(255,165,0,0.6))' }}>  <Icons.Warning size={16} /> {this.state.zoomWarningMessage}</span>
+                        <span style={{  filter: 'drop-shadow(0 0 4px rgba(255,165,0,0.6))' }}>  <Icons.Warning size={14} /> WARNING <br/> {this.state.zoomWarningMessage}</span>
                     </div>
                 )}
 
@@ -5705,99 +5955,259 @@ export default class Widget extends React.PureComponent<
                         )}
                     </div>
                 )}
-
-                {/* Info box */}
-                {!this.props.config.hideInfoBox && (
-                    <div className="info-box"
-                        style={{
-                            fontSize: "9px",
-                            color: "white",
-                            position: "absolute",
-                            top: "5px",
-                            right: "5px",
-                            // Modern Dark Neutral with Blur
-                            background: "rgba(0, 0, 0, 0.35)",
-                            backdropFilter: "blur(5px)", 
-                            borderRadius: "6px",
-                            maxWidth: "80px",
-                            textAlign: "left",
-                            padding: "5px",
-                            boxShadow: "0 4px 15px rgba(0, 0, 0, 0.3)",
-                            border: "1px solid rgba(255,255,255,0.1)",
-                            zIndex: 10002,
-                            pointerEvents: "none" // Mouse passes through to viewer
-                        }}
-                    >
-                        {/* Header/Zoom Section */}
-                        <div style={{ 
-                            display: 'flex', 
-                            justifyContent: 'space-between', 
-                            alignItems: 'center',
-                            marginBottom: '3px',
-                            opacity: 0.8,
-                            fontSize: '10px',
-                            borderBottom: '1px solid rgba(255,255,255,0.2)',
-                            paddingBottom: '4px'
-                        }}>
-                            <span style={{fontWeight: 600, fontSize:'8px'}}>STATUS</span>
-                            <span>
-                                <Icons.Search size={9} style={{marginRight:'2px', marginLeft:'2px'}}/> 
-                                    <span style={{fontSize:'8px'}}>Z: {this.state.currentZoom !== undefined 
-                                        ? this.state.currentZoom.toFixed(1) 
-                                        : this.state.jimuMapView?.view.zoom.toFixed(1)}
-                                    </span>
-                            </span>
-                        </div>
-
-                        {/* Address Section */}
-                        {this.state.address && (
-                            <div style={{ marginBottom: "3px", color: "#37d582", fontWeight: 500 }}>
-                                <Icons.Globe size={12} style={{marginRight: '4px'}}/>
-                                {this.state.address}
-                            </div>
-                        )}
-
-                        {/* Coordinates Section */}
-                        {(() => {
-                            if (this.state.imageId && this.state.sequenceImages.length > 0) {
-                                const currentImg = this.state.sequenceImages.find(
-                                    img => img.id === this.state.imageId
-                                );
-                                if (currentImg) {
-                                    return (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', opacity: 0.9 }}>
-                                            <div style={{display: 'flex', alignItems: 'center'}}>
-                                                <span style={{width: '25px', fontSize: '9px', color: '#aaa'}}>LAT</span>
-                                                <span>{currentImg.lat.toFixed(6)}</span>
-                                            </div>
-                                            <div style={{display: 'flex', alignItems: 'center'}}>
-                                                <span style={{width: '25px', fontSize: '9px', color: '#aaa'}}>LON</span>
-                                                <span>{currentImg.lon.toFixed(6)}</span>
-                                            </div>
-                                        </div>
-                                    );
-                                }
-                            }
-                            return null;
-                        })()}
-
-                        {/* Dynamic User Filter Tag (If Turbo Creator set) */}
-                        {this.props.config.turboCreator && (
-                            <div style={{
-                                marginTop: "4px",
-                                padding: "1px 3px",
-                                background: "rgba(55, 213, 130, 0.2)",
-                                border: "1px solid rgba(55, 213, 130, 0.4)",
-                                borderRadius: "3px",
-                                fontSize: "9px",
-                                color: "#37d582",
-                                textAlign: "center"
+                <div style={{ 
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    alignItems: 'flex-end', // Keeps everything flush to the right edge
+                    position: "absolute", 
+                    top: "2px", 
+                    right: "4px", 
+                    zIndex: 10002,
+                    pointerEvents: "none" // Let clicks pass through empty spaces
+                }}>
+                    {/* Info box */}
+                    {!this.props.config.hideInfoBox && (
+                        <div className="info-box"
+                            style={{
+                                fontSize: "8.5px",
+                                color: "white",
+                                background: "rgba(0, 0, 0, 0.35)",
+                                backdropFilter: "blur(5px)", 
+                                borderRadius: "6px",
+                                width: "80px", // Use fixed width instead of maxWidth
+                                textAlign: "left",
+                                padding: "5px",
+                                boxShadow: "0 4px 15px rgba(0, 0, 0, 0.3)",
+                                border: "1px solid rgba(255,255,255,0.1)",
+                                pointerEvents: "auto" // Enable clicks inside the box
+                            }}
+                        >
+                            {/* Header/Zoom Section */}
+                            <div style={{ 
+                                display: 'flex', 
+                                justifyContent: 'space-between', 
+                                alignItems: 'center',
+                                marginBottom: '3px',
+                                opacity: 0.8,
+                                fontSize: '10px',
+                                borderBottom: '1px solid rgba(255,255,255,0.2)',
+                                paddingBottom: '4px'
                             }}>
-                                {this.props.config.turboCreator}
+                                <span style={{fontWeight: 600, fontSize:'8px'}}>STATUS</span>
+                                <span>
+                                    <Icons.Search size={9} style={{marginRight:'2px', marginLeft:'2px'}}/> 
+                                        <span style={{fontSize:'8px'}}>Z: {this.state.currentZoom !== undefined 
+                                            ? this.state.currentZoom.toFixed(1) 
+                                            : this.state.jimuMapView?.view.zoom.toFixed(1)}
+                                        </span>
+                                </span>
                             </div>
-                        )}
-                    </div>
-                )}
+
+                            {/* Address Section */}
+                            {this.state.address && (
+                                <div style={{ marginBottom: "3px", color: "#37d582", fontWeight: 500 }}>
+                                    <Icons.Globe size={12} style={{marginRight: '4px'}}/>
+                                    {this.state.address}
+                                </div>
+                            )}
+
+                            {/* Coordinates Section */}
+                            {(() => {
+                                if (this.state.imageId && this.state.sequenceImages.length > 0) {
+                                    const currentImg = this.state.sequenceImages.find(
+                                        img => img.id === this.state.imageId
+                                    );
+                                    if (currentImg) {
+                                        return (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', opacity: 0.9 }}>
+                                                <div style={{display: 'flex', alignItems: 'center'}}>
+                                                    <span style={{width: '25px', fontSize: '9px', color: '#aaa'}}>LAT</span>
+                                                    <span>{currentImg.lat.toFixed(6)}</span>
+                                                </div>
+                                                <div style={{display: 'flex', alignItems: 'center'}}>
+                                                    <span style={{width: '25px', fontSize: '9px', color: '#aaa'}}>LON</span>
+                                                    <span>{currentImg.lon.toFixed(6)}</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+                                }
+                                return null;
+                            })()}
+
+                            {/* Dynamic User Filter Tag (If Turbo Creator set) */}
+                            {this.props.config.turboCreator && (
+                                <div style={{
+                                    marginTop: "4px",
+                                    padding: "1px 3px",
+                                    background: "rgba(55, 213, 130, 0.2)",
+                                    border: "1px solid rgba(55, 213, 130, 0.4)",
+                                    borderRadius: "3px",
+                                    fontSize: "9px",
+                                    color: "#37d582",
+                                    textAlign: "center"
+                                }}>
+                                    {this.props.config.turboCreator}
+                                </div>
+                            )}
+                            
+                            {/* --- Turbo Mode Date Legend --- */}
+                            {this.state.turboModeActive && this.state.turboColorByDate && this.state.turboYearLegend && this.state.turboYearLegend.length > 0 && (
+                                <div 
+                                    className="year-legend-scroll"
+                                    style={{
+                                        marginTop: "4px",
+                                        paddingTop: "4px",
+                                        borderTop: "1px solid rgba(255,255,255,0.2)",
+                                        // Centering
+                                        display: "flex",
+                                        flexDirection: "column",
+                                        alignItems: "center",
+                                        // Scroll Logic
+                                        maxHeight: "65px",       // Max height before scroll triggers
+                                        overflowY: "auto",       // Enable vertical scrolling
+                                        pointerEvents: "auto",   // Re-enables mouse interaction for scrolling
+                                        overflowX: "hidden",
+                                        scrollbarColor: "rgba(255,255,255,0.3) transparent" 
+
+                                    }}
+                                >
+                                    {/* Hide Scrollbar for Chrome/Safari so it fits the small box */}
+                                    <style>{`
+                                        .year-legend-scroll::-webkit-scrollbar { 
+                                            display: none; 
+                                        }
+                                    `}</style>
+
+                                    <div style={{ fontSize: "8px", fontWeight: 600, opacity: 0.7, marginBottom: "2px", textAlign: "center", width: "100%" }}>
+                                        YEARS
+                                    </div>
+                                    
+                                    {this.state.turboYearLegend.map((item) => {
+                                        // Determine styling based on selection state
+                                        const isSelected = this.state.selectedTurboYear === item.year;
+                                        const isAnySelected = !!this.state.selectedTurboYear;
+                                        
+                                        // Dim other items if one is selected
+                                        const opacity = isAnySelected && !isSelected ? 0.3 : 1;
+                                        const fontWeight = isSelected ? 800 : 400;
+                                        const scale = isSelected ? "scale(1.1)" : "scale(1)";
+
+                                        return (
+                                            <div 
+                                                key={item.year} 
+                                                onClick={() => this.handleYearLegendClick(item.year)}
+                                                style={{ 
+                                                    display: 'flex', 
+                                                    alignItems: 'center', 
+                                                    justifyContent: 'center',
+                                                    marginBottom: '3px', 
+                                                    gap: '6px', // Slightly more gap for clickable feel
+                                                    width: '100%',
+                                                    flexShrink: 0,
+                                                    cursor: 'pointer',  // Show hand cursor
+                                                    opacity: opacity,
+                                                    transition: 'all 0.2s ease',
+                                                    transform: scale
+                                                }}
+                                                title={isSelected ? "Click to show all years" : `Filter by ${item.year}`}
+                                            >
+                                                <span style={{
+                                                    width: '8px',  // Slightly larger touch target
+                                                    height: '8px',
+                                                    borderRadius: '50%',
+                                                    backgroundColor: item.color,
+                                                    border: isSelected ? '1.5px solid white' : '1px solid rgba(255,255,255,0.6)',
+                                                    boxShadow: isSelected ? '0 0 4px rgba(255,255,255,0.8)' : 'none',
+                                                    flexShrink: 0
+                                                }}></span>
+                                                <span style={{ 
+                                                    whiteSpace: 'nowrap', 
+                                                    fontWeight: fontWeight,
+                                                    color: isSelected ? '#fff' : 'rgba(255,255,255,0.9)'
+                                                }}>
+                                                    {item.year}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* AI DETECTION BUTTON (Stacked below Info box) */}
+                    {(this.state.trafficSignsActive || this.state.objectsActive) && this.state.imageId && (
+                        <button 
+                            onClick={this.toggleDetections}
+                            title="Toggle AI Object Detection Overlays"
+                            style={{
+                                marginTop: '2px',
+                                // Base background logic
+                                background: this.state.detectionsActive ? 'rgba(55, 213, 130, 0.8)' : 'rgba(55, 213, 130, 0.5)',
+                                border: '1px solid rgba(255,255,255,0.2)',
+                                color: 'white',
+                                borderRadius: '6px',
+                                width: '80px', 
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                pointerEvents: 'auto',
+                                backdropFilter: 'blur(5px)',
+                                transition: "background 0.2s" // Added for smoother transitions
+                            }}
+                            // Hover: Brighter green
+                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(55, 213, 130, 0.95)'}
+                            // Leave: Return to the EXACT color based on the current state
+                            onMouseLeave={e => e.currentTarget.style.background = this.state.detectionsActive ? 'rgba(55, 213, 130, 0.8)' : 'rgba(55, 213, 130, 0.4)'}
+                        >
+                            <Icons.Detection size={14} /> 
+                            <span style={{fontSize: '8px', marginLeft: '4px', fontWeight: 700}}>AI OVERLAY</span>
+                        </button>
+                    )}
+
+                    {/* DOWNLOAD BUTTON (Stacked below AI button) */}
+                    {(this.state.trafficSignsActive || this.state.objectsActive) && (
+                        <button 
+                            onClick={this.downloadCurrentFeatures} 
+                            title="Export Current Features as GeoJSON"
+                            style={{
+                                marginTop: '4px',
+                                background: 'rgba(55, 213, 130, 0.5)',
+                                backdropFilter: 'blur(10px)',
+                                WebkitBackdropFilter: 'blur(10px)',
+                                border: '1px solid rgba(255, 255, 255, 0.3)',
+                                color: '#fff',
+                                borderRadius: '6px', // Pill shape
+                                fontSize: '9px',
+                                cursor: (this.state.jimuMapView?.view.zoom < 16) ? 'not-allowed' : 'pointer',
+                                opacity: (this.state.jimuMapView?.view.zoom < 16) ? 0.6 : 1,
+                                width: '80px', 
+                                fontWeight: 600,
+                                letterSpacing: '0.5px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '6px',
+                                pointerEvents: "auto",
+                                transition: "all 0.2s ease-in-out",
+                                boxShadow: '0 4px 15px rgba(0,0,0,0.2)'
+                            }}
+                            onMouseEnter={e => {
+                                e.currentTarget.style.background = 'rgba(55, 213, 130, 0.8)';
+                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.6)';
+                            }}
+                            onMouseLeave={e => {
+                                e.currentTarget.style.background = 'rgba(55, 213, 130, 0.5)';
+                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                            }}
+                        >
+                            <Icons.Download size={12} color="#ffffff" /> 
+                            <span>EXPORT</span>
+                        </button>
+                    )}
+                </div>
                 
                 {/* --- UNIFIED FILTER BAR --- */}
                 {(this.state.showTurboFilterBox || this.state.showTrafficSignsFilterBox || this.state.showObjectsFilterBox) && (
@@ -6099,7 +6509,7 @@ export default class Widget extends React.PureComponent<
                 {/* Unified control buttons container */}
                 <div
                     className="glass-control-panel"
-                    style={glassStyles.container}
+                        style={glassStyles.container}
                     >
                     {/* Individual buttons (no grouping) */}
                     {[
@@ -6143,136 +6553,139 @@ export default class Widget extends React.PureComponent<
                         ))
                     }
 
-                    {/* Turbo Mode Group */}
-                    <div style={glassStyles.groupContainer(this.state.turboModeActive)}>
-                        {/* Main Turbo Button */}
-                        {!this.props.config.turboModeOnly && (
-                            <button className="unified-control-buttons"
-                                title="Toggle Turbo Mode"
-                                onClick={async () => {
-                                    const next = !this.state.turboModeActive;
-                                    this.setState({ turboModeActive: next });
+                    {/* Turbo Mode Group - Only render if at least one button is visible */}
+                    {(!this.props.config.turboModeOnly || !this.props.config.hideTurboFilter) && (
+                        <div style={glassStyles.groupContainer(this.state.turboModeActive)}>
+                            {/* Main Turbo Button */}
+                            {!this.props.config.turboModeOnly && (
+                                <button className="unified-control-buttons"
+                                    title="Toggle Turbo Mode"
+                                    onClick={async () => {
+                                        const next = !this.state.turboModeActive;
+                                        this.setState({ turboModeActive: next });
 
-                                    if (next) {
-                                        const view = this.state.jimuMapView?.view;
-                                        if (this.state.jimuMapView?.view.zoom! < 16) {
-                                            this.showZoomWarning("Zoom in closer (≥ 16) to view and interact with Mapillary coverage point features in Turbo Mode.");
-                                        }
-                                        this.clearSequenceUI();
-                                        if (view) {
-                                            // wait until view is stable (critical for correct tile fetching)
-                                            await view.when();
-                                            await view.when(() => view.stationary === true);
-                                        }
-                                        // now extent is correct, first coverage load will be immediate
-                                        this.enableTurboCoverageLayer();
+                                        if (next) {
+                                            const view = this.state.jimuMapView?.view;
+                                            if (this.state.jimuMapView?.view.zoom! < 16) {
+                                                this.showZoomWarning("Zoom in closer (≥ 16) to view and interact with Mapillary coverage point features in Turbo Mode.");
+                                            }
+                                            this.clearSequenceUI();
+                                            if (view) {
+                                                // wait until view is stable (critical for correct tile fetching)
+                                                await view.when();
+                                                await view.when(() => view.stationary === true);
+                                            }
+                                            // now extent is correct, first coverage load will be immediate
+                                            this.enableTurboCoverageLayer();
 
-                                        if (this.state.jimuMapView) {
+                                            if (this.state.jimuMapView) {
+                                                if (this.turboStationaryHandle) {
+                                                    this.turboStationaryHandle.remove();
+                                                    this.turboStationaryHandle = null;
+                                                }
+                                                this.turboStationaryHandle = this.state.jimuMapView.view.watch(
+                                                    "stationary",
+                                                    this.debounce(async (isStationary) => {
+                                                        if (isStationary && this.state.turboModeActive) {
+                                                            if (this.state.jimuMapView.view.zoom < 16) return;
+                                                            // use filter if entered
+                                                            const filter = this.state.turboFilterUsername.trim();
+                                                            if (filter) {
+                                                                await this.enableTurboCoverageLayer(filter);
+                                                            } else {
+                                                                await this.enableTurboCoverageLayer();
+                                                            }
+                                                        }
+                                                    }, 500)
+                                                );
+
+                                                if (this.turboZoomHandle) {
+                                                    this.turboZoomHandle.remove();
+                                                    this.turboZoomHandle = null;
+                                                }
+
+                                                this.turboZoomHandle = this.state.jimuMapView.view.watch("zoom", (z) => {
+                                                    const minTurboZoom = 16;
+                                                    if (this.state.turboModeActive && z < minTurboZoom) {
+                                                        this.disableTurboCoverageLayer();
+                                                    }
+                                                });
+                                            }
+                                        } else {
+                                            this.disableTurboCoverageLayer();
+                                            // Remove any watchers
                                             if (this.turboStationaryHandle) {
                                                 this.turboStationaryHandle.remove();
                                                 this.turboStationaryHandle = null;
                                             }
-                                            this.turboStationaryHandle = this.state.jimuMapView.view.watch(
-                                                "stationary",
-                                                this.debounce(async (isStationary) => {
-                                                    if (isStationary && this.state.turboModeActive) {
-                                                        if (this.state.jimuMapView.view.zoom < 16) return;
-                                                        // use filter if entered
-                                                        const filter = this.state.turboFilterUsername.trim();
-                                                        if (filter) {
-                                                            await this.enableTurboCoverageLayer(filter);
-                                                        } else {
-                                                            await this.enableTurboCoverageLayer();
-                                                        }
-                                                    }
-                                                }, 500)
-                                            );
-
                                             if (this.turboZoomHandle) {
                                                 this.turboZoomHandle.remove();
                                                 this.turboZoomHandle = null;
                                             }
+                                            
+                                            // This completely resets the viewer, graphics, and local storage
+                                            this.clearSequenceCache(); 
 
-                                            this.turboZoomHandle = this.state.jimuMapView.view.watch("zoom", (z) => {
-                                                const minTurboZoom = 16;
-                                                if (this.state.turboModeActive && z < minTurboZoom) {
-                                                    this.disableTurboCoverageLayer();
-                                                }
+                                            // Reset ALL Turbo-related state values
+                                            this.setState({
+                                                turboFilterUsername: "",
+                                                turboFilterStartDate: "",
+                                                turboFilterEndDate: "",
+                                                turboFilterIsPano: undefined,
+                                                turboColorByDate: false,
+                                                turboYearLegend: [],
+                                                showTurboFilterBox: false
                                             });
                                         }
-                                    } else {
-                                        this.disableTurboCoverageLayer();
-                                        // Remove any watchers
-                                        if (this.turboStationaryHandle) {
-                                            this.turboStationaryHandle.remove();
-                                            this.turboStationaryHandle = null;
-                                        }
-                                        if (this.turboZoomHandle) {
-                                            this.turboZoomHandle.remove();
-                                            this.turboZoomHandle = null;
-                                        }
-                                        
-                                        // This completely resets the viewer, graphics, and local storage
-                                        this.clearSequenceCache(); 
-
-                                        // Reset ALL Turbo-related state values
-                                        this.setState({
-                                            turboFilterUsername: "",
-                                            turboFilterStartDate: "",
-                                            turboFilterEndDate: "",
-                                            turboFilterIsPano: undefined,
-                                            turboColorByDate: false,
-                                            turboYearLegend: [],
-                                            showTurboFilterBox: false
-                                        });
-                                    }
-                                }}
-                                style={glassStyles.getButtonStyle(this.state.turboModeActive, 'rgba(255, 215, 0, 0.9)')} // Gold
-                                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
-                                onMouseLeave={e => (e.currentTarget.style.transform = this.state.turboModeActive ? 'scale(1.1)' : 'scale(1)')}
-                            >
-                                <Icons.Turbo size={20}/> 
-                            </button>
-                        )}  
-
-                        {/* Turbo Filter Button */}
-                        {!this.props.config.hideTurboFilter && (   
-                            <button className="unified-control-buttons-filters"
-                                title="Filter Turbo Mode Coverage"
-                                onClick={() => {
-                                    if (!this.state.turboModeActive) return;
-                                    this.setState(prev => ({ showTurboFilterBox: !prev.showTurboFilterBox }));
-                                }}
-                                style={{
-                                    ...glassStyles.getButtonStyle(this.state.showTurboFilterBox, 'rgba(255, 215, 0, 0.9)', true),
-                                    opacity: this.state.turboModeActive ? 1 : 0.3,
-                                    cursor: this.state.turboModeActive ? 'pointer' : 'default',
-                                    marginTop: '2px'
-                                }}
-                            >
-                                <Icons.TurboFilter size={16}/>
-                            </button>
-                        )}
-                    </div>
-
+                                    }}
+                                    style={glassStyles.getButtonStyle(this.state.turboModeActive, 'rgba(95, 92, 53, 0.30)')} // Gold
+                                    onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                                    onMouseLeave={e => (e.currentTarget.style.transform = this.state.turboModeActive ? 'scale(1.1)' : 'scale(1)')}
+                                >
+                                    <Icons.Turbo size={20}
+                                        style={{ filter: this.state.turboModeActive ? 'drop-shadow(0 0 1.2px grey)' : 'none' }}
+                                    /> 
+                                </button>
+                            )}  
+                            {/* Turbo Filter Button */}
+                            {!this.props.config.hideTurboFilter && (   
+                                <button className="unified-control-buttons-filters"
+                                    title="Filter Turbo Mode Coverage"
+                                    onClick={() => {
+                                        if (!this.state.turboModeActive) return;
+                                        this.setState(prev => ({ showTurboFilterBox: !prev.showTurboFilterBox }));
+                                    }}
+                                    onMouseEnter={e => {
+                                        if (this.state.turboModeActive) e.currentTarget.style.transform = 'scale(1.1)';
+                                    }}
+                                    onMouseLeave={e => {
+                                        e.currentTarget.style.transform = 'scale(1)';
+                                    }}
+                                    style={{
+                                        ...glassStyles.getButtonStyle(this.state.showTurboFilterBox, 'rgba(255, 215, 0, 0.5)', true),
+                                        opacity: this.state.turboModeActive ? 1 : 0.6,
+                                        cursor: this.state.turboModeActive ? 'pointer' : 'default'
+                                    }}
+                                >
+                                    <Icons.Filter size={16}/>
+                                </button>
+                            )}
+                        </div>
+                    )}
                     {/* Traffic Signs Group */}
                     {this.props.config.enableTrafficSigns !== false && (
-                        <div style={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: '2px',
-                                borderRadius: '6px',
-                                background: this.state.trafficSignsActive ? 'rgba(255,165,0,0.2)' : 'rgba(100,100,100,0.1)',
-                            }}>
+                        <div style={glassStyles.groupContainer(this.state.trafficSignsActive)}>
                             {/* Main Traffic Signs Button */}
                             <button className="unified-control-buttons"
                                 title="Toggle Mapillary Traffic Signs Layer"
                                 onClick={this.toggleMapillaryTrafficSigns}
-                                style={glassStyles.getButtonStyle(this.state.trafficSignsActive, 'rgba(255, 165, 0, 0.9)')} // Orange
+                                style={glassStyles.getButtonStyle(this.state.trafficSignsActive, 'rgba(147, 102, 19, 0.3)')} // Orange
                                 onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                 onMouseLeave={e => (e.currentTarget.style.transform = this.state.trafficSignsActive ? 'scale(1.1)' : 'scale(1)')}
                             >
-                                <Icons.AllMapillaryTrafficSigns size={16}/> 
+                                <Icons.AllMapillaryTrafficSigns size={16}
+                                    style={{ filter: this.state.trafficSignsActive ? 'drop-shadow(0 0 1.2px grey)' : 'none' }}
+                                /> 
                             </button>
 
                             {/* Traffic Signs Filter Button */}
@@ -6282,36 +6695,38 @@ export default class Widget extends React.PureComponent<
                                     if (!this.state.trafficSignsActive) return;
                                     this.setState(prev => ({ showTrafficSignsFilterBox: !prev.showTrafficSignsFilterBox }));
                                 }}
+                                onMouseEnter={e => {
+                                    if (this.state.trafficSignsActive) e.currentTarget.style.transform = 'scale(1.1)';
+                                }}
+                                onMouseLeave={e => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                }}
                                 style={{
-                                    ...glassStyles.getButtonStyle(this.state.showTrafficSignsFilterBox, 'rgba(255, 165, 0, 0.9)', true),
-                                    opacity: this.state.trafficSignsActive ? 1 : 0.3,
-                                    cursor: this.state.trafficSignsActive ? 'pointer' : 'default',
-                                    marginTop: '2px'
+                                    ...glassStyles.getButtonStyle(this.state.showTrafficSignsFilterBox, 'rgba(255, 165, 0, 0.5)', true),
+                                    opacity: this.state.trafficSignsActive ? 1 : 0.6,
+                                    cursor: this.state.trafficSignsActive ? 'pointer' : 'default'
+                                    // Removed manual marginTop and gap as groupContainer handles it
                                 }}
                             >
-                                <Icons.Controls size={16}/>
+                                <Icons.Filter size={16}/>
                             </button>
                         </div>
                     )}
 
                     {/* Objects Group */}
                     {this.props.config.enableMapillaryObjects !== false && (
-                        <div style={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: '2px',
-                                borderRadius: '6px',
-                                background: this.state.objectsActive ? 'rgba(255,0,0,0.2)' : 'rgba(100,100,100,0.1)'
-                            }}>
+                        <div style={glassStyles.groupContainer(this.state.objectsActive)}>
                             {/* Main Objects Button */}
                             <button className="unified-control-buttons"
                                 title="Toggle Mapillary Objects Layer"
                                 onClick={this.toggleMapillaryObjects}
-                                style={glassStyles.getButtonStyle(this.state.objectsActive, 'rgba(255, 60, 60, 0.9)')} // Red
+                                style={glassStyles.getButtonStyle(this.state.objectsActive, 'rgba(155, 55, 55, 0.3)')} // Red
                                 onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                 onMouseLeave={e => (e.currentTarget.style.transform = this.state.objectsActive ? 'scale(1.1)' : 'scale(1)')}
                             >
-                                <Icons.AllMapillaryObjects size={16}/> 
+                                <Icons.AllMapillaryObjects size={16}
+                                    style={{ filter: this.state.objectsActive ? 'drop-shadow(0 0 0.2px grey)' : 'none' }}
+                                /> 
                             </button>
 
                             {/* Objects Filter Button */}
@@ -6321,31 +6736,19 @@ export default class Widget extends React.PureComponent<
                                     if (!this.state.objectsActive) return;
                                     this.setState(prev => ({ showObjectsFilterBox: !prev.showObjectsFilterBox }));
                                 }}
+                                onMouseEnter={e => {
+                                    if (this.state.objectsActive) e.currentTarget.style.transform = 'scale(1.1)';
+                                }}
+                                onMouseLeave={e => {
+                                    e.currentTarget.style.transform = 'scale(1)';
+                                }}
                                 style={{
-                                    ...glassStyles.getButtonStyle(this.state.showObjectsFilterBox, 'rgba(255, 60, 60, 0.9)', true),
-                                    opacity: this.state.objectsActive ? 1 : 0.3,
-                                    cursor: this.state.objectsActive ? 'pointer' : 'default',
-                                    marginTop: '2px'
+                                    ...glassStyles.getButtonStyle(this.state.showObjectsFilterBox, 'rgba(255, 60, 60, 0.5)', true),
+                                    opacity: this.state.objectsActive ? 1 : 0.6,
+                                    cursor: this.state.objectsActive ? 'pointer' : 'default'
                                 }}
                             >
-                                <Icons.Controls size={16}/>
-                            </button>
-                        </div>
-                    )}
-
-                    {(this.state.trafficSignsActive || this.state.objectsActive) && (
-                        <div style={{
-                            display: 'flex',
-                            flexDirection: 'column'
-                        }}>
-                            <button className="unified-control-buttons"
-                                title="Download features in current view (GeoJSON)"
-                                onClick={this.downloadCurrentFeatures}
-                                style={glassStyles.getButtonStyle(false, 'rgba(0, 123, 255, 0.7)')} // Uses blue logic but currently inactive style
-                                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.1)')}
-                                onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
-                            >
-                                <Icons.Download size={16}/>
+                                <Icons.Filter size={16}/>
                             </button>
                         </div>
                     )}
@@ -6379,18 +6782,46 @@ export default class Widget extends React.PureComponent<
                         top: '10px',
                         left: '10px',
                         zIndex: 10000,
-                        background: '#d9544fcb',
+                        background: '#d1000059',
                         color: 'white',
-                        padding: '6px',
+                        padding: '4px',
                         borderRadius: '3px',
                         cursor: 'pointer',
-                        border: 'none',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center'
                     }}
                 >
                     <Icons.Minimize />
+                </button>
+
+                {/* Toggle Minimap Button (New) */}
+                <button
+                    onClick={() => this.setState(prev => ({ showMinimap: !prev.showMinimap }))}
+                    title={this.state.showMinimap ? "Hide Minimap" : "Show Minimap"}
+                    style={{
+                        position: 'absolute',
+                        top: '48px', // Positioned below the Exit button (10px + 32px height + 6px gap)
+                        left: '10px',
+                        zIndex: 10000,
+                        background: 'rgba(0, 0, 0, 0.6)', // Neutral dark background
+                        color: 'white',
+                        padding: '6px',
+                        borderRadius: '3px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '32px',
+                        height: '32px'
+                    }}
+                >
+                    {/* Simple SVG Icons for Map Toggle */}
+                    {this.state.showMinimap ? (
+                        <Icons.MapOpen size={16} color="white" />
+                    ) : (
+                        <Icons.MapClosed size={16} color="white" />
+                    )}
                 </button>
                 
                 {/* Minimap Container */}
@@ -6399,15 +6830,32 @@ export default class Widget extends React.PureComponent<
                     className="minimap-container"
                     style={{
                         position: 'absolute',
-                        bottom: '36px',
-                        right: '80px',
-                        width: '350px',
-                        height: '200px',
-                        border: '2px solid #fff',
-                        borderRadius: '8px',
-                        overflow: 'hidden',
-                        boxShadow: '0 4px 8px rgba(0,0,0,0.5)',
-                        zIndex: 10001
+                        bottom: '30px',
+                        left: '30px',
+                        width: '330px',
+                        height: '220px',
+                        // --- GLASSMORPHISM CORE ---
+                        background: "rgba(20, 20, 20, 0.4)", // Dark tinted glass
+                        backdropFilter: "blur(12px)",        // Frosted effect
+                        WebkitBackdropFilter: "blur(12px)",
+                        // --- BORDERS & CORNERS ---
+                        border: "1px solid rgba(255, 255, 255, 0.15)", // Thin light edge
+                        borderRadius: "20px",                         // Modern rounded look
+                        overflow: "hidden",                           // Clips map to corners
+                        // --- DEPTH & SHADOWS ---
+                        // Inner shadow makes the map look "embedded" into the panel
+                        boxShadow: `
+                            0 8px 32px 0 rgba(0, 0, 0, 0.6), 
+                            inset 0 0 0 1px rgba(255, 255, 255, 0.05)
+                        `,  
+                        zIndex: 10001,
+                        // --- ANIMATIONS & LOGIC ---
+                        visibility: this.state.showMinimap ? 'visible' : 'hidden',
+                        opacity: this.state.showMinimap ? 1 : 0,
+                        pointerEvents: this.state.showMinimap ? 'auto' : 'none',
+                        // Transition: Added transform for a "Pop-in" effect
+                        transition: "all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1)",
+                        transform: this.state.showMinimap ? 'translateY(0) scale(1)' : 'translateY(20px) scale(0.95)',
                     }}
                 />
             </div>,
@@ -6415,4 +6863,4 @@ export default class Widget extends React.PureComponent<
         );
         /** Return either normal or fullscreen layout */
         return this.state.isFullscreen ? fullscreenMode : normalMode;
-    }
+    }}
