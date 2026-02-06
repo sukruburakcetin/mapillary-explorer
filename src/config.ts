@@ -36,6 +36,18 @@ export interface Config {
   syncMapWithImage?: boolean;
 
   /**
+    * Defines the anchor position for map synchronization when `syncMapWithImage` is enabled.
+    * Determines where the current image location should appear within the map view relative to the center.
+    * Options:
+    * - `'center'` (Default): Centers the map directly on the current image.
+    * - `'east'`: Positions the image on the **Right** side of the map (shifts map center West). Best for widgets docked on the **Left**.
+    * - `'west'`: Positions the image on the **Left** side of the map (shifts map center East). Best for widgets docked on the **Right**.
+    * - `'north'`: Positions the image at the **Top** of the map (shifts map center South). Best for widgets docked at the **Bottom**.
+    * - `'south'`: Positions the image at the **Bottom** of the map (shifts map center North). Best for widgets docked at the **Top**.
+  */
+  syncMapPosition?: string;
+
+  /**
     * If true, the legend overlay inside the viewer is hidden.
   */
   hideLegend?: boolean;

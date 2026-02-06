@@ -6,6 +6,7 @@
   "coverageLayerAlwaysOn": false,
   "turboCreator": "",
   "syncMapWithImage": false,
+  "syncMapPosition": "center",
   "hideLegend": false,
   "hideInfoBox": false,
   "hideBearing": false,
