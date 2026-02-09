@@ -71,6 +71,8 @@ interface State {
     selectedTurboYear?: string | null;
     showMinimap: boolean;
     detectionsActive: boolean;
+    showAiTags: boolean;
+    isSharedState: boolean; 
 }
 
 export default class Widget extends React.PureComponent<
@@ -187,27 +189,23 @@ export default class Widget extends React.PureComponent<
         turboFilterUsername: "",
         turboFilterStartDate: "",
         turboFilterEndDate: "",
-        turboFilterIsPano: undefined,   // null means no filter, otherwise boolean
+        turboFilterIsPano: undefined,
         showTurboFilterBox: false,
         turboYearLegend: [],
         showTrafficSignsFilterBox: false,
         trafficSignsFilterValue: { value: "All traffic signs", label: "All traffic signs", iconUrl: null },
-        trafficSignsOptions: [],
+        trafficSignsOptions: [{ value: "All traffic signs", label: "All traffic signs", iconUrl: null }],
         showObjectsFilterBox: false,
         objectsFilterValue: { value: "All points", label: "All points", iconUrl: null },
-        objectsOptions: [],
+        objectsOptions: [{ value: "All points", label: "All points", iconUrl: null }],
         filtersLoaded: false,
         showIntro: true,
-        turboFilterUsername: "",
-        showTurboFilterBox: false,
-        trafficSignsOptions: [{ value: "All traffic signs", label: "All traffic signs", iconUrl: null }],
-        showTrafficSignsFilterBox: false,
-        objectsOptions: [{ value: "All points", label: "All points", iconUrl: null }],
-        showObjectsFilterBox: false,
         hoveredMapObject: null,
         hasTimeTravel: false,
         showMinimap: true,
         detectionsActive: false,
+        showAiTags: true,
+        isSharedState: false; 
     };
 
     constructor(props: AllWidgetProps<any>) {
@@ -245,6 +243,16 @@ export default class Widget extends React.PureComponent<
         const redrawCone = async (lon?: number, lat?: number) => {
             const view = this.state.jimuMapView?.view;
             if (!view) return;
+
+            // If Turbo Mode is active and no specific sequence is selected, 
+            // we should not draw the camera cone.
+            if (this.state.turboModeActive && !this.state.selectedSequenceId) {
+                if (this.currentConeGraphic) {
+                    view.graphics.remove(this.currentConeGraphic);
+                    this.currentConeGraphic = null;
+                }
+                return;
+            }
 
             // If no coordinates provided, get from current image
             if (lon === undefined || lat === undefined) {
@@ -1674,6 +1682,41 @@ export default class Widget extends React.PureComponent<
         });
     };
 
+    private getDetectionColor(value: string): number {
+        // Standard UI colors (Hex format: 0xRRGGBB)
+        const label = value.toLowerCase();
+
+        // 1. Infrastructure & Construction (Purples/Grays)
+        if (label.includes('building') || label.includes('wall')) return 0x9b59b6; 
+        if (label.includes('bridge') || label.includes('tunnel')) return 0x8e44ad;
+
+        // 2. Objects & Assets (Yellows/Oranges)
+        if (label.includes('pole') || label.includes('utility')) return 0xf1c40f; 
+        if (label.includes('sign')) return 0xe67e22; 
+        if (label.includes('street light')) return 0xf39c12;
+
+        // 3. Vehicles (Blues)
+        if (label.includes('car') || label.includes('vehicle') || label.includes('truck')) return 0x3498db;
+        if (label.includes('bicycle') || label.includes('motorcycle')) return 0x2980b9;
+
+        // 4. Nature (Greens)
+        if (label.includes('vegetation') || label.includes('tree')) return 0x27ae60;
+        if (label.includes('terrain') || label.includes('mountain')) return 0x16a085;
+
+        // 5. Humans (Reds)
+        if (label.includes('person') || label.includes('pedestrian')) return 0xe74c3c;
+
+        // 6. Marking & Ground (Teals)
+        if (label.includes('marking') || label.includes('crosswalk')) return 0x1abc9c;
+
+        // Default Mapillary Green for everything else
+        return 0x37d582;
+    }
+
+    private toggleAiTags = () => {
+        this.setState({ showAiTags: !this.state.showAiTags });
+    };
+
     /**
         * Toggles the visibility of AI object detections in the Mapillary viewer.
         * - When activated: Triggers the loading process for the current image.
@@ -1733,7 +1776,6 @@ export default class Widget extends React.PureComponent<
         * 2. Decodes the MVT geometry for each object.
         * 3. Creates 'PolygonGeometry' and 'OutlineTag' instances.
         * 4. Applies custom styling (Mapillary Green theme) and human-friendly labels.
-        * 
         * @param imageId The ID of the image for which to load detections.
     */
     private async loadDetections(imageId: string) {
@@ -1754,6 +1796,19 @@ export default class Widget extends React.PureComponent<
             data.data.forEach((det: any) => {
                 if (!det.geometry) return;
 
+                // 1. Process the full value instead of just popping the last item
+                // This converts "regulatory--no-parking--g1" to "Regulatory No parking G1"
+                const labelFull = det.value
+                    .split('--')
+                    .map(part => part.charAt(0).toUpperCase() + part.slice(1).replace(/-/g, ' '))
+                    .join(' ');
+
+                // 2. We still need the raw last part for our filters (unlabeled)
+                const labelRaw = det.value.split('--').pop();
+
+                // HIDE ONLY UNLABELED
+                if (labelRaw === 'unlabeled') return;
+
                 const points = this.decodeAndNormalizeGeometry(det.geometry);
 
                 // points must be wrapped in PolygonGeometry class
@@ -1761,17 +1816,20 @@ export default class Widget extends React.PureComponent<
                     try {
                         // 1. Create the Geometry instance (This adds the .subscribe method needed)
                         const geometry = new PolygonGeometry(points);
+                        
+                        // GET THE DYNAMIC COLOR
+                        const color = this.getDetectionColor(det.value);
 
                         // 2. Pass the instance to the Tag
                         const tag = new OutlineTag(
                             det.id,
                             geometry, 
                             { 
-                                text: det.value.split('--').pop()?.replace(/-/g, ' '), 
+                                text: labelFull, 
                                 textColor: 0xffffff,
-                                lineColor: 0x37d582,
+                                lineColor: color,
                                 lineWidth: 2,
-                                fillColor: 0x37d582,
+                                fillColor: color,
                                 fillOpacity: 0.3
                             }
                         );
@@ -2975,6 +3033,13 @@ export default class Widget extends React.PureComponent<
                 trafficSignsActive: false, 
                 showTrafficSignsFilterBox: false,
                 trafficSignsFilterValue: defaultTrafficSignsFilter
+            }, () => {
+                // If both layers are off, turn off AI detections
+                if (!this.state.trafficSignsActive && !this.state.objectsActive && this.state.detectionsActive) {
+                    this.setState({ detectionsActive: false });
+                    const tagComponent = this.mapillaryViewer?.getComponent("tag");
+                    if (tagComponent) tagComponent.removeAll();
+                }
             });
             
             this.log("Traffic signs layers completely removed and filter reset");
@@ -3128,12 +3193,20 @@ export default class Widget extends React.PureComponent<
                 iconUrl: null 
             };
             
+            // Inside toggleMapillaryObjects, in the 'Turn OFF' branch
             this.setState({ 
                 objectsActive: false, 
                 showObjectsFilterBox: false,
                 objectsFilterValue: defaultObjectsFilter
+            }, () => {
+                // If both layers are off, turn off AI detections
+                if (!this.state.trafficSignsActive && !this.state.objectsActive && this.state.detectionsActive) {
+                    this.setState({ detectionsActive: false });
+                    const tagComponent = this.mapillaryViewer?.getComponent("tag");
+                    if (tagComponent) tagComponent.removeAll();
+                }
             });
-            
+
             this.log("Objects layers completely removed and filter reset");
             return;
         }
@@ -3535,6 +3608,7 @@ export default class Widget extends React.PureComponent<
 
         if (sharedId) {
             this.log("Shared Mapillary ID found:", sharedId);
+            this.setState({ isSharedState: true });
             
             // Get camera params
             const bearing = parseFloat(params.get('mly_b') || '0');
@@ -5191,6 +5265,9 @@ export default class Widget extends React.PureComponent<
             });
             return;
         }
+        
+        // The user clicked manually, so it is no longer a restricted "Shared State"
+        this.setState({ isSharedState: false }); 
 
         const { jimuMapView, selectedSequenceId } = this.state;
 
@@ -5792,7 +5869,7 @@ export default class Widget extends React.PureComponent<
         */
         const normalMode = (
             <div
-                className="widget-mapillary jimu-widget"
+                className={`widget-mapillary jimu-widget ${this.state.showAiTags ? "" : "hide-mly-tags"}`}
                 style={{
                     width: "100%",
                     height: "100%",
@@ -6136,37 +6213,6 @@ export default class Widget extends React.PureComponent<
                         </div>
                     )}
 
-                    {/* AI DETECTION BUTTON (Stacked below Info box) */}
-                    {(this.state.trafficSignsActive || this.state.objectsActive) && this.state.imageId && (
-                        <button 
-                            onClick={this.toggleDetections}
-                            title="Toggle AI Object Detection Overlays"
-                            style={{
-                                marginTop: '2px',
-                                // Base background logic
-                                background: this.state.detectionsActive ? 'rgba(55, 213, 130, 0.8)' : 'rgba(55, 213, 130, 0.5)',
-                                border: '1px solid rgba(255,255,255,0.2)',
-                                color: 'white',
-                                borderRadius: '6px',
-                                width: '80px', 
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                pointerEvents: 'auto',
-                                backdropFilter: 'blur(5px)',
-                                transition: "background 0.2s" // Added for smoother transitions
-                            }}
-                            // Hover: Brighter green
-                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(55, 213, 130, 0.95)'}
-                            // Leave: Return to the EXACT color based on the current state
-                            onMouseLeave={e => e.currentTarget.style.background = this.state.detectionsActive ? 'rgba(55, 213, 130, 0.8)' : 'rgba(55, 213, 130, 0.4)'}
-                        >
-                            <Icons.Detection size={14} /> 
-                            <span style={{fontSize: '8px', marginLeft: '4px', fontWeight: 700}}>AI OVERLAY</span>
-                        </button>
-                    )}
-
                     {/* DOWNLOAD BUTTON (Stacked below AI button) */}
                     {(this.state.trafficSignsActive || this.state.objectsActive) && (
                         <button 
@@ -6204,7 +6250,62 @@ export default class Widget extends React.PureComponent<
                             }}
                         >
                             <Icons.Download size={12} color="#ffffff" /> 
-                            <span>EXPORT</span>
+                            <span style={{paddingTop:'3px', fontWeight: 700}}>EXPORT</span>
+                        </button>
+                    )}
+
+                     {/* AI DETECTION BUTTON (Stacked below Info box) */}
+                    {(this.state.trafficSignsActive || this.state.objectsActive) && this.state.imageId && (
+                        <button 
+                            onClick={this.toggleDetections}
+                            title="Toggle AI Object Detection Overlays"
+                            style={{
+                                marginTop: '4px',
+                                // Base background logic
+                                background: this.state.detectionsActive ? 'rgba(55, 213, 130, 0.8)' : 'rgba(55, 213, 130, 0.5)',
+                                border: '1px solid rgba(255,255,255,0.2)',
+                                color: 'white',
+                                borderRadius: '6px',
+                                width: '80px', 
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                pointerEvents: 'auto',
+                                backdropFilter: 'blur(5px)',
+                                transition: "background 0.2s" // Added for smoother transitions
+                            }}
+                            // Hover: Brighter green
+                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(55, 213, 130, 0.95)'}
+                            // Leave: Return to the EXACT color based on the current state
+                            onMouseLeave={e => e.currentTarget.style.background = this.state.detectionsActive ? 'rgba(55, 213, 130, 0.8)' : 'rgba(55, 213, 130, 0.4)'}
+                        >
+                            <Icons.Detection size={12} /> 
+                            <span style={{fontSize: '8.5px', marginLeft: '3px', paddingTop:'3px', fontWeight: 700}}>AI OVERLAY</span>
+                        </button>
+                    )}
+
+                    {/* Hide/Show Tags Toggle */}
+                    {this.state.detectionsActive && (
+                        <button 
+                            onClick={this.toggleAiTags}
+                            title={this.state.showAiTags ? "Hide Labels" : "Show Labels"}
+                            style={{
+                                background: this.state.showAiTags ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 0, 0, 0.4)',
+                                border: '1px solid rgba(255,255,255,0.2)',
+                                marginTop: '2px',
+                                color: 'white',
+                                borderRadius: '6px',
+                                width: '30px', 
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                backdropFilter: 'blur(5px)',
+                                pointerEvents: 'auto'
+                            }}
+                        >
+                            {this.state.showAiTags ? <Icons.LabelsOn size={14}/> : <Icons.LabelsOff size={14}/>}
                         </button>
                     )}
                 </div>
@@ -6566,10 +6667,20 @@ export default class Widget extends React.PureComponent<
 
                                         if (next) {
                                             const view = this.state.jimuMapView?.view;
+
+                                            // If it's NOT a shared link state, clear the UI.
+                                            // This clears manual normal-mode sequences but keeps shared-link ones.
+                                            if (!this.state.isSharedState) {
+                                                this.log("Manual exploration detected, clearing UI for Turbo");
+                                                this.clearSequenceUI();
+                                            } else {
+                                                this.log("Shared state active, keeping markers visible");
+                                            }
+
                                             if (this.state.jimuMapView?.view.zoom! < 16) {
                                                 this.showZoomWarning("Zoom in closer (≥ 16) to view and interact with Mapillary coverage point features in Turbo Mode.");
                                             }
-                                            this.clearSequenceUI();
+
                                             if (view) {
                                                 // wait until view is stable (critical for correct tile fetching)
                                                 await view.when();

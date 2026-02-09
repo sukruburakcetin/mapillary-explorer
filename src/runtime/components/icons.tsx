@@ -168,3 +168,52 @@ export const Detection = ({ size = 16, color = "white", ...props }: IconProps) =
     <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
   </svg>
 );
+
+// 18. Labels ON
+export const LabelsOn = ({ size = 16, color = "currentColor", ...props }: IconProps) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke={color}
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    {/* Eye */}
+    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+    <circle cx="12" cy="12" r="3" />
+
+    {/* Label lines */}
+    <line x1="9" y1="9" x2="15" y2="9" />
+    <line x1="9" y1="15" x2="13" y2="15" />
+  </svg>
+);
+
+// 19. Labels OFF
+export const LabelsOff = ({ size = 16, color = "currentColor", ...props }: IconProps) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke={color}
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    {/* Eye */}
+    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+    <circle cx="12" cy="12" r="3" />
+
+    {/* Label lines */}
+    <line x1="9" y1="9" x2="15" y2="9" />
+    <line x1="9" y1="15" x2="13" y2="15" />
+
+    {/* Slash */}
+    <line x1="3" y1="3" x2="21" y2="21" />
+  </svg>
+);
