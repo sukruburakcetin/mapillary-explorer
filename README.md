@@ -3,7 +3,7 @@
   Mapillary Explorer
 </h1>
 
-![Version](https://img.shields.io/badge/version-3.6.0-blue.svg)
+![Version](https://img.shields.io/badge/version-3.8.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![ArcGIS](https://img.shields.io/badge/ArcGIS-Experience%20Builder-007AC2)
 ![React](https://img.shields.io/badge/React-18-61DAFB)
@@ -166,7 +166,7 @@ Below is an example of the `manifest.json` file used for configuration:
   "name": "mapillary-explorer",
   "label": "Mapillary Explorer",
   "type": "widget",
-  "version": "3.6.0",
+  "version": "3.8.0",
   "exbVersion": "1.18.0",
   "author": "Sukru Burak Cetin",
   "description": "Mapillary Explorer is a custom ArcGIS Experience Builder widget that brings
@@ -189,6 +189,9 @@ Below is an example of the `manifest.json` file used for configuration:
   }
 }
 ```
+## Mapillary Explorer Demo Experience Builder App
+https://sukruburakcetin.github.io/mapillary-explorer-demo/
+
 ## Mapillary Explorer Demo Video
 [![Watch the video](https://img.youtube.com/vi/ypu2tmyYTMg/hqdefault.jpg)](https://www.youtube.com/watch?v=ypu2tmyYTMg)
 
