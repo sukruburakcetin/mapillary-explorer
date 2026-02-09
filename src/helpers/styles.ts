@@ -738,8 +738,28 @@ export const mobileOverrideStyles = `
     .widget-mapillary .mapillary-viewer canvas {
         transition: none !important; /* Remove any canvas transitions */
     }
-
     
+    /* Targets the container to set a baseline */
+    .mapillary-tag-container {
+        font-size: 9px !important; 
+        font-family: "Inter", "Segoe UI", Roboto, sans-serif !important;
+    }
+
+    /* Targets the individual labels to ensure they stay compact */
+    .mapillary-tag-symbol {
+        font-size: 9px !important;
+        font-weight: 600 !important;
+        line-height: 1 !important;
+        /* Adds a dark outline so white text is readable on bright colors */
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.9) !important;
+        /* Optional: prevents labels from being too wide */
+        max-width: 100px;
+        white-space: nowrap;
+    }
+    
+    .hide-mly-tags .mapillary-tag-symbol {
+        display: none !important;
+    }
 
     /* MOBILE (768px) OVERRIDES */
     @media (max-width: 768px) {
