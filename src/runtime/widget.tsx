@@ -72,7 +72,17 @@ interface State {
     showMinimap: boolean;
     detectionsActive: boolean;
     showAiTags: boolean;
-    isSharedState: boolean; 
+    isSharedState: boolean;
+    alternateImages: Array<{
+        id: string;
+        detectionId: string;
+        thumbUrl: string;
+        capturedAt: number;
+        geometry: { type: "Point"; coordinates: [number, number] };
+    }>;
+    selectedFeatureLocation: { lat: number; lon: number } | null;
+    isFetchingAlternates: boolean;
+    targetDetectionId: string | null;
 }
 
 export default class Widget extends React.PureComponent<
@@ -135,6 +145,7 @@ export default class Widget extends React.PureComponent<
     private _currentHoveredFeatureId: string | null = null;
     private _currentDirectionHoverId: string | null = null;
     private _directionUnsubscribe: (() => void) | null = null;
+    private detectionTagMap: Map<string, string> = new Map();
 
     // Backup arrays to reset filter dropdowns to their initial state
     private _fullTrafficSignsOptions: Array<{ value: string; label: string; iconUrl: string | null }> = [];
@@ -205,7 +216,11 @@ export default class Widget extends React.PureComponent<
         showMinimap: true,
         detectionsActive: false,
         showAiTags: true,
-        isSharedState: false; 
+        isSharedState: false,
+        alternateImages: [],
+        selectedFeatureLocation: null,
+        isFetchingAlternates: false,
+        targetDetectionId: null,
     };
 
     constructor(props: AllWidgetProps<any>) {
@@ -522,6 +537,7 @@ export default class Widget extends React.PureComponent<
                     }
                 }
             });
+            
 
             if (this.state.detectionsActive) {
                 this.loadDetections(event.image.id);
@@ -1682,37 +1698,104 @@ export default class Widget extends React.PureComponent<
         });
     };
 
+    // Helper: Calculate bearing from Image (lat1,lon1) to Object (lat2,lon2)
+    private calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
+        const toRad = (deg: number) => deg * Math.PI / 180;
+        const toDeg = (rad: number) => rad * 180 / Math.PI;
+
+        const dLon = toRad(lon2 - lon1);
+        const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+        const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+                Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+        
+        const brng = toDeg(Math.atan2(y, x));
+        return (brng + 360) % 360;
+    }
+
+    /**
+        * Fetches a small set of alternate Mapillary images related to a detected feature.
+        * The function queries the Mapillary Graph API for detections associated with the
+        * provided feature ID, extracts image metadata (thumbnail URL, capture time, geometry),
+        * removes duplicate images, and stores up to 3 alternate images in component state.
+        * It also updates UI state to indicate loading progress and saves the selected
+        * feature location for reference.
+        * @param featureId - Mapillary feature identifier used to query detections.
+        * @param featureLat - Latitude of the selected feature.
+        * @param featureLon - Longitude of the selected feature.
+    */
+    private async fetchAlternateImages(featureId: string, featureLat: number, featureLon: number) {
+        this.setState({ 
+            isFetchingAlternates: true, 
+            selectedFeatureLocation: { lat: featureLat, lon: featureLon },
+            alternateImages: [] // Clear previous
+        });
+
+        try {
+            // Query detections for this feature, expanding the 'image' field to get URL and geometry
+            const url = `https://graph.mapillary.com/${featureId}/detections?fields=image{id,thumb_256_url,geometry,captured_at}&limit=5&access_token=${this.accessToken}`;
+            
+            const response = await fetch(url);
+            const data = await response.json();
+
+            if (data.data) {
+                const images = data.data.map((det: any) => ({
+                    id: det.image.id,
+                    detectionId: det.id,
+                    thumbUrl: det.image.thumb_256_url,
+                    capturedAt: new Date(det.image.captured_at).getTime(),
+                    geometry: det.image.geometry
+                }));
+                
+                // Filter out duplicates if any, and limit to 3-5
+                const uniqueImages = images.filter((v,i,a)=>a.findIndex(t=>(t.id===v.id))===i).slice(0, 3);
+
+                this.setState({ alternateImages: uniqueImages });
+            }
+        } catch (err) {
+            console.error("Failed to fetch alternate images", err);
+        } finally {
+            this.setState({ isFetchingAlternates: false });
+        }
+    }
+
+    /**
+        * Returns a hexadecimal color value based on the provided detection label.
+        * The function normalizes the input string to lowercase and matches it against
+        * known label categories (e.g., traffic lights, signs, road markings, poles,
+        * street objects, etc.). Certain background or ignored classes return black.
+        * If no category matches, a default color is returned.
+        * @param value - Detection label name or class identifier.
+        * @returns Hex color number (e.g., 0xe74c3c) used for visualization.
+    */
     private getDetectionColor(value: string): number {
-        // Standard UI colors (Hex format: 0xRRGGBB)
         const label = value.toLowerCase();
+        if (
+            [
+                'unlabeled','sky','nature vegetation','marking continuous solid',
+                'object vehicle car','nature terrain'
+            ].includes(label)
+            || ['void','construction','vehicle','vegetation','continuous--solid', 'human', 'wire']
+                .some(k => label.includes(k))
+        ) return 0x000000;
 
-        // 1. Infrastructure & Construction (Purples/Grays)
-        if (label.includes('building') || label.includes('wall')) return 0x9b59b6; 
-        if (label.includes('bridge') || label.includes('tunnel')) return 0x8e44ad;
+        if (label.includes('traffic-light')) return 0xe74c3c;
+        if (['traffic-sign','sign--store','sign--advertisement','banner']
+            .some(k => label.includes(k))) return 0xe67e22;
+        if (['marking','crosswalk','stop-line','continuous--dashed']
+            .some(k => label.includes(k))) return 0x1abc9c;
+        if (['support--pole','wire-group']
+            .some(k => label.includes(k))) return 0x674ea7;
+        if (['manhole','trash-can']
+            .some(k => label.includes(k))) return 0x8e6e53;
 
-        // 2. Objects & Assets (Yellows/Oranges)
-        if (label.includes('pole') || label.includes('utility')) return 0xf1c40f; 
-        if (label.includes('sign')) return 0xe67e22; 
-        if (label.includes('street light')) return 0xf39c12;
-
-        // 3. Vehicles (Blues)
-        if (label.includes('car') || label.includes('vehicle') || label.includes('truck')) return 0x3498db;
-        if (label.includes('bicycle') || label.includes('motorcycle')) return 0x2980b9;
-
-        // 4. Nature (Greens)
-        if (label.includes('vegetation') || label.includes('tree')) return 0x27ae60;
-        if (label.includes('terrain') || label.includes('mountain')) return 0x16a085;
-
-        // 5. Humans (Reds)
-        if (label.includes('person') || label.includes('pedestrian')) return 0xe74c3c;
-
-        // 6. Marking & Ground (Teals)
-        if (label.includes('marking') || label.includes('crosswalk')) return 0x1abc9c;
-
-        // Default Mapillary Green for everything else
         return 0x37d582;
     }
 
+    /**
+        * Toggles the visibility state of AI-generated tags in the UI.
+        * This function inverses the current `showAiTags` boolean value in the
+        * component state, enabling or disabling the display of AI tags.
+    */
     private toggleAiTags = () => {
         this.setState({ showAiTags: !this.state.showAiTags });
     };
@@ -1724,14 +1807,21 @@ export default class Widget extends React.PureComponent<
     */
     private toggleDetections = async () => {
         const newState = !this.state.detectionsActive;
-        this.setState({ detectionsActive: newState });
+        this.setState({ detectionsActive: newState, targetDetectionId: null });
 
         if (newState && this.state.imageId) {
             this.loadDetections(this.state.imageId);
         } else {
-            // Clear tags if turned off
             const tagComponent = this.mapillaryViewer?.getComponent("tag");
-            if (tagComponent) tagComponent.removeAll();
+            if (tagComponent) {
+                // Cleaning up hover listeners
+                if ((tagComponent as any)._detectionHoverCleanup) {
+                    (tagComponent as any)._detectionHoverCleanup();
+                    delete (tagComponent as any)._detectionHoverCleanup;
+                }
+                tagComponent.removeAll();
+            }
+            this.detectionTagMap.clear(); // ← Clear the cache
         }
     };
 
@@ -1771,6 +1861,143 @@ export default class Widget extends React.PureComponent<
     }
 
     /**
+        * Sets up hover interactions for AI detection tags.
+        * Shows label text only when the user hovers over a detection polygon.
+    */
+    private setupDetectionHover(tagComponent: any, tags: OutlineTag[]) {
+        if (!this.viewerContainer.current) return;
+
+        const container = this.viewerContainer.current;
+        
+        // Store original tag configurations
+        const tagConfigs = new Map<string, { text: string; color: number }>();
+        tags.forEach(tag => {
+            const detectionValue = this.getDetectionValueFromTagId(tag.id);
+            const labelFull = detectionValue
+                .split('--')
+                .map(part => part.charAt(0).toUpperCase() + part.slice(1).replace(/-/g, ' '))
+                .join(' ');
+            const color = this.getDetectionColor(detectionValue);
+            
+            tagConfigs.set(tag.id, { text: labelFull, color });
+        });
+        
+        let currentHoveredId: string | null = null;
+        let updateTimeout: any = null;
+        
+        const updateTags = (hoveredId: string | null) => {
+            if (currentHoveredId === hoveredId) return;
+            currentHoveredId = hoveredId;
+            
+            tagComponent.removeAll();
+            
+            const updatedTags: OutlineTag[] = [];
+            tags.forEach(tag => {
+                const config = tagConfigs.get(tag.id);
+                if (!config) return;
+                
+                // Check both hover AND target states**
+                const isHovered = tag.id === hoveredId;
+                const isTarget = tag.id === this.state.targetDetectionId;
+                
+                // Target takes priority over hover
+                const shouldShowText = this.state.showAiTags && (isHovered || isTarget);
+                const lineColor = isTarget ? 0xffffff : config.color;
+                const fillColor = isTarget ? 0xffff00 : config.color;
+                const fillOpacity = isTarget ? 0.8 : 0.3;
+                const lineWidth = isTarget ? 8 : 2;
+                
+                try {
+                    const geometry = new PolygonGeometry((tag.geometry as PolygonGeometry).polygon);
+                    const newTag = new OutlineTag(
+                        tag.id,
+                        geometry,
+                        {
+                            text: shouldShowText ? config.text : "",
+                            textColor: isTarget ? 0xffff00 : 0xffffff,
+                            lineColor: lineColor,
+                            lineWidth: lineWidth,
+                            fillColor: fillColor,
+                            fillOpacity: fillOpacity
+                        }
+                    );
+                    updatedTags.push(newTag);
+                } catch (err) {
+                    console.warn("Error updating tag", tag.id, err);
+                }
+            });
+            
+            if (updatedTags.length > 0) {
+                tagComponent.add(updatedTags);
+            }
+        };
+        
+        // Mouse move handler with corrected coordinate transformation
+        const handleMouseMove = async (event: MouseEvent) => {
+            if (!this.mapillaryViewer) return;
+            
+            try {
+                const canvas = container.querySelector('canvas');
+                if (!canvas) return;
+                
+                const rect = canvas.getBoundingClientRect();
+                const pixelPoint = [
+                    event.clientX - rect.left,
+                    event.clientY - rect.top
+                ];
+                
+                // Using Mapillary's built-in hit testing API
+                const tagIds = await tagComponent.getTagIdsAt(pixelPoint);
+                const hoveredTagId = tagIds.length > 0 ? tagIds[0] : null;
+                
+                // Debounce the update
+                if (updateTimeout) {
+                    clearTimeout(updateTimeout);
+                }
+                
+                updateTimeout = setTimeout(() => {
+                    updateTags(hoveredTagId);
+                }, 50);
+                
+            } catch (err) {
+                console.warn("Error in hover detection:", err);
+                if (updateTimeout) clearTimeout(updateTimeout);
+                updateTimeout = setTimeout(() => updateTags(null), 50);
+            }
+        };
+
+        // Mouse leave handler
+        const handleMouseLeave = () => {
+            if (!this.state.showAiTags) return;
+            
+            if (updateTimeout) {
+                clearTimeout(updateTimeout);
+            }
+            
+            updateTags(null);
+        };
+
+        // Attach listeners
+        container.addEventListener('mousemove', handleMouseMove);
+        container.addEventListener('mouseleave', handleMouseLeave);
+
+        // Store cleanup function
+        (tagComponent as any)._detectionHoverCleanup = () => {
+            if (updateTimeout) {
+                clearTimeout(updateTimeout);
+            }
+            container.removeEventListener('mousemove', handleMouseMove);
+            container.removeEventListener('mouseleave', handleMouseLeave);
+            tagConfigs.clear();
+        };
+    }
+
+    // Retrieves the detection label/value associated with a given tag ID.
+    private getDetectionValueFromTagId(tagId: string): string {
+        return this.detectionTagMap.get(tagId) || '';
+    }
+
+    /**
         * Fetches AI detection data for a specific image and renders them as interactive tags.
         * 1. Calls Mapillary Graph API for detection features (value and geometry).
         * 2. Decodes the MVT geometry for each object.
@@ -1796,41 +2023,42 @@ export default class Widget extends React.PureComponent<
             data.data.forEach((det: any) => {
                 if (!det.geometry) return;
 
-                // 1. Process the full value instead of just popping the last item
-                // This converts "regulatory--no-parking--g1" to "Regulatory No parking G1"
                 const labelFull = det.value
                     .split('--')
                     .map(part => part.charAt(0).toUpperCase() + part.slice(1).replace(/-/g, ' '))
                     .join(' ');
 
-                // 2. We still need the raw last part for our filters (unlabeled)
                 const labelRaw = det.value.split('--').pop();
 
                 // HIDE ONLY UNLABELED
-                if (labelRaw === 'unlabeled') return;
+                if (labelRaw === 'unlabeled'|| labelFull === 'Marking Continuous Solid' 
+                    || labelFull.toLowerCase().includes('nature') 
+                    || labelFull.toLowerCase().includes('construction')
+                    || labelFull.toLowerCase().includes('vehicle') || labelFull.toLowerCase().includes('human')
+                    || labelFull.toLowerCase().includes('wire') || labelFull.toLowerCase().includes('void')) return;
+
+                this.detectionTagMap.set(det.id, det.value);
 
                 const points = this.decodeAndNormalizeGeometry(det.geometry);
 
-                // points must be wrapped in PolygonGeometry class
                 if (points.length >= 3) {
                     try {
-                        // 1. Create the Geometry instance (This adds the .subscribe method needed)
                         const geometry = new PolygonGeometry(points);
-                        
-                        // GET THE DYNAMIC COLOR
                         const color = this.getDetectionColor(det.value);
 
-                        // 2. Pass the instance to the Tag
+                        // Is this the specific object the user clicked in the alternate panel?
+                        const isTarget = det.id === this.state.targetDetectionId;
+
                         const tag = new OutlineTag(
                             det.id,
                             geometry, 
                             { 
-                                text: labelFull, 
-                                textColor: 0xffffff,
-                                lineColor: color,
-                                lineWidth: 2,
-                                fillColor: color,
-                                fillOpacity: 0.3
+                                text: this.state.showAiTags ? labelFull : "",
+                                textColor: isTarget ? 0xffff00 : 0xffffff,
+                                lineColor: isTarget ? 0xffffff : color,
+                                lineWidth: isTarget ? 4 : 2,
+                                fillColor:  isTarget ? 0xffff00 : color,
+                                fillOpacity: isTarget ? 0.9 : 0.3
                             }
                         );
                         tags.push(tag);
@@ -1843,13 +2071,16 @@ export default class Widget extends React.PureComponent<
             if (tags.length > 0) {
                 tagComponent.add(tags);
                 this.log(`Successfully rendered ${tags.length} AI objects.`);
+                
+                // hover listeners after tags are added
+                this.setupDetectionHover(tagComponent, tags);
             }
         } catch (err) {
             console.error("Failed to load image detections:", err);
         }
     }
 
-    // Helper to load image
+    // Helper to load image(icons/spites)
     private loadImage(url: string): Promise<HTMLImageElement> {
         return new Promise((resolve, reject) => {
             const img = new Image();
@@ -2572,12 +2803,6 @@ export default class Widget extends React.PureComponent<
                     // console.warn(`Could not load icon for ${val}`, err);
                 }
             }
-
-            features = features.filter(f => {
-                const v = f.attributes.value;
-                return !!iconCache[v]; // keep only those with an icon
-            });
-
             renderer = {
                 type: "unique-value",
                 field: "value",
@@ -2589,7 +2814,13 @@ export default class Widget extends React.PureComponent<
                         width: 20,
                         height: 20
                     }
-                }))
+                })),
+                defaultSymbol: {
+                    type: "simple-marker",
+                    color: "orange",
+                    size: 8,
+                    outline: { color: "white", width: 1 }
+                } as any
             };
         } else {
             renderer = {
@@ -2708,14 +2939,15 @@ export default class Widget extends React.PureComponent<
                         });
 
                         features.push({
-                        geometry: wmPoint,
-                            attributes: {
-                                            id: feat.properties.id,
-                                            value: feat.properties.value,
-                                            name: this.objectNameMap[feat.properties.value] || feat.properties.value, // readable name
-                                            first_seen_at: feat.properties.first_seen_at,
-                                            last_seen_at: feat.properties.last_seen_at
-                                        }
+                            geometry: wmPoint,
+                            attributes: 
+                            {
+                                id: feat.properties.id,
+                                value: feat.properties.value,
+                                name: this.objectNameMap[feat.properties.value] || feat.properties.value,
+                                first_seen_at: feat.properties.first_seen_at,
+                                last_seen_at: feat.properties.last_seen_at
+                            }
                         });
                     }
                 } catch (err) {
@@ -2723,6 +2955,14 @@ export default class Widget extends React.PureComponent<
                 }
             }
         }
+
+        // Filter out any "object--traffic-sign" items completely.
+        // This removes them from the data source so they won't render at all.
+        features = features.filter(f => {
+            const val = f.attributes.value || "";
+            // Return FALSE if it contains "object--traffic-sign" to exclude it
+            return !val.includes("object--traffic-sign");
+        });
 
         // Collect unique values and load their icons
         const uniqueValuesMap = new Map<string, string>(); // value -> name
@@ -2761,6 +3001,9 @@ export default class Widget extends React.PureComponent<
             //     optionsWithIcons.push({ value: name, label: name, iconUrl: null });
             // }
         }
+
+        // Sort the list alphabetically by label
+        optionsWithIcons.sort((a, b) => a.label.localeCompare(b.label));
 
         const allOption = { value: "All points", label: "All points", iconUrl: null };
         this.setState({ objectsOptions: [allOption, ...optionsWithIcons] });
@@ -2808,21 +3051,16 @@ export default class Widget extends React.PureComponent<
             const iconCache: Record<string, string> = {};
 
             for (const val of uniqueValues) {
-            try {
-                iconCache[val] = await this.loadSpriteIconDataURL(
-                    `${spriteBaseUrl}.json`,
-                    `${spriteBaseUrl}.png`,
-                    val
-                );
-            } catch (err) {
-                    // console.warn(`Could not load icon for ${val}`, err);
-                }
+                try {
+                    iconCache[val] = await this.loadSpriteIconDataURL(
+                        `${spriteBaseUrl}.json`,
+                        `${spriteBaseUrl}.png`,
+                        val
+                    );
+                } catch (err) {
+                        // console.warn(`Could not load icon for ${val}`, err);
+                    }
             }
-            features = features.filter(f => {
-                const v = f.attributes.value;
-                return !!iconCache[v]; // keep only those with an icon
-            });
-
             renderer = {
                 type: "unique-value",
                 field: "value",
@@ -2834,7 +3072,13 @@ export default class Widget extends React.PureComponent<
                             width: 20,
                             height: 20
                         }
-                }))
+                })),
+                defaultSymbol: {
+                    type: "simple-marker",
+                    color: "orange",
+                    size: 8,
+                    outline: { color: "white", width: 1 }
+                } as any
             };
         } else {
             renderer = {
@@ -2844,7 +3088,7 @@ export default class Widget extends React.PureComponent<
                     size: 6,
                     color: "orange",
                     outline: { color: "white", width: 1 }
-                }
+                },
             };
         }
 
@@ -4640,17 +4884,27 @@ export default class Widget extends React.PureComponent<
                 }
 
                 // 2. Objects/Signs
-                const objectHit = response.results.find(r => {
+                const featureHit = response.results.find(r => {
                     const layer = r.layer || (r.graphic && r.graphic.layer);
-                    return layer && layer.id === "mapillary-objects-fl";
+                    return layer && (layer.id === "mapillary-objects-fl" || layer.id === "mapillary-traffic-signs-fl");
                 });
-                if (objectHit) return;
 
-                const trafficSignHit = response.results.find(r => {
-                    const layer = r.layer || (r.graphic && r.graphic.layer);
-                    return layer && layer.id === "mapillary-traffic-signs-fl";
-                });
-                if (trafficSignHit) return;
+                if (featureHit && featureHit.graphic) {
+                    const attrs = featureHit.graphic.attributes;
+                    const featureId = attrs.id || attrs.value; // Mapillary usually uses 'id' for the feature ID
+                    
+                    // Get feature coordinates
+                    const geoPt = webMercatorUtils.webMercatorToGeographic(featureHit.graphic.geometry) as __esri.Point;
+
+                    // 1. Highlight the feature (Optional: Draw a specific marker for the selected object)
+                    this.drawPoint(geoPt.longitude, geoPt.latitude);
+
+                    // 2. Fetch alternates
+                    this.fetchAlternateImages(featureId, geoPt.latitude, geoPt.longitude);
+                    
+                    // Stop here so we don't trigger the "nearest sequence" search
+                    return;
+                }
 
                 // 3. Turbo Coverage
                 const turboHit = response.results.find(r => {
@@ -6040,7 +6294,10 @@ export default class Widget extends React.PureComponent<
                     top: "2px", 
                     right: "4px", 
                     zIndex: 10002,
-                    pointerEvents: "none" // Let clicks pass through empty spaces
+                    pointerEvents: "none", // Let clicks pass through empty spaces
+                    maxHeight: "calc(100% - 100px)", // Prevent running off bottom of screen
+                    overflowY: "auto", // Allow scrolling if stack gets too tall
+                    scrollbarWidth: "none" // Hide scrollbar for cleaner UI
                 }}>
                     {/* Info box */}
                     {!this.props.config.hideInfoBox && (
@@ -6289,10 +6546,10 @@ export default class Widget extends React.PureComponent<
                     {this.state.detectionsActive && (
                         <button 
                             onClick={this.toggleAiTags}
-                            title={this.state.showAiTags ? "Hide Labels" : "Show Labels"}
+                            title={this.state.showAiTags ? "Hide Labels/Tags" : "Show Labels/Tags"}
                             style={{
-                                background: this.state.showAiTags ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 0, 0, 0.4)',
-                                border: '1px solid rgba(255,255,255,0.2)',
+                                background: this.state.showAiTags ? 'rgba(61, 36, 36, 0.2)' : 'rgba(255, 0, 0, 0.4)',
+                                border: '1px solid rgba(1, 1, 1, 0.7)',
                                 marginTop: '2px',
                                 color: 'white',
                                 borderRadius: '6px',
@@ -6302,11 +6559,139 @@ export default class Widget extends React.PureComponent<
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 backdropFilter: 'blur(5px)',
-                                pointerEvents: 'auto'
+                                pointerEvents: 'auto',
+                                height: '12px'
                             }}
                         >
                             {this.state.showAiTags ? <Icons.LabelsOn size={14}/> : <Icons.LabelsOff size={14}/>}
                         </button>
+                    )}
+
+                    {this.state.alternateImages.length > 0 && (
+                        <div className="alternate-images-panel"
+                            style={{
+                                marginTop: "3px", // Spacing from buttons above
+                                width: "80px",   // Slightly more compact width
+                                background: "rgba(20, 20, 20, 0.6)",
+                                backdropFilter: "blur(10px)",
+                                borderRadius: "8px",
+                                padding: "3px",
+                                pointerEvents: "auto", // Re-enable clicks
+                                border: "1px solid rgba(255, 255, 255, 0.15)",
+                                boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "6px"
+                            }}
+                        >
+                            <div style={{
+                                color: "white", 
+                                borderBottom: "1px solid rgba(255,255,255,0.2)", padding: "0",
+                                display: "flex", justifyContent: "space-between", alignItems: "center"
+                            }}>
+                                <span style={{fontSize: '7px', fontWeight:'600'}}>ALTERNATE</span>
+                                <button 
+                                    onClick={() => this.setState({ alternateImages: [], targetDetectionId: null })}
+                                    style={{ background: "none", border: "none", color: "white", cursor: "pointer", fontSize: "10px", padding: "0 2px" }}
+                                    title="Close"
+                                >✕</button>
+                            </div>
+
+                            {this.state.alternateImages.map((img) => (
+                                <div 
+                                    key={img.id}
+                                    onClick={async () => {
+                                        try {
+                                            this.setState({ 
+                                                targetDetectionId: img.detectionId,
+                                                detectionsActive: true 
+                                            });
+
+                                            const resp = await fetch(`https://graph.mapillary.com/${img.id}?fields=sequence`, {
+                                                headers: { Authorization: `OAuth ${this.accessToken}` }
+                                            });
+                                            const data = await resp.json();
+                                            
+                                            if (data.sequence) {
+                                                // Clear old sequence graphics INCLUDING polylines before loading new sequence
+                                                if (this.state.selectedSequenceId && this.state.selectedSequenceId !== data.sequence) {
+                                                    this.clearSequenceGraphics();
+                                                }
+                                                // 1. Load the sequence
+                                                await this.loadSequenceById(data.sequence, img.id);
+                                                
+                                                // 2. Wait for viewer to settle, then adjust bearing
+                                                setTimeout(async () => {
+                                                    if (this.mapillaryViewer && this.state.selectedFeatureLocation) {
+                                                        try {
+                                                            // A. Get the current image node to find its specific compass angle
+                                                            const currentImage = await this.mapillaryViewer.getImage();
+                                                            
+                                                            // B. Calculate target bearing from Image -> Feature
+                                                            const targetBearing = this.calculateBearing(
+                                                                img.geometry.coordinates[1], img.geometry.coordinates[0],
+                                                                this.state.selectedFeatureLocation.lat, this.state.selectedFeatureLocation.lon
+                                                            );
+
+                                                            // C. Calculate the "Center X" coordinate required to look at that bearing
+                                                            // Mapillary Coordinates: 0.5 is center. 1.0 width = 360 degrees.
+                                                            // Formula: NewX = 0.5 + (Difference / 360)
+                                                            const imageBearing = currentImage.compassAngle;
+                                                            const diff = targetBearing - imageBearing;
+                                                            const newX = 0.5 + (diff / 360);
+
+                                                            // D. Apply the view
+                                                            // [newX, 0.5] means: "Look at Calculated Bearing, Keep Horizon Level"
+                                                            this.mapillaryViewer.setCenter([newX, 0.5]);
+
+                                                            // E. Load detections
+                                                            this.loadDetections(img.id);
+
+                                                        } catch (err) {
+                                                            console.warn("Could not set bearing:", err);
+                                                            this.loadDetections(img.id);
+                                                        }
+                                                    } else {
+                                                        // Fallback
+                                                        if (this.mapillaryViewer) this.loadDetections(img.id);
+                                                    }
+                                                }, 1000); 
+                                            }
+                                        } catch (e) { 
+                                            console.error(e); 
+                                        }
+                                    }}
+                                    style={{
+                                        cursor: "pointer",
+                                        borderRadius: "4px",
+                                        overflow: "hidden",
+                                        position: "relative",
+                                        border: this.state.imageId === img.id ? "2px solid #37d582" : "1px solid rgba(255,255,255,0.2)",
+                                        boxShadow: this.state.imageId === img.id ? "0 0 10px rgba(55, 213, 130, 0.4)" : "none",
+                                        transition: "transform 0.2s",
+                                        height: "50px" // Fixed height for uniformity
+                                    }}
+                                    onMouseEnter={e => e.currentTarget.style.transform = "scale(1.02)"}
+                                    onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"}
+                                    title={`Captured: ${new Date(img.capturedAt).toLocaleDateString()}`}
+                                >
+                                    <img 
+                                        src={img.thumbUrl} 
+                                        alt="Alt" 
+                                        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} 
+                                    />
+                                    <div style={{
+                                        position: "absolute", bottom: 0, left: 0, right: 0,
+                                        background: "linear-gradient(to top, rgba(0,0,0,0.8), transparent)",
+                                        color: "white",
+                                        fontSize: "8px", padding: "8px 4px 2px 4px",
+                                        textAlign: "right"
+                                    }}>
+                                        {new Date(img.capturedAt).toLocaleDateString(undefined, {month:'numeric', year:'2-digit'})}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                     )}
                 </div>
                 

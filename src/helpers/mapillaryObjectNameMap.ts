@@ -17,6 +17,8 @@ export const objectNameMap: Record<string, string> = {
     "marking--discrete--stop-line": "Lane Marking - Stop Line",
     "marking--discrete--symbol--bicycle": "Lane Marking - Symbol (Bicycle)",
     "marking--discrete--text": "Lane Marking - Text",
+    "marking--discrete--text--other": "Lane Marking - Text(Other)",
+    "marking--discrete--text--bus": "Lane Marking - Text(Bus)",
     "object--banner": "Banner",
     "object--bench": "Bench",
     "object--bike-rack": "Bike Rack",
@@ -40,8 +42,14 @@ export const objectNameMap: Record<string, string> = {
     "object--traffic-light--general-horizontal": "Traffic Light - General (Horizontal)",
     "object--traffic-light--general-single": "Traffic Light - General (Single)",
     "object--traffic-light--general-upright": "Traffic Light - General (Upright)",
+    "object--traffic-light--general-upright-front": "Traffic Light - General (Upright-Front)",
+    "object--traffic-light--general-upright-back": "Traffic Light - General (Upright-Back)",     
+    "object--traffic-light--general-upright-side": "Traffic Light - General (Upright-Side)",
     "object--traffic-light--other": "Traffic Light - Other",
     "object--traffic-light--pedestrians": "Traffic Light - Pedestrians",
+    "object--traffic-light--pedestrians-front": "Traffic Light - Pedestrians(Front)",
+    "object--traffic-light--pedestrians-back": "Traffic Light - Pedestrians(Back)",
+    "object--traffic-light--pedestrians-side": "Traffic Light - Pedestrians(Side)",
     "object--trash-can": "Trash Can",
     "object--water-valve": "Water Valve"
 };
