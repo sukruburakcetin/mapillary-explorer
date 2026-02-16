@@ -770,7 +770,10 @@ export const mobileOverrideStyles = `
         .react-datepicker-popper { height: 230px !important; }
         .info-box { font-size: 8px !important; max-width: 110px !important; }
         .legend-container { display: none !important; }
-        .esri-popup__main-container { width: 250px !important; top: 8% !important; left: 17% !important; max-height:42% !important; }
+        .esri-popup__main-container { width: 250px !important; top: 8% !important; max-height:22% !important; }
+        .esri-widget__heading { font-size: 10px !important; }
+        .esri-feature-content { font-size: 10px !important; }
+        .esri-view-width-xsmall .esri-popup--docked-bottom-center .esri-popup__main-container { left: auto !important; right: auto !important; }
         .splash-screen-logo { margin-bottom: 15px !important; }
         .splash-screen-text { font-size: 10px !important; }
         .minimap-container { top: 50px !important; left: 50% !important; right: auto !important; transform: translateX(-50%) !important; width: 90% !important; max-width: 350px !important; height: 150px !important; }
