@@ -1,6 +1,6 @@
 /** @jsx jsx */
 import { React, AllWidgetProps, jsx } from "jimu-core";
-import { JimuMapViewComponent, JimuMapView, loadArcGISJSAPIModules } from "jimu-arcgis";
+import { JimuMapViewComponent, JimuMapView, loadArcGISJSAPIModules, MapViewManager } from "jimu-arcgis";
 import ReactDOM from "react-dom";
 import * as webMercatorUtils from "esri/geometry/support/webMercatorUtils";
 import Pbf from 'pbf';
@@ -83,6 +83,7 @@ interface State {
     selectedFeatureLocation: { lat: number; lon: number } | null;
     isFetchingAlternates: boolean;
     targetDetectionId: string | null;
+    syncHeading: boolean;
 }
 
 export default class Widget extends React.PureComponent<
@@ -161,8 +162,15 @@ export default class Widget extends React.PureComponent<
     private debouncedTurboFilter: (() => void) & { cancel?: () => void };
     private zoomDisplayHandle: __esri.WatchHandle | null = null;
 
-    // Turbo request tracking
+    // Request tracking
     private _turboRequestCount: number = 0;
+    private _hasCheckedSharedState: boolean = false;
+    private _isFlyInActive: boolean = false;
+    private _hasAttemptedMapSwitch: boolean = false;
+
+    private _turboHoverGraphic: __esri.Graphic | null = null;
+    private _turboHoverInterval: any = null;
+    private _lastHoveredTurboOid: number | null = null;
 
     /**
         * Human‑readable names for Mapillary object classification codes.
@@ -221,6 +229,7 @@ export default class Widget extends React.PureComponent<
         selectedFeatureLocation: null,
         isFetchingAlternates: false,
         targetDetectionId: null,
+        syncHeading: false
     };
 
     constructor(props: AllWidgetProps<any>) {
@@ -249,23 +258,17 @@ export default class Widget extends React.PureComponent<
         this.clearGreenPulse();
         
         // Also clear any existing cone graphics
-        if (this.currentConeGraphic && this.state.jimuMapView?.view) {
-            this.state.jimuMapView.view.graphics.remove(this.currentConeGraphic);
-            this.currentConeGraphic = null;
-        }
+        this.clearConeGraphics();
 
         // Define local redraw helper - pass specific coordinates
         const redrawCone = async (lon?: number, lat?: number) => {
             const view = this.state.jimuMapView?.view;
             if (!view) return;
 
-            // If Turbo Mode is active and no specific sequence is selected, 
+            // If Turbo Mode is active and no specific sequence is selected,
             // we should not draw the camera cone.
             if (this.state.turboModeActive && !this.state.selectedSequenceId) {
-                if (this.currentConeGraphic) {
-                    view.graphics.remove(this.currentConeGraphic);
-                    this.currentConeGraphic = null;
-                }
+                this.clearConeGraphics(); // ← was: view.graphics.remove(this.currentConeGraphic)
                 return;
             }
 
@@ -292,11 +295,10 @@ export default class Widget extends React.PureComponent<
             const length = this.coneLengths[this.zoomStepIndex];
             const spread = this.coneSpreads[this.zoomStepIndex];
 
-            // Remove old cone
-            if (this.currentConeGraphic) {
-                view.graphics.remove(this.currentConeGraphic);
-            }
-            // Draw new cone at specified coordinates
+            // remove ALL cone faces, not just the sentinel
+            this.clearConeGraphics();
+
+            // Draw fresh cone
             this.currentConeGraphic = this.drawCone(lon, lat, bearing, length, spread);
         };
 
@@ -356,6 +358,15 @@ export default class Widget extends React.PureComponent<
             redrawCone();
             // Update minimap tracking to show new bearing
             this.updateMinimapTracking();
+
+            const view = this.state.jimuMapView?.view;
+            if (view && view.type === "3d" && 
+                this.props.config.syncMapWithImage === true && 
+                !this._isFlyInActive && 
+                this.state.syncHeading) {
+                
+                view.goTo({ heading: event.bearing }, { animate: false });
+            }
         });
 
         // 3. Image Change Event
@@ -480,58 +491,68 @@ export default class Widget extends React.PureComponent<
                     });
 
                     // 3. Map Synchronization Logic (With Offset)
-                    if (this.props.config.syncMapWithImage === true) {
+                    if (this.props.config.syncMapWithImage === true && !this._isFlyInActive) {
                         const position = this.props.config.syncMapPosition || 'center';
                         
                         const targetPoint = new this.ArcGISModules.Point({
                             longitude: activeImg.lon,
                             latitude: activeImg.lat
                         });
-
-                        // Standard Center
-                        if (position === 'center') {
-                            view.goTo({ center: targetPoint }, { animate: true, duration: 300 });
+                        
+                        // === 3D SCENE: GPS NAVIGATION MODE ===
+                        if (view.type === "3d") {
+                            view.goTo({
+                                center: [activeImg.lon, activeImg.lat],
+                                // heading: this._lastBearing 
+                            }, { animate: true, duration: 300 });
                         } 
-                        // Offset Logic
+                        // === 2D MAP MODE ===
                         else {
-                            try {
-                                const wmPoint = webMercatorUtils.geographicToWebMercator(targetPoint) as __esri.Point;
-                                const extent = view.extent;
-                                
-                                if (wmPoint && extent) {
-                                    const width = extent.width;
-                                    const height = extent.height;
-                                    const offsetFactor = 0.25; // 25% shift
+                            // Standard Center
+                            if (position === 'center') {
+                                view.goTo({ center: targetPoint }, { animate: true, duration: 300 });
+                            } 
+                            // Offset Logic
+                            else {
+                                try {
+                                    const wmPoint = webMercatorUtils.geographicToWebMercator(targetPoint) as __esri.Point;
+                                    const extent = view.extent;
+                                    
+                                    if (wmPoint && extent) {
+                                        const width = extent.width;
+                                        const height = extent.height;
+                                        const offsetFactor = 0.25; // 25% shift
 
-                                    let newCenterX = wmPoint.x;
-                                    let newCenterY = wmPoint.y;
+                                        let newCenterX = wmPoint.x;
+                                        let newCenterY = wmPoint.y;
 
-                                    if (position === 'east') {
-                                        // Widget Left -> Show point on Right -> Move Camera Left (West)
-                                        newCenterX = wmPoint.x - (width * offsetFactor);
-                                    } else if (position === 'west') {
-                                        // Widget Right -> Show point on Left -> Move Camera Right (East)
-                                        newCenterX = wmPoint.x + (width * offsetFactor);
-                                    } else if (position === 'north') {
-                                        // Widget Bottom -> Show point on Top -> Move Camera Down (South)
-                                        newCenterY = wmPoint.y - (height * offsetFactor);
-                                    } else if (position === 'south') {
-                                        // Widget Top -> Show point on Bottom -> Move Camera Up (North)
-                                        newCenterY = wmPoint.y + (height * offsetFactor);
+                                        if (position === 'east') {
+                                            // Widget Left -> Show point on Right -> Move Camera Left (West)
+                                            newCenterX = wmPoint.x - (width * offsetFactor);
+                                        } else if (position === 'west') {
+                                            // Widget Right -> Show point on Left -> Move Camera Right (East)
+                                            newCenterX = wmPoint.x + (width * offsetFactor);
+                                        } else if (position === 'north') {
+                                            // Widget Bottom -> Show point on Top -> Move Camera Down (South)
+                                            newCenterY = wmPoint.y - (height * offsetFactor);
+                                        } else if (position === 'south') {
+                                            // Widget Top -> Show point on Bottom -> Move Camera Up (North)
+                                            newCenterY = wmPoint.y + (height * offsetFactor);
+                                        }
+
+                                        const newCenter = new this.ArcGISModules.Point({
+                                            x: newCenterX,
+                                            y: newCenterY,
+                                            spatialReference: { wkid: 3857 }
+                                        });
+
+                                        view.goTo({ center: newCenter }, { animate: true, duration: 300 });
+                                    } else {
+                                        view.goTo({ center: targetPoint }, { animate: true, duration: 300 });
                                     }
-
-                                    const newCenter = new this.ArcGISModules.Point({
-                                        x: newCenterX,
-                                        y: newCenterY,
-                                        spatialReference: { wkid: 3857 }
-                                    });
-
-                                    view.goTo({ center: newCenter }, { animate: true, duration: 300 });
-                                } else {
+                                } catch (e) {
                                     view.goTo({ center: targetPoint }, { animate: true, duration: 300 });
                                 }
-                            } catch (e) {
-                                view.goTo({ center: targetPoint }, { animate: true, duration: 300 });
                             }
                         }
                     }
@@ -733,21 +754,58 @@ export default class Widget extends React.PureComponent<
         // Remove any existing highlight before drawing a new one
         this.clearDirectionHighlight();
         const { Graphic } = this.ArcGISModules;
+        const is3D = view.type === "3d";
+
+        const geometry = {
+            type: "point",
+            longitude: hoveredImg.lon,
+            latitude: hoveredImg.lat,
+            spatialReference: { wkid: 4326 }
+        };
+
+        // Helper function to create the correct symbol for 2D or 3D
+        const getSymbol = (currentSize: number) => {
+            if (is3D) {
+                // In 3D, anchor the point to the ground but visually lift the icon 
+                // with a line (callout) pointing to the exact location.
+                return {
+                    type: "point-3d",
+                    symbolLayers:[{
+                        type: "icon",
+                        resource: { primitive: "circle" },
+                        material: { color: [255, 255, 0, 0.8] },
+                        outline: { color: [255, 165, 0, 1], size: 2 },
+                        size: currentSize
+                    }],
+                    verticalOffset: {
+                        screenLength: 45, // Lifts the icon 45 pixels up on the screen
+                        maxWorldLength: 100,
+                        minWorldLength: 5
+                    },
+                    callout: {
+                        type: "line", // Draws a line straight down to the true location
+                        size: 2,
+                        color:[255, 165, 0, 1],
+                        border: {
+                            color: [0, 0, 0, 0.3]  // dark outline around the orange line
+                        }
+                    }
+                };
+            } else {
+                // Standard 2D rendering
+                return {
+                    type: "simple-marker",
+                    style: "circle",
+                    color: [255, 255, 0, 0.8],
+                    size: currentSize,
+                    outline: { color: [255, 165, 0, 1], width: 3 }
+                };
+            }
+        };
 
         const graphic = new Graphic({
-            geometry: {
-                type: "point",
-                longitude: hoveredImg.lon,
-                latitude: hoveredImg.lat,
-                spatialReference: { wkid: 4326 }
-            },
-            symbol: {
-                type: "simple-marker",
-                style: "circle",
-                color: [255, 255, 0, 0.8],
-                size: 16,
-                outline: { color: [255, 165, 0, 1], width: 3 }
-            }
+            geometry: geometry,
+            symbol: getSymbol(16) as any
         });
 
         view.graphics.add(graphic);
@@ -768,14 +826,9 @@ export default class Widget extends React.PureComponent<
             if (size >= 20) growing = false;
             if (size <= 16) growing = true;
 
-            this._directionHoverGraphic.symbol = {
-                type: "simple-marker",
-                style: "circle",
-                color: [255, 255, 0, 0.8],
-                size,
-                outline: { color: [255, 165, 0, 1], width: 3 }
-            } as any;
+            this._directionHoverGraphic.symbol = getSymbol(size) as any;
         }, 60);
+        
         // Store interval reference for cleanup
         (graphic as any)._pulseInterval = pulseInterval;
     }
@@ -1101,7 +1154,7 @@ export default class Widget extends React.PureComponent<
     // destroys Mapillary viewer instance, clears DOM container,
     // and resets internal state if requested.
 	private cleanupWidgetEnvironment(resetState: boolean = false, fullRemove: boolean = true) {
-        // ... (Keep existing green pulse cleanup) ...
+        // existing green pulse cleanup
 		if (this.currentGreenGraphic && (this.currentGreenGraphic as any)._pulseInterval) {
 			clearInterval((this.currentGreenGraphic as any)._pulseInterval);
 			this.currentGreenGraphic = null;
@@ -1115,6 +1168,7 @@ export default class Widget extends React.PureComponent<
 
         // Clean up direction hover graphic
         this.clearDirectionHighlight();
+        this.clearTurboHover();
 
         // Unsubscribe from direction hover events
         if (this._directionUnsubscribe) {
@@ -1122,21 +1176,21 @@ export default class Widget extends React.PureComponent<
             this._directionUnsubscribe = null;
         }
 
-        // ... (Keep graphics cleanup) ...
+        //  graphics cleanup
         if (fullRemove && this.state.jimuMapView) {
             const { view } = this.state.jimuMapView;
             view.graphics.removeAll();
         }
 
         if (fullRemove) {
-            // ... (Keep listener removals) ...
+            // listener removals
             if (this.mapClickHandle) { this.mapClickHandle.remove(); this.mapClickHandle = null; }
             if (this.pointerMoveHandle) { this.pointerMoveHandle.remove(); this.pointerMoveHandle = null; }
 
             this._cancelObjectsFetch = true;
             this._cancelTrafficSignsFetch = true;
             
-            // ... (Keep watcher removals) ...
+            // watcher removals
             if (this.trafficSignsStationaryHandle) { this.trafficSignsStationaryHandle.remove(); this.trafficSignsStationaryHandle = null; }
             if (this.trafficSignsZoomHandle) { this.trafficSignsZoomHandle.remove(); this.trafficSignsZoomHandle = null; }
             if (this.objectsStationaryHandle) { this.objectsStationaryHandle.remove(); this.objectsStationaryHandle = null; }
@@ -1195,7 +1249,7 @@ export default class Widget extends React.PureComponent<
             this.setState({ turboModeActive: false });
         }
 
-        // ... (Keep viewer destruction and rest of the method) ...
+        // viewer destruction and rest of the method
 		if (this.mapillaryViewer) {
 			try { this.mapillaryViewer.remove(); } catch (err) {}
 			this.mapillaryViewer = null;
@@ -1205,7 +1259,7 @@ export default class Widget extends React.PureComponent<
 		}
 
         if (resetState) {
-            // ... (Keep state reset logic) ...
+            // state reset logic
             this.setState({
                 imageId: null,
                 sequenceId: null,
@@ -1227,6 +1281,77 @@ export default class Widget extends React.PureComponent<
                 turboFilterIsPano: undefined,
                 showTurboFilterBox: false
             });
+        }
+    }
+
+    /**
+        * Restores map graphics (clicked location, sequence lines, cone, etc.) 
+        * when the map view switches between 2D and 3D, as graphics are tied to the view instance.
+    */
+    private restoreMapGraphics = () => {
+        const { jimuMapView, clickLon, clickLat, availableSequences, selectedSequenceId, sequenceImages, imageId, turboModeActive } = this.state;
+        if (!jimuMapView || !this.ArcGISModules) return;
+
+        const view = jimuMapView.view;
+
+        // 1. Restore Clicked Location (Black/Red Dot)
+        if (clickLon != null && clickLat != null) {
+            this.drawPoint(clickLon, clickLat);
+        }
+
+        // 2. Restore Available Sequences (Background colored dots/lines - Normal Mode only)
+        if (!turboModeActive && availableSequences && availableSequences.length > 0) {
+            this.drawSequencesOverlay();
+        }
+
+        // 3. Restore Active Sequence (Blue line & dots)
+        if (selectedSequenceId && sequenceImages && sequenceImages.length > 0) {
+            const { Graphic } = this.ArcGISModules;
+            
+            // Blue Polyline
+            if (sequenceImages.length > 1) {
+                 const paths = sequenceImages.map(img => [img.lon, img.lat]);
+                 const polylineGraphic = new Graphic({
+                    geometry: { type: "polyline", paths: [paths], spatialReference: { wkid: 4326 } },
+                    symbol: { type: "simple-line", color: [0, 0, 255, 0.8], width: 3 }, 
+                    attributes: { sequenceId: selectedSequenceId }
+                });
+                (polylineGraphic as any).__isSequenceOverlay = true;
+                view.graphics.add(polylineGraphic);
+            }
+
+            // Blue Dots
+            sequenceImages.forEach(img => {
+                if (img.id !== imageId) {
+                    this.drawPointWithoutRemoving(img.lon, img.lat,[0, 0, 255, 1], selectedSequenceId);
+                }
+            });
+        }
+
+        // 4. Restore Active Image (Green Pulse) and Camera Cone
+        if (imageId && sequenceImages && sequenceImages.length > 0) {
+            const activeImg = sequenceImages.find(s => s.id === imageId);
+            if (activeImg) {
+                // Clear old references to prevent memory leaks from old intervals
+                this.clearGreenPulse();
+                this.clearConeGraphics();
+
+                this.currentGreenGraphic = this.drawPulsingPoint(activeImg.lon, activeImg.lat,[0, 255, 0, 1]);
+                
+                const length = this.coneLengths[this.zoomStepIndex];
+                const spread = this.coneSpreads[this.zoomStepIndex];
+                
+                if (this.mapillaryViewer) {
+                    this.mapillaryViewer.getBearing().then((b: number) => {
+                        if (typeof b === 'number') this._lastBearing = b;
+                        this.currentConeGraphic = this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing, length, spread);
+                    }).catch(() => {
+                        this.currentConeGraphic = this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing || 0, length, spread);
+                    });
+                } else {
+                    this.currentConeGraphic = this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing || 0, length, spread);
+                }
+            }
         }
     }
 	
@@ -1587,10 +1712,7 @@ export default class Widget extends React.PureComponent<
 
         // Clear graphics before state change
         this.clearGreenPulse();
-        if (this.currentConeGraphic && this.state.jimuMapView?.view) {
-            this.state.jimuMapView.view.graphics.remove(this.currentConeGraphic);
-            this.currentConeGraphic = null;
-        }
+        this.clearConeGraphics();
 
         // Destroy minimap when exiting fullscreen
         if (!goingFullscreen && this.minimapView) {
@@ -1902,10 +2024,10 @@ export default class Widget extends React.PureComponent<
                 
                 // Target takes priority over hover
                 const shouldShowText = this.state.showAiTags && (isHovered || isTarget);
-                const lineColor = isTarget ? 0xffffff : config.color;
+                const lineColor = isTarget ? 0xFF0000 : config.color;
                 const fillColor = isTarget ? 0xffff00 : config.color;
-                const fillOpacity = isTarget ? 0.8 : 0.3;
-                const lineWidth = isTarget ? 8 : 2;
+                const fillOpacity = isTarget ? 0.9 : 0.3;
+                const lineWidth = isTarget ? 4 : 2;
                 
                 try {
                     const geometry = new PolygonGeometry((tag.geometry as PolygonGeometry).polygon);
@@ -2346,8 +2468,54 @@ export default class Widget extends React.PureComponent<
 
         const vectorTileSourceUrl = `https://tiles.mapillary.com/maps/vtp/mly1_public/2/{z}/{x}/{y}?access_token=${this.accessToken}`
 
-        // Create filter expression if ID exists: ["==", "creator_id", 12345]
-        const layerFilter = filterCreatorId ? ["==", "creator_id", filterCreatorId] : null;
+        // Create filter expression if ID exists:["==", "creator_id", 12345]
+        const layerFilter = filterCreatorId ?["==", "creator_id", filterCreatorId] : null;
+
+        // Base layers without the image circles
+        const layers: any[] =[
+            {
+                "id": "overview",
+                "source": "mapillary",
+                "source-layer": "overview",
+                "type": "circle",
+                "filter": layerFilter,
+                "paint": {
+                    "circle-radius": 1,
+                    "circle-color": "#35AF6D",
+                    "circle-stroke-color": "#35AF6D",
+                    "circle-stroke-width": 1
+                }
+            },
+            {
+                "id": "sequence",
+                "source": "mapillary",
+                "source-layer": "sequence",
+                "type": "line",
+                "filter": layerFilter,
+                "paint": {
+                    "line-opacity": 0.8,
+                    "line-color": "#35AF6D",
+                    "line-width": 2
+                }
+            }
+        ];
+
+        // Conditionally add the image circles layer based on config
+        if (!this.props.config.hideCoverageCircles) {
+            layers.push({
+                "id": "image",
+                "source": "mapillary",
+                "source-layer": "image",
+                "type": "circle",
+                "filter": layerFilter,
+                "paint": {
+                    "circle-radius": 2,
+                    "circle-color": "#35AF6D",
+                    "circle-stroke-color": "#ffffff",
+                    "circle-stroke-width": 1
+                }
+            });
+        }
 
         const minimalStyle = {
             "version": 8,
@@ -2359,46 +2527,7 @@ export default class Widget extends React.PureComponent<
                 "maxzoom": 14
             }
             },
-            "layers": [
-                {
-                    "id": "overview",
-                    "source": "mapillary",
-                    "source-layer": "overview",
-                    "type": "circle",
-                    "filter": layerFilter,
-                    "paint": {
-                        "circle-radius": 1,
-                        "circle-color": "#35AF6D",
-                        "circle-stroke-color": "#35AF6D",
-                        "circle-stroke-width": 1
-                    }
-                },
-                {
-                    "id": "sequence",
-                    "source": "mapillary",
-                    "source-layer": "sequence",
-                    "type": "line",
-                    "filter": layerFilter,
-                    "paint": {
-                        "line-opacity": 0.8,
-                        "line-color": "#35AF6D",
-                        "line-width": 2
-                    }
-                },
-                {
-                    "id": "image",
-                    "source": "mapillary",
-                    "source-layer": "image",
-                    "type": "circle",
-                    "filter": layerFilter,
-                    "paint": {
-                        "circle-radius": 2,
-                        "circle-color": "#35AF6D",
-                        "circle-stroke-color": "#ffffff",
-                        "circle-stroke-width": 1
-                    }
-                }
-            ]
+            "layers": layers
         }
 
         this.mapillaryVTLayer = new VectorTileLayer({
@@ -3772,11 +3901,21 @@ export default class Widget extends React.PureComponent<
                 try { zoom = await this.mapillaryViewer.getZoom(); } catch (e) {}
             }
 
-            // 2. Always use the Widget/Iframe URL (window.location.href)
-            // We removed the code that checks 'window.parent' because the parent
-            // cannot pass parameters down to us automatically.
-            const url = new URL(window.location.href);
+            // 2. Get Parent App URL (Crucial for dropped widgets)
+            let baseUrlStr = window.location.href;
+            try {
+                if (window.self !== window.top && window.parent) {
+                    baseUrlStr = window.parent.location.href;
+                }
+            } catch (e) {
+                console.warn("Cannot access parent window url, using widget url");
+            }
             
+            const url = new URL(baseUrlStr);
+
+            // Detect if we are currently in 2D or 3D
+            const mapType = this.state.jimuMapView?.view?.type === '3d' ? '3d' : '2d';
+
             // 3. Set params
             // Note: The URL object automatically handles placing params before the hash (#)
             // if your URL happens to have one.
@@ -3784,6 +3923,7 @@ export default class Widget extends React.PureComponent<
             url.searchParams.set('mly_b', bearing.toFixed(1));
             url.searchParams.set('mly_p', pitch.toFixed(1));
             url.searchParams.set('mly_z', zoom.toFixed(1));
+            url.searchParams.set('mly_mt', mapType); // Save Map Type
             
             const urlString = url.toString();
 
@@ -3851,13 +3991,45 @@ export default class Widget extends React.PureComponent<
         const sharedId = params.get('mly_id');
 
         if (sharedId) {
+
+            // MAP VIEW TYPE CHECK AND SWITCH
+            const targetMapType = params.get('mly_mt'); // '2d' or '3d'
+
+            if (targetMapType && this.state.jimuMapView && !this._hasAttemptedMapSwitch) {
+                const currentType = this.state.jimuMapView.view.type;
+                
+                // If the link was 2D but the map opened in 3D (or vice versa)
+                if (currentType !== targetMapType) {
+                    this._hasAttemptedMapSwitch = true; // Ensure we only try this once
+                    try {
+                        const mvManager = MapViewManager.getInstance();
+                        const mapGroup = mvManager.getJimuMapViewGroup(this.state.jimuMapView.mapWidgetId);
+                        
+                        if (mapGroup) {
+                            this.log(`Map mismatch: URL wants ${targetMapType}, current is ${currentType}. Switching...`);
+                            
+                            // Reset the check flag so it runs AGAIN after the map switches
+                            this._hasCheckedSharedState = false; 
+                            
+                            // Tell the Experience Builder Map Widget to toggle its 2D/3D state
+                            mapGroup.switchMap();
+                            
+                            // Exit now. The map will switch, trigger onActiveViewChange, and come back here automatically.
+                            return; 
+                        }
+                    } catch (err) {
+                        console.warn("Could not auto-switch map view:", err);
+                    }
+                }
+            }
+
             this.log("Shared Mapillary ID found:", sharedId);
             this.setState({ isSharedState: true });
             
             // Get camera params
             const bearing = parseFloat(params.get('mly_b') || '0');
             const pitch = parseFloat(params.get('mly_p') || '0');
-            const zoom = parseFloat(params.get('mly_z') || '0');
+            const mapillaryZoom = parseFloat(params.get('mly_z') || '0');
 
             try {
                 // Fetch image details to get sequence ID and coords
@@ -3871,28 +4043,56 @@ export default class Widget extends React.PureComponent<
                     const coords = data.geometry?.coordinates; // [lon, lat]
 
                     if (seqId && coords) {
-                        // 1. Load the sequence in the viewer
+
+                        // Take control of the camera and don't let anyone else in.
+                        this._isFlyInActive = true;
+
+                         // 1. Load the sequence in the viewer
                         await this.loadSequenceById(seqId, sharedId);
                         
-                        // 2. Center the ArcGIS Map on this location (Best UX)
-                        if (this.state.jimuMapView) {
-                            this.state.jimuMapView.view.goTo({
-                                center: [coords[0], coords[1]],
-                                zoom: 18 // Auto-zoom to street level
+                        // 2. ZOOM & CENTER the ArcGIS Map (Cinematic Fly-in)
+                        if (this.state.jimuMapView && this.ArcGISModules) {
+                            const view = this.state.jimuMapView.view;
+                            const { Point } = this.ArcGISModules;
+
+                            // Create a precise geometric point
+                            const targetPoint = new Point({
+                                longitude: coords[0],
+                                latitude: coords[1],
+                                spatialReference: { wkid: 4326 }
                             });
+
+                            await view.when(); // Ensure map drawing engine is ready
+
+                            if (view.type === "3d") {
+                              await view.goTo({
+                                    target: targetPoint,
+                                    heading: bearing, 
+                                    tilt: 60, 
+                                    zoom: 19 
+                                }, { animate: true, duration: 2500 });
+                            } else {
+                                view.goTo({
+                                    target: targetPoint,
+                                    zoom: 19 // Deep street-level zoom for 2D maps
+                                }, { animate: true, duration: 2000 });
+                            }
                         }
+                        
+                        // Flight complete, restore normal camera tracking.
+                        setTimeout(() => {
+                            this._isFlyInActive = false; 
+                        }, 4000);
 
                         // 3. Apply Camera Angles after viewer is ready
-                        // We use a slight delay to ensure the viewer DOM is fully instantiated
                         setTimeout(() => {
                             if (this.mapillaryViewer) {
-                                // Check if methods exist before calling (safety)
                                 if (typeof this.mapillaryViewer.setCenter === 'function') this.mapillaryViewer.setCenter([coords[0], coords[1]]);
                                 if (typeof this.mapillaryViewer.setBearing === 'function') this.mapillaryViewer.setBearing(bearing);
                                 if (typeof this.mapillaryViewer.setPitch === 'function') this.mapillaryViewer.setPitch(pitch);
-                                if (typeof this.mapillaryViewer.setZoom === 'function') this.mapillaryViewer.setZoom(zoom);
+                                if (typeof this.mapillaryViewer.setZoom === 'function') this.mapillaryViewer.setZoom(mapillaryZoom);
                             }
-                        }, 1500); 
+                        }, 1000); 
                     }
                 }
             } catch (err) {
@@ -4038,6 +4238,72 @@ export default class Widget extends React.PureComponent<
         }
     }
 
+    private showTurboHover(graphic: __esri.Graphic) {
+        const view = this.state.jimuMapView?.view;
+        if (!view || !this.ArcGISModules) return;
+
+        const oid = graphic.attributes?.oid;
+
+        // Don't restart animation if already hovering the same point
+        if (this._lastHoveredTurboOid === oid && this._turboHoverGraphic) return;
+        this._lastHoveredTurboOid = oid;
+
+        // Clear previous hover graphic
+        this.clearTurboHover();
+
+        const { Graphic } = this.ArcGISModules;
+
+        // Clone the geometry of the hovered turbo point
+        const hoverGraphic = new Graphic({
+            geometry: graphic.geometry,
+            symbol: {
+                type: "simple-marker",
+                color: [165, 42, 42, 0.95],   // same brown, slightly more opaque
+                size: 6,
+                outline: { color: [255, 255, 255, 0.9], width: 1.5 }
+            } as any
+        });
+
+        (hoverGraphic as any).__isTurboHover = true;
+        view.graphics.add(hoverGraphic);
+        this._turboHoverGraphic = hoverGraphic;
+
+        // Pulse animation: grows from 6 → 11 → 6 repeatedly
+        let size = 6;
+        let growing = true;
+
+        this._turboHoverInterval = setInterval(() => {
+            if (!this._turboHoverGraphic) {
+                clearInterval(this._turboHoverInterval);
+                return;
+            }
+
+            size += growing ? 0.4 : -0.4;
+            if (size >= 11) growing = false;
+            if (size <= 6)  growing = true;
+
+            this._turboHoverGraphic.symbol = {
+                type: "simple-marker",
+                color: [165, 42, 42, 0.95],
+                size: size,
+                outline: { color: [255, 255, 255, 0.9], width: 1.5 }
+            } as any;
+        }, 40);
+    }
+
+    private clearTurboHover() {
+        if (this._turboHoverInterval) {
+            clearInterval(this._turboHoverInterval);
+            this._turboHoverInterval = null;
+        }
+        if (this._turboHoverGraphic) {
+            const view = this.state.jimuMapView?.view;
+            if (view) view.graphics.remove(this._turboHoverGraphic);
+            this._turboHoverGraphic = null;
+        }
+        this._lastHoveredTurboOid = null;
+    }
+
     /*
         * Loads Mapillary "Turbo Mode" coverage points into the map view.
         * - Requires zoom >= minTurboZoom (default 16) or it skips loading.
@@ -4175,7 +4441,7 @@ export default class Widget extends React.PureComponent<
 
                             let yearCat: string | null = null;
                             
-                            // --- FIX: Add to Legend ONLY if point is inside BBOX ---
+                            // Adding to Legend ONLY if point is inside BBOX
                             if (turboColorByDate && props.captured_at) {
                                 const d = new Date(props.captured_at);
                                 if (!isNaN(d.getTime())) {
@@ -4263,6 +4529,9 @@ export default class Widget extends React.PureComponent<
             title: "Mapillary Turbo Coverage Points",
             source: features,
             objectIdField: "oid",
+            elevationInfo: {
+                mode: "on-the-ground" // Drapes turbo points on ground surface, below graphics in 3D
+            },
             definitionExpression: this.state.selectedTurboYear ? `date_category = '${this.state.selectedTurboYear}'` : undefined,
             fields: [
                 { name: "oid", type: "oid" },
@@ -4553,7 +4822,6 @@ export default class Widget extends React.PureComponent<
                 this.log("Coverage layer added from componentDidMount (deferred load)");
             }
         }
-        this.checkUrlForSharedState();
     }
 	
 	componentDidUpdate(prevProps: AllWidgetProps<any>, prevState: State) {
@@ -4719,7 +4987,45 @@ export default class Widget extends React.PureComponent<
                 }
             }
         }
-         // --- 5. Handle Dynamic Component Toggling (Bearing/Zoom)
+
+        if (prevProps.config.hideCoverageCircles !== this.props.config.hideCoverageCircles) {
+            const reInitLayer = async () => {
+                let targetId: number | undefined = undefined;
+                if (this.props.config.turboCreator) {
+                    targetId = (await this.getUserIdFromUsername(this.props.config.turboCreator)) || undefined;
+                }
+                
+                // Re-create the layer with the new style
+                this.initMapillaryLayer(targetId);
+                
+                // If it's currently showing on the map, swap it out instantly
+                if (this.state.tilesActive && this.state.jimuMapView) {
+                    const view = this.state.jimuMapView.view;
+                    const existingLayer = view.map.findLayerById("mapillary-vector-tiles");
+                    if (existingLayer) {
+                        view.map.remove(existingLayer);
+                    }
+                    if (this.mapillaryVTLayer) {
+                        view.map.add(this.mapillaryVTLayer);
+                        
+                        // Ensure Turbo/Features stay on top of the newly added VT layer
+                        const layers = view.map.layers;
+                        if (this.turboCoverageLayer && layers.includes(this.turboCoverageLayer)) {
+                            view.map.reorder(this.turboCoverageLayer, layers.length - 1);
+                        }
+                        if (this.mapillaryObjectsFeatureLayer && layers.includes(this.mapillaryObjectsFeatureLayer)) {
+                            view.map.reorder(this.mapillaryObjectsFeatureLayer, layers.length - 1);
+                        }
+                        if (this.mapillaryTrafficSignsFeatureLayer && layers.includes(this.mapillaryTrafficSignsFeatureLayer)) {
+                            view.map.reorder(this.mapillaryTrafficSignsFeatureLayer, layers.length - 1);
+                        }
+                    }
+                }
+            };
+            reInitLayer();
+        }
+
+        // --- 5. Handle Dynamic Component Toggling (Bearing/Zoom)
         if (this.mapillaryViewer) {
             // Handle Bearing Toggle
             if (prevProps.config.hideBearing !== this.props.config.hideBearing) {
@@ -4811,6 +5117,22 @@ export default class Widget extends React.PureComponent<
 
         this.log("Active MapView set - Attaching Handlers");
         this.setState({ jimuMapView: jmv });
+
+        // Use a callback to restore graphics AFTER state is set ---
+        this.setState({ jimuMapView: jmv }, () => {
+            jmv.view.when(() => {
+                this.restoreMapGraphics();
+            });
+        });
+
+        // Ensure shared link is checked ONLY AFTER the map view is bound
+        if (!this._hasCheckedSharedState) {
+            this._hasCheckedSharedState = true;
+            // Short delay to ensure React state has committed the map view
+            setTimeout(() => {
+                this.checkUrlForSharedState();
+            }, 100);
+        }
 
         // ZOOM WATCHER 
         if (this.zoomDisplayHandle) {
@@ -5016,40 +5338,29 @@ export default class Widget extends React.PureComponent<
                 const featureId = attrs.image_id || attrs.id;
                 if (!featureId) return;
 
-                // If the feature has changed (or if it’s a new entry)
+                // GROW ANIMATION
+                this.showTurboHover(hitGraphic);
+
+                // TOOLTIP LOGIC (unchanged)
                 if (this._currentHoveredFeatureId !== featureId) {
-                    
-                    // 1. Cancel the previous pending operation
                     if (this._hoverTimeout) {
                         clearTimeout(this._hoverTimeout);
                         this._hoverTimeout = null;
                     }
-                    
-                     // 2. HIDE the tooltip (do NOT show it immediately!)
                     this.tooltipDiv.style.display = "none";
-
-                    // 3. Store the new ID
                     this._currentHoveredFeatureId = featureId;
 
-                     // 4. Start the timer (wait 300ms)
                     this._hoverTimeout = setTimeout(async () => {
                         if (!this.tooltipDiv) return;
-
-                         // -- 300ms has passed, meaning the user is now hovering steadily at this point --
-                        
-                        // First, show "Loading"
                         this.tooltipDiv.innerHTML = `<div>Loading details…</div>`;
                         this.tooltipDiv.style.left = `${globalX + 15}px`;
                         this.tooltipDiv.style.top = `${globalY + 15}px`;
                         this.tooltipDiv.style.display = "block";
 
-                        // Cache kontrolü (Attribute içinde veri var mı?)
                         if (attrs.creator_username && attrs.thumb_url) {
-                             // Veri zaten varsa API'ye gitme
-                             const dateStr = attrs.captured_at ? new Date(attrs.captured_at).toLocaleString() : "Unknown date";
-                             const thumbHtml = `<img src="${attrs.thumb_url}" style="max-width:150px;border-radius:3px;margin-top:4px;display:block;" />`;
-                             
-                             this.tooltipDiv.innerHTML = `
+                            const dateStr = attrs.captured_at ? new Date(attrs.captured_at).toLocaleString() : "Unknown date";
+                            const thumbHtml = `<img src="${attrs.thumb_url}" style="max-width:150px;border-radius:3px;margin-top:4px;display:block;" />`;
+                            this.tooltipDiv.innerHTML = `
                                 <div><b>${attrs.creator_username}</b></div>
                                 <div style="font-size:10px">${dateStr}</div>
                                 ${thumbHtml}
@@ -5058,7 +5369,6 @@ export default class Widget extends React.PureComponent<
                         }
 
                         try {
-                            // Make the API request (only after waiting 300ms)
                             const url = `https://graph.mapillary.com/${featureId}?fields=id,sequence,creator.username,captured_at,thumb_256_url`;
                             const resp = await fetch(url, {
                                 headers: { Authorization: `OAuth ${this.accessToken}` }
@@ -5068,16 +5378,14 @@ export default class Widget extends React.PureComponent<
                                 const data = await resp.json();
                                 if (!this.tooltipDiv) return;
 
-                                // Cache results back to graphic so we don't fetch again for this point
                                 hitGraphic.attributes.creator_username = data.creator?.username;
                                 hitGraphic.attributes.thumb_url = data.thumb_256_url;
-                                // captured_at zaten vardı ama güncelleyelim
-                                if(data.captured_at) hitGraphic.attributes.captured_at = new Date(data.captured_at).getTime();
+                                if (data.captured_at) hitGraphic.attributes.captured_at = new Date(data.captured_at).getTime();
 
-                                const dateStr = data.captured_at 
-                                    ? new Date(data.captured_at).toLocaleString() 
+                                const dateStr = data.captured_at
+                                    ? new Date(data.captured_at).toLocaleString()
                                     : "Unknown date";
-                                
+
                                 const thumbHtml = data.thumb_256_url
                                     ? `<img src="${data.thumb_256_url}" style="max-width:150px;border-radius:3px;margin-top:4px;display:block;" />`
                                     : "";
@@ -5087,27 +5395,24 @@ export default class Widget extends React.PureComponent<
                                     <div style="font-size:10px">${dateStr}</div>
                                     ${thumbHtml}
                                 `;
-                                // Update the position (the mouse may have moved; using the latest position would be better,
-                                // but globalX inside the closure is currently stale)
-                                // Note: globalX inside setTimeout is the position when the hover started.
-                                // If the user moves the mouse slightly within 500ms, the tooltip may appear slightly offset;
-                                // this is acceptable.
                             } else {
                                 this.tooltipDiv.innerHTML = `<div>Failed to load details</div>`;
                             }
                         } catch (err) {
                             this.tooltipDiv.innerHTML = `<div>Error loading details</div>`;
                         }
-                    }, 300); // 300ms Delay
+                    }, 300);
                 } else {
-                    // The user is still hovering over the same feature; if the tooltip is already open,
-                    // just update its position
+                    // Same feature, just update tooltip position
                     if (this.tooltipDiv.style.display === "block") {
                         this.tooltipDiv.style.left = `${globalX + 15}px`;
                         this.tooltipDiv.style.top = `${globalY + 15}px`;
                     }
                 }
             } else {
+                // CLEAR HOVER ANIMATION
+                this.clearTurboHover();
+
                 if (this._hoverTimeout) {
                     clearTimeout(this._hoverTimeout);
                     this._hoverTimeout = null;
@@ -5418,53 +5723,185 @@ export default class Widget extends React.PureComponent<
         jimuMapView.view.graphics.add(graphic);
         this.clickedLocationGraphic = graphic;
     }
-    
+
     /**
-        * Draws a camera view cone polygon at the given location and bearing,
-        * using radius/spread parameters. Tagged as cone graphic for cleanup.
+        * Removes ALL graphics tagged __isCone from the view.
+        * Must be called instead of (or before) view.graphics.remove(this.currentConeGraphic).
+    */
+    private clearConeGraphics() {
+        const view = this.state.jimuMapView?.view;
+        if (!view) return;
+
+        const toRemove: __esri.Graphic[] = [];
+        view.graphics.forEach(g => {
+            if ((g as any).__isCone) toRemove.push(g);
+        });
+        toRemove.forEach(g => view.graphics.remove(g));
+        this.currentConeGraphic = null;
+    }
+
+    /**
+        * Draws a camera view cone polygon at the given location and bearing.
+        * 2D: flat orange polygon (unchanged)
+        * 3D: matches the reference image - a low flat wedge hugging the ground,
+        *     with a single slanted top face rising slightly at the far edge.
+        *     Uses SEPARATE graphics per face (not multi-ring) to avoid ArcGIS
+        *     hole/cutout artifacts from multi-ring polygon interpretation.
     */
     private drawCone(lon: number, lat: number, heading: number, radiusMeters = 5, spreadDeg = 60) {
-        const {jimuMapView} = this.state;
+        const { jimuMapView } = this.state;
         if (!jimuMapView || !this.ArcGISModules) return null;
 
-        const {Graphic} = this.ArcGISModules;
+        const { Graphic } = this.ArcGISModules;
+        const view = jimuMapView.view;
+        const is3D = (view as any).type === "3d";
 
-        // Convert meters to degrees
-		const metersToDegreesLat = (m: number) => m / 111320;
-		const metersToDegreesLon = (m: number, lat: number) => m / (111320 * Math.cos(lat * Math.PI / 180));
+        const metersToDegreesLat = (m: number) => m / 111320;
+        const metersToDegreesLon = (m: number, refLat: number) =>
+            m / (111320 * Math.cos((refLat * Math.PI) / 180));
 
-		const radiusLatDeg = metersToDegreesLat(radiusMeters);
-		const radiusLonDeg = metersToDegreesLon(radiusMeters, lat);
-				const startAngle = heading - spreadDeg / 2;
-				const endAngle = heading + spreadDeg / 2;
+        const rLat = metersToDegreesLat(radiusMeters);
+        const rLon = metersToDegreesLon(radiusMeters, lat);
+        const startAngle = heading - spreadDeg / 2;
+        const endAngle   = heading + spreadDeg / 2;
+        const STEP       = 2;
 
-				const coords: [number, number][] = [];
-				coords.push([lon, lat]);
-		for (let angle = startAngle; angle <= endAngle; angle += 2) {
-			const rad = angle * Math.PI / 180;
-			coords.push([
-				lon + radiusLonDeg * Math.sin(rad),
-				lat + radiusLatDeg * Math.cos(rad)
-			]);
-		}
-		coords.push([lon, lat]);
+        const arcAngles: number[] = [];
+        for (let a = startAngle; a <= endAngle; a += STEP) arcAngles.push(a);
+        if (arcAngles[arcAngles.length - 1] < endAngle) arcAngles.push(endAngle);
 
-        const geometry = {
-            type: 'polygon',
-            rings: [coords],
-            spatialReference: {wkid: 4326}
+        // 2D MODE
+        if (!is3D) {
+            const coords: [number, number][] = [[lon, lat]];
+            for (const a of arcAngles) {
+                const rad = (a * Math.PI) / 180;
+                coords.push([lon + rLon * Math.sin(rad), lat + rLat * Math.cos(rad)]);
+            }
+            coords.push([lon, lat]);
+
+            const g: __esri.Graphic = new Graphic({
+                geometry: { type: "polygon", rings: [coords], spatialReference: { wkid: 4326 } },
+                symbol: {
+                    type: "simple-fill",
+                    color: [255, 165, 0, 0.25],
+                    outline: { color: [255, 165, 0, 0.8], width: 1 },
+                },
+            });
+            (g as any).__isCone = true;
+            view.graphics.add(g, 0);
+            return g;
+        }
+
+        // 3D MODE
+        const zFar = Math.min(radiusMeters * 0.15, 1.5);
+
+        const leftRad  = (arcAngles[0] * Math.PI) / 180;
+        const rightRad = (arcAngles[arcAngles.length - 1] * Math.PI) / 180;
+
+        const tip:         [number, number, number] = [lon, lat, 0];
+        const leftGround:  [number, number, number] = [lon + rLon * Math.sin(leftRad),  lat + rLat * Math.cos(leftRad),  0];
+        const rightGround: [number, number, number] = [lon + rLon * Math.sin(rightRad), lat + rLat * Math.cos(rightRad), 0];
+        const leftTop:     [number, number, number] = [lon + rLon * Math.sin(leftRad),  lat + rLat * Math.cos(leftRad),  zFar];
+        const rightTop:    [number, number, number] = [lon + rLon * Math.sin(rightRad), lat + rLat * Math.cos(rightRad), zFar];
+
+        const arcGround: [number, number, number][] = arcAngles.map(a => {
+            const rad = (a * Math.PI) / 180;
+            return [lon + rLon * Math.sin(rad), lat + rLat * Math.cos(rad), 0];
+        });
+        const arcTop: [number, number, number][] = arcAngles.map(a => {
+            const rad = (a * Math.PI) / 180;
+            return [lon + rLon * Math.sin(rad), lat + rLat * Math.cos(rad), zFar];
+        });
+
+        // DRAPED GROUND FILL
+        const groundCoords2D: [number, number][] = [
+            [lon, lat],
+            ...arcAngles.map(a => {
+                const rad = (a * Math.PI) / 180;
+                return [lon + rLon * Math.sin(rad), lat + rLat * Math.cos(rad)] as [number, number];
+            }),
+            [lon, lat]
+        ];
+
+        const fillGraphic = new Graphic({
+            geometry: {
+                type: "polygon",
+                rings: [groundCoords2D],
+                spatialReference: { wkid: 4326 }
+            },
+            symbol: {
+                type: "simple-fill",
+                color: [255, 165, 0, 0.28],
+                outline: { color: [0, 0, 0, 0], width: 0 }
+            } as any
+        });
+        (fillGraphic as any).__isCone = true;
+        view.graphics.add(fillGraphic);
+
+        // LINE-3D EDGES
+        const addEdge = (path: [number, number, number][], width = 2, opacity = 0.95) => {
+            const g = new Graphic({
+                geometry: {
+                    type: "polyline",
+                    paths: [path],
+                    hasZ: true,
+                    spatialReference: { wkid: 4326 }
+                } as any,
+                symbol: {
+                    type: "line-3d",
+                    symbolLayers: [{
+                        type: "line",
+                        size: width,
+                        material: { color: [255, 140, 0, opacity] },
+                        cap: "round",
+                        join: "round"
+                    }]
+                } as any
+            });
+            (g as any).__isCone = true;
+            view.graphics.add(g);
+            return g;
         };
 
-        const symbol = {
-            type: 'simple-fill',
-            color: [255, 165, 0, 0.4],
-            outline: {color: [255, 165, 0, 0.8], width: 1}
-        };
+        // GROUND EDGES (the lower part you drew in paint)
+        // Left ground side: tip → leftGround (straight line on ground)
+        addEdge([tip, leftGround], 2.0, 0.95);
 
-        const coneGraphic: __esri.Graphic = new Graphic({geometry, symbol});
-        (coneGraphic as any).__isCone = true; // Tag for cleanup
-        jimuMapView.view.graphics.add(coneGraphic);
-        return coneGraphic;
+        // Right ground side: tip → rightGround (straight line on ground)
+        addEdge([tip, rightGround], 2.0, 0.95);
+
+        // Bottom arc on ground: leftGround → ... → rightGround
+        addEdge(arcGround, 2.0, 0.90);
+
+        // UPPER 3D EDGES (height cue)
+        // Left diagonal: tip → leftTop
+        addEdge([tip, leftTop], 2.0, 0.95);
+
+        // Right diagonal: tip → rightTop
+        addEdge([tip, rightTop], 2.0, 0.95);
+
+        // Left vertical wall edge
+        addEdge([leftGround, leftTop], 1.8, 0.65);
+
+        // Right vertical wall edge
+        addEdge([rightGround, rightTop], 1.8, 0.65);
+
+        // Top arc
+        addEdge(arcTop, 2.0, 0.90);
+
+        // Sentinel
+        const sentinel = new Graphic({
+            geometry: {
+                type: "point",
+                longitude: lon,
+                latitude: lat,
+                spatialReference: { wkid: 4326 },
+            } as any,
+            symbol: { type: "simple-marker", size: 0, color: [0, 0, 0, 0] } as any,
+        });
+        (sentinel as any).__isCone = true;
+        view.graphics.add(sentinel);
+        return sentinel;
     }
 
     /**
@@ -6113,6 +6550,48 @@ export default class Widget extends React.PureComponent<
                                 )}
                             </button>
                         )}
+
+                        {/* 4. Sync Map Based on Bearing */}
+                        {this.state.jimuMapView?.view.type === '3d' && (
+                            <button className="utility-button"
+                                title={this.state.syncHeading ? "Lock Map Rotation (Fixed North)" : "Rotate The Map With the The Camera"}
+                                onClick={() => this.setState(prev => ({ syncHeading: !prev.syncHeading }))}
+                                style={{
+                                    ...glassStyles.getButtonStyle(this.state.syncHeading, 'rgba(52, 152, 219, 0.9)'),
+                                    boxShadow: this.state.syncHeading ? "0 0 10px rgba(52, 152, 219, 0.6)" : "none"
+                                }}
+                                onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                                onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                            >
+                                {this.state.syncHeading ? (
+                                    <Icons.CompassLocked />
+                                ) : (
+                                    <Icons.CompassUnlocked />
+                                )}
+                            </button>
+                        )}
+                        {/* 5. Center Map on Current Frame */}
+                        <button className="utility-button"
+                            title="Center map on current frame"
+                            onClick={() => {
+                                const { imageId, sequenceImages, jimuMapView } = this.state;
+                                if (!imageId || !jimuMapView) return;
+                                
+                                const currentImg = sequenceImages.find(img => img.id === imageId);
+                                if (currentImg) {
+                                    jimuMapView.view.goTo({
+                                        center:[currentImg.lon, currentImg.lat],
+                                        // Optional: Forces a closer zoom if the user zoomed way out
+                                        zoom: Math.max(jimuMapView.view.zoom, 17) 
+                                    }, { animate: true, duration: 800 });
+                                }
+                            }}
+                            style={glassStyles.getButtonStyle(false, 'rgba(255, 255, 255, 0.2)')}
+                            onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
+                            onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                        >
+                            <Icons.Crosshair size={16} />
+                        </button>
                     </div>
                 )}
             </div>
@@ -6477,10 +6956,9 @@ export default class Widget extends React.PureComponent<
                             title="Export Current Features as GeoJSON"
                             style={{
                                 marginTop: '4px',
-                                background: 'rgba(55, 213, 130, 0.5)',
+                                background: 'rgba(55, 213, 130, 0.3)',
                                 backdropFilter: 'blur(10px)',
                                 WebkitBackdropFilter: 'blur(10px)',
-                                border: '1px solid rgba(255, 255, 255, 0.3)',
                                 color: '#fff',
                                 borderRadius: '6px', // Pill shape
                                 fontSize: '9px',
@@ -6497,17 +6975,13 @@ export default class Widget extends React.PureComponent<
                                 transition: "all 0.2s ease-in-out",
                                 boxShadow: '0 4px 15px rgba(0,0,0,0.2)'
                             }}
-                            onMouseEnter={e => {
-                                e.currentTarget.style.background = 'rgba(55, 213, 130, 0.8)';
-                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.6)';
-                            }}
-                            onMouseLeave={e => {
-                                e.currentTarget.style.background = 'rgba(55, 213, 130, 0.5)';
-                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-                            }}
+                            // Hover: Brighter green
+                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(55, 213, 130, 0.95)'}
+                            // Leave: Return to the EXACT color based on the current state
+                            onMouseLeave={e => e.currentTarget.style.background = this.state.detectionsActive ? 'rgba(55, 213, 130, 0.8)' : 'rgba(55, 213, 130, 0.3)'}
                         >
                             <Icons.Download size={12} color="#ffffff" /> 
-                            <span style={{paddingTop:'3px', fontWeight: 700}}>EXPORT</span>
+                            <span style={{fontWeight: 700}}>EXPORT</span>
                         </button>
                     )}
 
@@ -6519,8 +6993,7 @@ export default class Widget extends React.PureComponent<
                             style={{
                                 marginTop: '4px',
                                 // Base background logic
-                                background: this.state.detectionsActive ? 'rgba(55, 213, 130, 0.8)' : 'rgba(55, 213, 130, 0.5)',
-                                border: '1px solid rgba(255,255,255,0.2)',
+                                background: this.state.detectionsActive ? 'rgba(55, 213, 130, 0.8)' : 'rgba(55, 213, 130, 0.3)',
                                 color: 'white',
                                 borderRadius: '6px',
                                 width: '80px', 
@@ -6535,10 +7008,10 @@ export default class Widget extends React.PureComponent<
                             // Hover: Brighter green
                             onMouseEnter={e => e.currentTarget.style.background = 'rgba(55, 213, 130, 0.95)'}
                             // Leave: Return to the EXACT color based on the current state
-                            onMouseLeave={e => e.currentTarget.style.background = this.state.detectionsActive ? 'rgba(55, 213, 130, 0.8)' : 'rgba(55, 213, 130, 0.4)'}
+                            onMouseLeave={e => e.currentTarget.style.background = this.state.detectionsActive ? 'rgba(55, 213, 130, 0.8)' : 'rgba(55, 213, 130, 0.3)'}
                         >
-                            <Icons.Detection size={12} /> 
-                            <span style={{fontSize: '8.5px', marginLeft: '3px', paddingTop:'3px', fontWeight: 700}}>AI OVERLAY</span>
+                            <Icons.Detection size={11} /> 
+                            <span style={{fontSize: '8.5px', marginLeft: '3px', fontWeight: 700}}>AI OVERLAY</span>
                         </button>
                     )}
 
@@ -6624,28 +7097,44 @@ export default class Widget extends React.PureComponent<
                                                 setTimeout(async () => {
                                                     if (this.mapillaryViewer && this.state.selectedFeatureLocation) {
                                                         try {
-                                                            // A. Get the current image node to find its specific compass angle
-                                                            const currentImage = await this.mapillaryViewer.getImage();
                                                             
-                                                            // B. Calculate target bearing from Image -> Feature
+                                                            // Calculate bearing from Image -> Feature
                                                             const targetBearing = this.calculateBearing(
                                                                 img.geometry.coordinates[1], img.geometry.coordinates[0],
                                                                 this.state.selectedFeatureLocation.lat, this.state.selectedFeatureLocation.lon
                                                             );
+                                                            // --- A. Adjust Mapillary Viewer (Look at Object) ---
+                                                            if (this.mapillaryViewer) {
+                                                                const currentImage = await this.mapillaryViewer.getImage();
+                                                                const imageBearing = currentImage.compassAngle;
+                                                                const diff = targetBearing - imageBearing;
+                                                                const newX = 0.5 + (diff / 360);
+                                                                this.mapillaryViewer.setCenter([newX, 0.5]);
+                                                                this.loadDetections(img.id);
+                                                            }
 
-                                                            // C. Calculate the "Center X" coordinate required to look at that bearing
-                                                            // Mapillary Coordinates: 0.5 is center. 1.0 width = 360 degrees.
-                                                            // Formula: NewX = 0.5 + (Difference / 360)
-                                                            const imageBearing = currentImage.compassAngle;
-                                                            const diff = targetBearing - imageBearing;
-                                                            const newX = 0.5 + (diff / 360);
+                                                            // --- B. Adjust ArcGIS Map (3D Rotation / Focus) ---
+                                                            if (this.state.jimuMapView) {
+                                                                const view = this.state.jimuMapView.view;
+                                                                
+                                                                if (view.type === '3d') {
+                                                                    // The requested behavior: Rotate map so we look AT the object
+                                                                    view.goTo({
+                                                                        center: [img.geometry.coordinates[0], img.geometry.coordinates[1]],
+                                                                        heading: targetBearing, // <--- Rotates map to face the object
+                                                                        tilt: 60,               // Cinematic angle
+                                                                        scale: 500              // Zoom in close
+                                                                    }, { animate: true, duration: 1500 });
+                                                                } else {
+                                                                    // 2D Fallback: Just center closely
+                                                                    view.goTo({
+                                                                        center: [img.geometry.coordinates[0], img.geometry.coordinates[1]],
+                                                                        zoom: 20
+                                                                    }, { animate: true, duration: 1000 });
+                                                                }
+                                                            }
 
-                                                            // D. Apply the view
-                                                            // [newX, 0.5] means: "Look at Calculated Bearing, Keep Horizon Level"
-                                                            this.mapillaryViewer.setCenter([newX, 0.5]);
 
-                                                            // E. Load detections
-                                                            this.loadDetections(img.id);
 
                                                         } catch (err) {
                                                             console.warn("Could not set bearing:", err);
@@ -6654,7 +7143,8 @@ export default class Widget extends React.PureComponent<
                                                     } else {
                                                         // Fallback
                                                         if (this.mapillaryViewer) this.loadDetections(img.id);
-                                                    }
+                                                    }                                                   
+                                                    this._isFlyInActive = false;
                                                 }, 1000); 
                                             }
                                         } catch (e) { 
@@ -6964,31 +7454,22 @@ export default class Widget extends React.PureComponent<
                                 <div style={glassStyles.progressBar} />
                             </div>
                             
-                            <div style={{ fontSize: "10px", color: "rgba(255,255,255,0.4)", marginTop: "8px", fontStyle: "italic" }}>
-                                Initializing...
+                            {/* --- ANIMATED MESSAGES --- */}
+                            <div style={{ position: "relative", height: "14px", marginTop: "8px", width: "100%" }}>
+                                <div className="splash-msg-1" style={{ 
+                                    fontSize: "10px", color: "rgba(255,255,255,0.5)", fontStyle: "italic", 
+                                    position: "absolute", width: "100%", textAlign: "center" 
+                                }}>
+                                    Initializing...
+                                </div>
+                                <div className="splash-msg-2" style={{ 
+                                    fontSize: "10px", color: "#37d582", fontWeight: 600, letterSpacing: "0.2px", 
+                                    position: "absolute", width: "100%", textAlign: "center" 
+                                }}>
+                                    Celebrating 3 Billion Images, Powered by You 💚
+                                </div>
                             </div>
                         </div>
-
-                        {/* --- ANIMATIONS --- */}
-                        <style>{`
-                            @keyframes ripple {
-                                0% { transform: scale(1); opacity: 0.8; }
-                                100% { transform: scale(3.5); opacity: 0; }
-                            }
-                            @keyframes float {
-                                0%, 100% { transform: translateY(0px); }
-                                50% { transform: translateY(-6px); }
-                            }
-                            @keyframes shimmer {
-                                0% { background-position: 0% center; }
-                                100% { background-position: 200% center; }
-                            }
-                            @keyframes loading {
-                                0% { left: -50%; }
-                                50% { left: 25%; width: 50%; }
-                                100% { left: 100%; width: 20%; }
-                            }
-                        `}</style>
                     </div>
                 )}
 

@@ -717,6 +717,37 @@ export const mobileOverrideStyles = `
         100% { box-shadow: 0 0 5px var(--glow); }
     }
     .unified-control-buttons.active-layer { animation: activePulse 2s infinite ease-in-out; }
+    
+    /* --- SPLASH SCREEN ANIMATIONS --- */
+    @keyframes ripple {
+        0% { transform: scale(1); opacity: 0.8; }
+        100% { transform: scale(3.5); opacity: 0; }
+    }
+    @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-6px); }
+    }
+    @keyframes shimmer {
+        0% { background-position: 0% center; }
+        100% { background-position: 200% center; }
+    }
+    @keyframes loading {
+        0% { left: -50%; }
+        50% { left: 25%; width: 50%; }
+        100% { left: 100%; width: 20%; }
+    }
+    @keyframes msgFade1 {
+        0%, 35% { opacity: 1; transform: translateY(0); }
+        45%, 85% { opacity: 0; transform: translateY(-4px); }
+        95%, 100% { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes msgFade2 {
+        0%, 35% { opacity: 0; transform: translateY(4px); }
+        45%, 85% { opacity: 1; transform: translateY(0); }
+        95%, 100% { opacity: 0; transform: translateY(4px); }
+    }
+    .splash-msg-1 { animation: msgFade1 3.5s infinite ease-in-out; }
+    .splash-msg-2 { animation: msgFade2 3.5s infinite ease-in-out; }
 
     /* FORCE SMOOTH RESIZE */
     div.jimu-floating-panel[aria-label="Mapillary Explorer"] {

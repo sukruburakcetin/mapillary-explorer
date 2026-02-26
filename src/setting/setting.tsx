@@ -51,6 +51,13 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     });
   }
 
+  onToggleHideCoverageCircles = (evt: React.ChangeEvent<HTMLInputElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('hideCoverageCircles', evt.target.checked)
+    });
+  }
+
   // Handle Creator Input
   onCreatorChange = (evt: React.ChangeEvent<HTMLInputElement>) => {
     this.props.onSettingChange({
@@ -206,9 +213,20 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                   />
             </SettingRow>
             <SettingRow>
-                  <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px', opacity: '0.3', fontStyle:'italic' }}>
-                    Always shows standard Mapillary vector tiles and hides the map toggle.
-                  </span>
+                <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px', opacity: '0.3' }}>
+                  Always shows standard Mapillary vector tiles and hides the map toggle.
+                </span>
+            </SettingRow>
+            <SettingRow label="Hide Coverage Circles">
+                  <Switch 
+                    checked={config.hideCoverageCircles === true} 
+                    onChange={this.onToggleHideCoverageCircles} 
+                  />
+            </SettingRow>
+            <SettingRow>
+                <span className="text" style={{ fontSize: '12px', marginTop: '5px', opacity: '0.3', fontStyle:'italic' }}>
+                  Hides the individual image points on the Mapillary coverage layer, showing only sequence lines.
+                </span>
             </SettingRow>
             <SettingRow label="Turbo Mode Only">
                 <Switch 
@@ -217,7 +235,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                 />
             </SettingRow>
             <SettingRow>
-                <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px', opacity: '0.3', fontStyle:'italic' }}>
+                <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px', opacity: '0.3' }}>
                   Always enables the turbo coverage layer and hides the toggle. Disables Normal Mode, allowing interaction only by clicking visible coverage points.
                 </span>
             </SettingRow>
@@ -303,7 +321,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
               </SettingRow>
 
               <SettingRow>
-                <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px', opacity: '0.3', fontStyle:'italic' }}>
+                <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '5px', opacity: '0.3' }}>
                   Disabling these will hide the sign and object layer toggle buttons in the widget interface.
                 </span>
               </SettingRow>
@@ -326,7 +344,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
               </Select>
             </SettingRow>
             <SettingRow>
-              <span className="text" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '-5px', opacity: '0.3', fontStyle:'italic' }}>
+              <span className="text" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '-5px', opacity: '0.3' }}>
                 <b>Fill:</b> Fills the window.<br/>
                 <b>Letterbox:</b> Shows the full original image (may show black bars, recommended for wide widgets).
               </span>
@@ -344,7 +362,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
               </Select>
             </SettingRow>
             <SettingRow>
-              <span className="text" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '-5px', opacity: '0.3', fontStyle:'italic' }}>
+              <span className="text" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '-5px', opacity: '0.3' }}>
                 <b>Default:</b> Uses motion blending between frames.<br/>
                 <b>Instantaneous:</b> Jumps immediately to the next frame (snappier).
               </span>
@@ -374,7 +392,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                       onChange={this.onCameraYChange}
                     />
                 </div>
-                <div className="text" style={{ fontSize: '11px', fontStyle: 'italic', opacity: '0.3', fontStyle:'italic' }}>
+                <div className="text" style={{ fontSize: '11px', fontStyle: 'italic', opacity: '0.3'}}>
                   Standard is 0.5 for both(refers to center). <br/>
                   <b>X:</b> 0 = Left, 1 = Right. <br/>
                   <b>Y:</b> 0 = Sky, 1 = Ground. (Try 0.55 for wide widgets)
@@ -388,7 +406,7 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                 />
             </SettingRow>
             <SettingRow>
-                <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '0px', opacity: '0.3', fontStyle:'italic' }}>
+                <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', marginTop: '0px', opacity: '0.3'}}>
                   Enables developer logging in the browser console (F12).
                 </span>
             </SettingRow>
