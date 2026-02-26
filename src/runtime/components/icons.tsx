@@ -217,3 +217,64 @@ export const LabelsOff = ({ size = 16, color = "currentColor", ...props }: IconP
     <line x1="3" y1="3" x2="21" y2="21" />
   </svg>
 );
+
+// 20. Compass Locked (Map Rotates with Camera - Active State)
+export const CompassLocked = ({ size = 14, color = "white", ...props }: IconProps) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke={color} 
+    strokeWidth="2.5" // Thicker stroke for active state
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    style={{ filter: "drop-shadow(0 0 2px black)" }} // Keeping the glow pop
+    {...props}
+  >
+    <circle cx="12" cy="12" r="10"></circle>
+    <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" fill={color}></polygon>
+  </svg>
+);
+
+// 21. Compass Unlocked (Fixed North - Passive State)
+export const CompassUnlocked = ({ size = 14, color = "rgba(255,255,255,0.6)", ...props }: IconProps) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke={color} 
+    strokeWidth="2" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    {...props}
+  >
+    <path d="M12 2L12 22"></path>
+    <path d="M12 2L15 6"></path>
+    <path d="M12 2L9 6"></path>
+    <path d="M4 12L20 12"></path>
+  </svg>
+);
+
+// 22. Crosshair / Locate (Recenter Map)
+export const Crosshair = ({ size = 16, color = "currentColor", ...props }: IconProps) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke={color} 
+    strokeWidth="2" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    {...props}
+  >
+    <circle cx="12" cy="12" r="3"></circle>
+    <path d="M19 12h3"></path>
+    <path d="M2 12h3"></path>
+    <path d="M12 2v3"></path>
+    <path d="M12 19v3"></path>
+    <circle cx="12" cy="12" r="7"></circle>
+  </svg>
+);
