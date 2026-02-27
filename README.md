@@ -18,8 +18,10 @@ A high-performance custom widget for **ArcGIS Experience Builder** that seamless
 2. [Setup & Installation](#setup--installation)
 3. [Configuration](#configuration)
 4. [Mapillary Explorer Demo Video](#mapillary-explorer-demo-video)
-5. [Download Release](#-download-built-widget-latest-version)
-6. [License](#license)
+5. [Mapillary Explorer Demo Experience Builder App](#mapillary-explorer-demo-experience-builder-app)
+6. [ArcGIS Online Mapillary Explorer App](#arcgis-online-mapillary-explorer-app)
+7. [Download Release](#-download-built-widget-latest-version)
+8. [License](#license)
    
 ## Key Features
 
@@ -191,6 +193,9 @@ Below is an example of the `manifest.json` file used for configuration:
 ```
 ## Mapillary Explorer Demo Experience Builder App
 https://sukruburakcetin.github.io/mapillary-explorer-demo/
+
+## ArcGIS Online Mapillary Explorer App
+https://www.arcgis.com/home/item.html?id=b4da7dbf1f684510be0918c6b58905c8
 
 ## Mapillary Explorer Demo Video
 [![Watch the video](https://img.youtube.com/vi/5LGTJHSNFa8/hqdefault.jpg)](https://www.youtube.com/watch?v=5LGTJHSNFa8)
