@@ -10,12 +10,16 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { objectNameMap } from "../helpers/mapillaryObjectNameMap";
 import * as Icons from './components/icons'
-import { legendCircleStyle, glassStyles, getGlassSelectStyles, mobileOverrideStyles } from "../helpers/styles";
+import { legendCircleStyle, glassStyles, getGlassSelectStyles, 
+    mobileOverrideStyles, legendRowStyle, legendTextStyle, compactButtonStyle,
+    fullscreenOverlayStyle, fullscreenExitButtonStyle, 
+    fullscreenMinimapToggleButtonStyle, getMinimapContainerStyle 
+} from "../helpers/styles";
 import { Viewer, OutlineTag, PolygonGeometry } from 'mapillary-js';
 import 'mapillary-js/dist/mapillary.css';
 
 
-// --- React component state ---
+// React component state
 // Holds current map view, image/sequence data, viewer state,
 // and temporary interaction information like clicks or loading flags.
 interface State {
@@ -30,7 +34,7 @@ interface State {
 	state?: string; // e.g. 'OPENED' | 'CLOSED'
     visible?: boolean; // directly indicates visibility
     isLoading: boolean;
-    availableSequences?: { sequenceId: string; images: { id: string; lon: number; lat: number }[] }[];
+    availableSequences?: { sequenceId: string; images: { id: string; lon: number; lat: number }[]; _color?: number[]; capturedAt?: string }[];
     selectedSequenceId?: string;
     clickLon?: number;
     clickLat?: number;
@@ -46,8 +50,8 @@ interface State {
     turboColorByDate?: boolean;
     turboYearLegend?: { year: string, color: string }[];
     zoomWarningMessage?: string;
-    trafficSignsFilterValue: { value: "All traffic signs", label: "All traffic signs", iconUrl: null },
-    objectsFilterValue: { value: "All points", label: "All points", iconUrl: null },
+    trafficSignsFilterValue: { value: string; label: string; iconUrl: string | null };
+    objectsFilterValue: { value: string; label: string; iconUrl: string | null };
     filtersLoaded: boolean;
     showIntro: boolean;
     minimapView?: __esri.MapView;
@@ -98,7 +102,6 @@ export default class Widget extends React.PureComponent<
     
     // Graphics references
     private currentGreenGraphic: __esri.Graphic | null = null;
-    private currentConeGraphic: __esri.Graphic | null = null;
     private clickedLocationGraphic: __esri.Graphic | null = null;
     private _directionHoverGraphic: __esri.Graphic | null = null;
     
@@ -167,7 +170,8 @@ export default class Widget extends React.PureComponent<
     private _hasCheckedSharedState: boolean = false;
     private _isFlyInActive: boolean = false;
     private _hasAttemptedMapSwitch: boolean = false;
-
+    
+    // Hover graphics
     private _turboHoverGraphic: __esri.Graphic | null = null;
     private _turboHoverInterval: any = null;
     private _lastHoveredTurboOid: number | null = null;
@@ -236,7 +240,7 @@ export default class Widget extends React.PureComponent<
         super(props);
 		
 		// Read accessToken from manifest.json properties - you should use your own token start with MLY
-		this.accessToken = props.manifest?.properties?.mapillaryAccessToken || "";
+		this.accessToken = (props.manifest?.properties as any)?.mapillaryAccessToken || "";
 		this.log("Loaded Access Token:", this.accessToken);
         
         // Wrap the layer reload logic in debounce (700ms delay after typing stops)
@@ -268,7 +272,7 @@ export default class Widget extends React.PureComponent<
             // If Turbo Mode is active and no specific sequence is selected,
             // we should not draw the camera cone.
             if (this.state.turboModeActive && !this.state.selectedSequenceId) {
-                this.clearConeGraphics(); // ← was: view.graphics.remove(this.currentConeGraphic)
+                this.clearConeGraphics();
                 return;
             }
 
@@ -299,7 +303,7 @@ export default class Widget extends React.PureComponent<
             this.clearConeGraphics();
 
             // Draw fresh cone
-            this.currentConeGraphic = this.drawCone(lon, lat, bearing, length, spread);
+            this.drawCone(lon, lat, bearing, length, spread);
         };
 
         // 1. Viewer Load Event
@@ -499,14 +503,14 @@ export default class Widget extends React.PureComponent<
                             latitude: activeImg.lat
                         });
                         
-                        // === 3D SCENE: GPS NAVIGATION MODE ===
+                        // 3D SCENE: GPS NAVIGATION MODE
                         if (view.type === "3d") {
                             view.goTo({
                                 center: [activeImg.lon, activeImg.lat],
                                 // heading: this._lastBearing 
                             }, { animate: true, duration: 300 });
                         } 
-                        // === 2D MAP MODE ===
+                        // 2D MAP MODE
                         else {
                             // Standard Center
                             if (position === 'center') {
@@ -559,7 +563,6 @@ export default class Widget extends React.PureComponent<
                 }
             });
             
-
             if (this.state.detectionsActive) {
                 this.loadDetections(event.image.id);
             }
@@ -1149,7 +1152,7 @@ export default class Widget extends React.PureComponent<
         }
     };
 
-    // --- Clean up everything when widget closes or reloads ---
+    // Clean up everything when widget closes or reloads
     // Stops animation intervals, removes all map graphics,
     // destroys Mapillary viewer instance, clears DOM container,
     // and resets internal state if requested.
@@ -1208,7 +1211,7 @@ export default class Widget extends React.PureComponent<
         if (this.state.jimuMapView && fullRemove) {
             const { view } = this.state.jimuMapView;
 
-            // === ROBUST REMOVAL BY ID ===
+            // ROBUST REMOVAL BY ID
             const layersToRemoveById = [
                 "mapillary-vector-tiles",       // General Tiles
                 "mapillary-traffic-signs-vt",   // Traffic Signs Coverage
@@ -1344,18 +1347,18 @@ export default class Widget extends React.PureComponent<
                 if (this.mapillaryViewer) {
                     this.mapillaryViewer.getBearing().then((b: number) => {
                         if (typeof b === 'number') this._lastBearing = b;
-                        this.currentConeGraphic = this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing, length, spread);
+                        this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing, length, spread);
                     }).catch(() => {
-                        this.currentConeGraphic = this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing || 0, length, spread);
+                        this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing || 0, length, spread);
                     });
                 } else {
-                    this.currentConeGraphic = this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing || 0, length, spread);
+                    this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing || 0, length, spread);
                 }
             }
         }
     }
 	
-    // --- Reverse geocoding helper ---
+    // Reverse geocoding helper
     // Calls ArcGIS World Geocoding API to convert image lat/lon
     // into a readable address displayed in the info box.
 	private fetchReverseGeocode = async (lat: number, lon: number) => {
@@ -1399,7 +1402,7 @@ export default class Widget extends React.PureComponent<
                 id: "minimap-tracking"
             });
 
-            // --- 2. Advanced Basemap Duplication Strategy ---
+            // 2. Advanced Basemap Duplication Strategy
             let basemapConfig: any = "topo-vector"; // Fallback
 
             try {
@@ -1440,15 +1443,13 @@ export default class Widget extends React.PureComponent<
                 basemap: basemapConfig,
                 layers: [this.minimapGraphicsLayer]
             });
-
-            // ... (Rest of the function remains exactly the same as previous steps) ...
             
             // Determine initial center
             let initialCenter = this.state.jimuMapView.view.center;
             if (this.state.imageId && this.state.sequenceImages.length > 0) {
                 const currentImg = this.state.sequenceImages.find(img => img.id === this.state.imageId);
                 if (currentImg) {
-                    initialCenter = [currentImg.lon, currentImg.lat];
+                    initialCenter = [currentImg.lon, currentImg.lat] as any;
                 }
             }
 
@@ -1464,7 +1465,7 @@ export default class Widget extends React.PureComponent<
 
             await this.minimapView.when();
 
-            // --- Safe Layer Transfer (Same as before) ---
+            // Safe Layer Transfer
             const layersToAdd: __esri.Layer[] = [];
             const mainLayers = this.state.jimuMapView.view.map.layers;
             const isLayerActive = (layer: any) => layer && mainLayers.includes(layer);
@@ -1598,16 +1599,16 @@ export default class Widget extends React.PureComponent<
 
         const { Graphic } = this.ArcGISModules;
 
-        // Clear previous tracking graphics
+        // Clearing previous tracking graphics
         this.minimapGraphicsLayer.removeAll();
 
-        // Center the minimap on the current frame
+        // Centering the minimap on the current frame
         this.minimapView.goTo({
             center: [currentImg.lon, currentImg.lat],
             zoom: this.minimapView.zoom // Keep current zoom level
         }, { animate: false });
 
-        // Add pulsing tracking dot
+        // Adding pulsing tracking dot
         const trackingDot = new Graphic({
             geometry: {
                 type: "point",
@@ -1628,7 +1629,7 @@ export default class Widget extends React.PureComponent<
 
         this.minimapGraphicsLayer.add(trackingDot);
 
-        // Add direction cone on minimap
+        // Adding direction cone on minimap
         if (this._lastBearing !== undefined) {
             const coneMini = new Graphic({
                 geometry: this.createConeGeometry(currentImg.lon, currentImg.lat, this._lastBearing, 30, 60),
@@ -1644,7 +1645,7 @@ export default class Widget extends React.PureComponent<
             this.minimapGraphicsLayer.add(coneMini);
         }
 
-        // Optionally, add the sequence polyline
+        // Optionally, adding the sequence polyline
         if (this.state.sequenceImages.length > 1) {
             const paths = this.state.sequenceImages.map(img => [img.lon, img.lat]);
             const sequenceLine = new Graphic({
@@ -1692,7 +1693,7 @@ export default class Widget extends React.PureComponent<
         };
     }
 
-    // --- Toggle between embedded and fullscreen modes ---
+    // Toggle between embedded and fullscreen modes
     // Destroys/recreates Mapillary viewer in the appropriate container
     // because Mapillary viewer must rebind its WebGL canvas context.
     private toggleFullscreen = async () => {
@@ -1778,7 +1779,7 @@ export default class Widget extends React.PureComponent<
                     
                     const length = this.coneLengths[this.zoomStepIndex];
                     const spread = this.coneSpreads[this.zoomStepIndex];
-                    this.currentConeGraphic = this.drawCone(
+                    this.drawCone(
                         currentImageCoords.lon, 
                         currentImageCoords.lat, 
                         currentBearing, 
@@ -2281,7 +2282,7 @@ export default class Widget extends React.PureComponent<
                     // 1. Define the variable
                     const iconUrl = this.cropSpriteImage(img, meta);
                     
-                    // 2. Check if it is valid (Must be done AFTER definition)
+                    // 2. Check if it is valid
                     if (!iconUrl) return null; 
 
                     return { value: friendlyName, label: friendlyName, iconUrl };
@@ -2438,7 +2439,7 @@ export default class Widget extends React.PureComponent<
         }
     }
 
-    // --- Fetch ID from Username ---
+    // Fetch ID from Username
     private async getUserIdFromUsername(username: string): Promise<number | null> {
         if (!username) return null;
         const url = `https://graph.mapillary.com/images?creator_username=${username}&limit=1&fields=creator&access_token=${this.accessToken}`;
@@ -2458,7 +2459,7 @@ export default class Widget extends React.PureComponent<
     }
 
     /*
-        --- Initializes the Mapillary Vector Tile Layer ---
+        Initializes the Mapillary Vector Tile Layer
         * Creates a VectorTileLayer from the Mapillary tiles API
         * Uses an inline `minimalStyle` object for symbology (sequence = green line, image = light cyan blue circle)
         * Stores the layer in `this.mapillaryVTLayer` for later toggling
@@ -2538,7 +2539,7 @@ export default class Widget extends React.PureComponent<
     }
 
     /*
-        --- Initializes the Mapillary Traffic Signs Layer ---
+        Initializes the Mapillary Traffic Signs Layer
         * Creates a Traffic Signs Layer from the Mapillary tiles API
         * Stores the layer in `this.mapillaryTrafficSignsLayer` for later toggling
     */
@@ -2581,7 +2582,7 @@ export default class Widget extends React.PureComponent<
     }
 
     /*
-        --- Initializes the Mapillary Objects Layer Layer ---
+        Initializes the Mapillary Objects Layer Layer
         * Creates a Object Layer from the Mapillary tiles API
         * Stores the layer in `this.mapillaryObjectsLayer` for later toggling
     */
@@ -2707,42 +2708,21 @@ export default class Widget extends React.PureComponent<
         return tiles;
     }
 
+    /**
+        * Applies the configured camera center offset to the Mapillary viewer.
+        * Uses cameraX/cameraY from widget config, defaulting to [0.5, 0.5]
+        * (standard horizon center) if values are absent.
+        * Called on every image change and window resize to ensure
+        * the viewport stays correctly aligned regardless of widget dimensions.
+    */
     private applyCustomCameraAngle = () => {
-        // Fallback to 0.5 (Standard Center/Horizon) if values are missing
         const x = this.props.config.cameraX ?? 0.5;
         const y = this.props.config.cameraY ?? 0.5;
 
         if (this.mapillaryViewer) {
-            // This will now ALWAYS run, ensuring wide widgets stay level
             this.mapillaryViewer.setCenter([x, y]);
         }
     }
-
-    private legendRowStyle = () => ({
-        display: 'flex',
-        alignItems: 'center',
-        gap: '2px' // Increased gap between circle and text for clarity
-    });
-
-    private legendTextStyle = () => ({
-        fontSize: '9px',
-        color: 'rgba(255,255,255,0.9)',
-        whiteSpace: 'nowrap' as const,
-        fontWeight: 400
-    });
-
-    private compactButtonStyle = () => ({
-        marginTop: '4px',
-        background: 'rgba(217, 83, 79, 0.2)',
-        border: '1px solid rgba(217, 83, 79, 0.3)',
-        color: '#ff908d',
-        borderRadius: '2px',
-        fontSize: '8px',
-        padding: '2px 0',
-        cursor: 'pointer',
-        width: '100%',
-        fontWeight: 700
-    });
 
     /**
         * Formats Mapillary traffic sign code strings into human-friendly names.
@@ -2789,7 +2769,7 @@ export default class Widget extends React.PureComponent<
             return;
         }
 
-        const geoExtent = webMercatorUtils.webMercatorToGeographic(extent);
+        const geoExtent = webMercatorUtils.webMercatorToGeographic(extent) as __esri.Extent;
         const bbox = [geoExtent.xmin, geoExtent.ymin, geoExtent.xmax, geoExtent.ymax];
         const accessToken = this.accessToken;
         const zoom = 14;
@@ -2817,14 +2797,14 @@ export default class Widget extends React.PureComponent<
             for (let i = 0; i < layer.length; i++) {
                 try {
                     const feat = layer.feature(i).toGeoJSON(x, y, z);
-                    const [lon, lat] = feat.geometry.coordinates;
+                    const [lon, lat] = (feat.geometry as any).coordinates;
                     if (lon >= bbox[0] && lon <= bbox[2] && lat >= bbox[1] && lat <= bbox[3]) {
                         const wmPoint = webMercatorUtils.geographicToWebMercator({
                             type: "point",
                             x: lon,
                             y: lat,
-                            spatialReference: { wkid: 4326 }
-                        });
+                        spatialReference: { wkid: 4326 } as any
+                        } as any);
                         features.push({
                             geometry: wmPoint,
                             attributes: {
@@ -2874,10 +2854,6 @@ export default class Widget extends React.PureComponent<
             }
         } catch (err) {
             console.warn("Failed to load traffic sign icons for dropdown", err);
-            // Fallback: create options without icons
-            // for (const [value, name] of uniqueValuesMap.entries()) {
-            //     optionsWithIcons.push({ value: name, label: name, iconUrl: null });
-            // }
         }
 
         const allOption = { value: "All traffic signs", label: "All traffic signs", iconUrl: null };
@@ -2929,15 +2905,15 @@ export default class Widget extends React.PureComponent<
                         val
                     );
                 } catch (err) {
-                    // console.warn(`Could not load icon for ${val}`, err);
+                    console.warn(`Could not load icon for ${val}`, err);
                 }
             }
             renderer = {
                 type: "unique-value",
                 field: "value",
                 uniqueValueInfos: Object.keys(iconCache).map(v => ({
-                        value: v,
-                        symbol: {
+                    value: v,
+                    symbol: {
                         type: "picture-marker",
                         url: iconCache[v],
                         width: 20,
@@ -2949,13 +2925,13 @@ export default class Widget extends React.PureComponent<
                     color: "orange",
                     size: 8,
                     outline: { color: "white", width: 1 }
-                } as any
-            };
+                }
+            } as any;
         } else {
             renderer = {
                 type: "simple",
                 symbol: { type: "simple-marker", size: 6, color: "orange", outline: { color: "white", width: 1 } }
-            };
+            } as any;
         }
 
         const layer = new FeatureLayer({
@@ -2976,7 +2952,7 @@ export default class Widget extends React.PureComponent<
             }
         });
 
-                // 2. "Last Second" Check: Before adding, ensure we are still allowed to 
+        // "Last Second" Check: Before adding, ensure we are still allowed to 
         if (this._cancelTrafficSignsFetch || jimuMapView.view.zoom < 16) {
             this.log("Fetch finished, but zoom too low or cancelled. Discarding layer.");
             return;
@@ -3022,12 +2998,12 @@ export default class Widget extends React.PureComponent<
 
         const extent = jimuMapView.view.extent;
         if (!extent) {
-            this.warn("Map extent not available yet");
+            console.warn("Map extent not available yet");
             return;
         }
 
         // Convert extent to WGS84 lon/lat
-        const geoExtent = webMercatorUtils.webMercatorToGeographic(extent);
+        const geoExtent = webMercatorUtils.webMercatorToGeographic(extent) as __esri.Extent;
         const bbox = [geoExtent.xmin, geoExtent.ymin, geoExtent.xmax, geoExtent.ymax];
 
         const accessToken = this.accessToken;
@@ -3057,15 +3033,15 @@ export default class Widget extends React.PureComponent<
             for (let i = 0; i < layer.length; i++) {
                 try {
                     const feat = layer.feature(i).toGeoJSON(x, y, z);
-                    const [lon, lat] = feat.geometry.coordinates;
+                    const [lon, lat] = (feat.geometry as any).coordinates;
 
                     if (lon >= bbox[0] && lon <= bbox[2] && lat >= bbox[1] && lat <= bbox[3]) {
                         const wmPoint = webMercatorUtils.geographicToWebMercator({
                             type: "point",
                             x: lon,
                             y: lat,
-                            spatialReference: { wkid: 4326 }
-                        });
+                            spatialReference: { wkid: 4326 } as any
+                        } as any);
 
                         features.push({
                             geometry: wmPoint,
@@ -3125,10 +3101,6 @@ export default class Widget extends React.PureComponent<
             }
         } catch (err) {
             console.warn("Failed to load object icons for dropdown", err);
-            // Fallback: create options without icons
-            // for (const [value, name] of uniqueValuesMap.entries()) {
-            //     optionsWithIcons.push({ value: name, label: name, iconUrl: null });
-            // }
         }
 
         // Sort the list alphabetically by label
@@ -3187,28 +3159,28 @@ export default class Widget extends React.PureComponent<
                         val
                     );
                 } catch (err) {
-                        // console.warn(`Could not load icon for ${val}`, err);
+                        console.warn(`Could not load icon for ${val}`, err);
                     }
             }
             renderer = {
                 type: "unique-value",
                 field: "value",
                 uniqueValueInfos: Object.keys(iconCache).map(v => ({
-                        value: v,
-                        symbol: {
-                            type: "picture-marker",
-                            url: iconCache[v],
-                            width: 20,
-                            height: 20
-                        }
+                    value: v,
+                    symbol: {
+                        type: "picture-marker",
+                        url: iconCache[v],
+                        width: 20,
+                        height: 20
+                    }
                 })),
                 defaultSymbol: {
                     type: "simple-marker",
                     color: "orange",
                     size: 8,
                     outline: { color: "white", width: 1 }
-                } as any
-            };
+                }
+            } as any;
         } else {
             renderer = {
                 type: "simple",
@@ -3217,8 +3189,8 @@ export default class Widget extends React.PureComponent<
                     size: 6,
                     color: "orange",
                     outline: { color: "white", width: 1 }
-                },
-            };
+                }
+            } as any;
         }
 
         const layer = new FeatureLayer({
@@ -3276,7 +3248,7 @@ export default class Widget extends React.PureComponent<
     }
 
     /*
-        --- Toggles Mapillary Vector Tile Layer or Mapillary Traffic Signs on/off in the current map view --- 
+        Toggles Mapillary Vector Tile Layer or Mapillary Traffic Signs on/off in the current map view
         * If layer is already in the map, remove it
         * If layer is not in the map, add it
         * Controlled by button in UI ("🗺️" icon)
@@ -3293,7 +3265,6 @@ export default class Widget extends React.PureComponent<
             jimuMapView.view.map.remove(existingLayer);
             this.setState({ tilesActive: false });
         } else {
-            // === START CHANGE ===
             // Check config for default creator
             let targetId: number | undefined = undefined;
             if (this.props.config.turboCreator) {
@@ -3302,7 +3273,6 @@ export default class Widget extends React.PureComponent<
 
             // Re-initialize with the fresh filter ID
             this.initMapillaryLayer(targetId);
-            // === END CHANGE ===
 
             jimuMapView.view.map.add(this.mapillaryVTLayer);
             this.setState({ tilesActive: true });
@@ -3345,7 +3315,7 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        // === Turn OFF ===
+        // Turn OFF
         if (this.state.trafficSignsActive) {
             // 1. Remove event watchers first
             if (this.trafficSignsStationaryHandle) {
@@ -3419,7 +3389,7 @@ export default class Widget extends React.PureComponent<
             return;
         }
 
-        // === Turn ON ===
+        // Turn ON
         this._cancelTrafficSignsFetch = false;
         
         // Check if VT layer exists by ID
@@ -3584,7 +3554,7 @@ export default class Widget extends React.PureComponent<
             return;
         }
 
-        // === Turn ON ===
+        // Turn ON
         this._cancelObjectsFetch = false;
 
         const existingVTLayer = jimuMapView.view.map.findLayerById("mapillary-objects-vt");
@@ -4101,7 +4071,7 @@ export default class Widget extends React.PureComponent<
         }
     }
 
-    // --- Local caching of last sequence ---
+    // Local caching of last sequence
     // Stores minimal sequence info (IDs + coords) in localStorage
     // to reload previous sequence instantly on widget startup.
     private saveSequenceCache(sequenceId: string, sequenceImages: { id: string; lat: number; lon: number }[]) {
@@ -4190,17 +4160,16 @@ export default class Widget extends React.PureComponent<
     /*
         * Creates a renderer that colors points based on date categories
     */
-    private createYearBasedRenderer(years: string[]): __esri.UniqueValueRenderer {
-        // Distinct color palette
+    private createYearBasedRenderer(years: string[]): any {
         const palette = [
-            [46, 204, 113],  // green
-            [52, 152, 219],  // blue
-            [241, 196, 15],  // yellow
-            [231, 76, 60],   // red
-            [155, 89, 182],  // purple
-            [26, 188, 156],  // turquoise
-            [230, 126, 34],  // orange
-            [149, 165, 166]  // gray
+            [46, 204, 113],
+            [52, 152, 219],
+            [241, 196, 15],
+            [231, 76, 60],
+            [155, 89, 182],
+            [26, 188, 156],
+            [230, 126, 34],
+            [149, 165, 166]
         ];
         
         return {
@@ -4210,7 +4179,7 @@ export default class Widget extends React.PureComponent<
                 value: year,
                 symbol: {
                     type: "simple-marker",
-                    color: [...palette[idx % palette.length], 0.9], // cycle palette if >8 years
+                    color: [...palette[idx % palette.length], 0.9],
                     size: 6,
                     outline: { color: [255, 255, 255], width: 1 }
                 }
@@ -4406,7 +4375,7 @@ export default class Widget extends React.PureComponent<
                         const feat = imgLayer.feature(i);
                         const props = feat.properties; 
 
-                        // --- Filtering ---
+                        // FILTERING
                         if (targetCreatorId !== null && props.creator_id !== targetCreatorId) continue;
 
                         if (turboFilterIsPano !== undefined) {
@@ -4417,47 +4386,47 @@ export default class Widget extends React.PureComponent<
                         if (startTime || endTime || turboColorByDate) {
                             if (props.captured_at) {
                                 const t = props.captured_at; 
-                                if (startTime && t < startTime) continue;
-                                if (endTime && t > endTime) continue;
-                                // REMOVED: allYears.add() from here
+                                if (startTime && (t as number) < startTime) continue;
+                                if (endTime && (t as number) > endTime) continue;
                             } else if (startTime || endTime) {
                                 continue;
                             }
                         }
 
                         const geo = feat.toGeoJSON(x, y, z);
-                        const [lon, lat] = geo.geometry.coordinates;
+                        const [lon, lat] = (geo.geometry as any).coordinates;
                         
                         // ID HANDLING: Convert to string immediately
                         const idStr = String(props.id);
 
-                        // --- BOUNDARY CHECK ---
+                        // BOUNDARY CHECK
                         if (
                             !seenIds.has(idStr) &&
                             lon >= bbox[0] && lon <= bbox[2] &&
                             lat >= bbox[1] && lat <= bbox[3]
-                        ) {
+                        ) 
+                        {
                             seenIds.add(idStr);
 
                             let yearCat: string | null = null;
                             
                             // Adding to Legend ONLY if point is inside BBOX
                             if (turboColorByDate && props.captured_at) {
-                                const d = new Date(props.captured_at);
+                                const d = new Date(props.captured_at as number);
                                 if (!isNaN(d.getTime())) {
                                     yearCat = String(d.getFullYear());
-                                    allYears.add(yearCat); // <--- MOVED HERE
+                                    allYears.add(yearCat);
                                 }
                             }
 
-                            // --- CREATE FEATURE ---
+                            // CREATE FEATURE
                             features.push({
                                 geometry: webMercatorUtils.geographicToWebMercator({
                                     type: "point",
                                     x: lon,
                                     y: lat,
-                                    spatialReference: { wkid: 4326 }
-                                }),
+                                    spatialReference: { wkid: 4326 } as any
+                                } as any),
                                 attributes: {
                                     oid: objectIdCounter++, 
                                     image_id: idStr, // STORED AS STRING 'image_id'
@@ -4492,7 +4461,7 @@ export default class Widget extends React.PureComponent<
             return;
         }
 
-        // --- Renderer Setup ---
+        // Renderer Setup
         let renderer: __esri.Renderer;
         if (turboColorByDate && allYears.size > 0) {
             const yearList = Array.from(allYears).sort();
@@ -4516,14 +4485,14 @@ export default class Widget extends React.PureComponent<
                     size: 6,
                     outline: { color: [255, 255, 255], width: 1 }
                 }
-            };
+            } as any;
             this.setState({ turboYearLegend: [] });
         }
 
         // Extract FeatureLayer from the modules loaded in componentDidMount
         const { FeatureLayer } = this.ArcGISModules;
 
-        // --- Layer Creation ---
+        // Layer Creation
         this.turboCoverageLayer = new FeatureLayer({
             id: "turboCoverage",
             title: "Mapillary Turbo Coverage Points",
@@ -4547,7 +4516,7 @@ export default class Widget extends React.PureComponent<
             spatialReference: { wkid: 3857 },
             renderer,
             popupEnabled: false,
-            outFields: ["*"] // Ensure all attributes are available on client
+            outFields: ["*"] // Ensures all attributes are available on client
         });
 
         // Final safety check
@@ -4578,7 +4547,7 @@ export default class Widget extends React.PureComponent<
         this.log("Turbo coverage layers removed");
     }
     
-    // --- Load a specific sequence by ID and image ---
+    // Load a specific sequence by ID and image
     // Fetches all image coordinates in the sequence,
     // updates the viewer, re-draws map markers,
     // and attaches Mapillary event listeners for bearing/image changes.
@@ -4608,7 +4577,7 @@ export default class Widget extends React.PureComponent<
                 hasTimeTravel: false
             });
 
-            // --- Check for Time Travel for the starting image ---
+            // Check for Time Travel for the starting image
             const currentImg = updatedSequence.find(img => img.id === startImageId);
             if (currentImg) {
                 // Passing captured_at instead of sequenceId
@@ -4664,7 +4633,7 @@ export default class Widget extends React.PureComponent<
             });
             toRemove.forEach(g => jimuMapView.view.graphics.remove(g));
 
-            // --- MOVED UP: Draw Polyline FIRST so it stays BEHIND points ---
+            // Draw Polyline FIRST so it stays BEHIND points
             const { Graphic } = this.ArcGISModules;
             
             const hasPolyline = jimuMapView.view.graphics.some(g => 
@@ -4684,9 +4653,8 @@ export default class Widget extends React.PureComponent<
                 (polylineGraphic as any).__isSequenceOverlay = true;
                 jimuMapView.view.graphics.add(polylineGraphic);
             }
-            // -------------------------------------------------------------
 
-            // Draw Blue Dots (Active Sequence) - Now they render ON TOP of the line
+            // Draw Blue Dots (Active Sequence), Now they render ON TOP of the line
             updatedSequence.forEach(img => {
                 if (img.id !== startImageId) {
                     this.drawPointWithoutRemoving(img.lon, img.lat, [0, 0, 255, 1], sequenceId);
@@ -4714,10 +4682,10 @@ export default class Widget extends React.PureComponent<
         }
     }
 
-    // --- Initial setup lifecycle ---
-    // Loads ArcGIS API modules dynamically (Graphic, Point, etc.),
-    // restores cache, loads Mapillary JS/CSS via CDN,
-    // and attaches resize/fullscreen event listeners.
+    // Initial setup lifecycle
+    // - Loads ArcGIS API modules dynamically (Graphic, Point, etc.),
+    // - restores cache, loads Mapillary JS/CSS via CDN,
+    // - and attaches resize/fullscreen event listeners.
     async componentDidMount() {
         try {
             const [Graphic, Point, SimpleMarkerSymbol, VectorTileLayer, FeatureLayer] =
@@ -4809,7 +4777,7 @@ export default class Widget extends React.PureComponent<
             this.setState({ turboModeActive: true });
         }
 
-        // --- Check if we need to add the "Always On" layer now ---
+        // Check if we need to add the "Always On" layer now
         // If the MapView loaded BEFORE these modules, onActiveViewChange skipped the add.
         // We must do it here now that modules (and the layer object) are ready.
         if (this.props.config.coverageLayerAlwaysOn && this.state.jimuMapView) {
@@ -4826,7 +4794,7 @@ export default class Widget extends React.PureComponent<
 	
 	componentDidUpdate(prevProps: AllWidgetProps<any>, prevState: State) {
         
-        // --- 1. Handle Resize & Re-attach Observer ---
+        // 1. Handle Resize & Re-attach Observer
         if (this.mapillaryViewer) {
             try { this.mapillaryViewer.resize(); } catch (e) { }
             setTimeout(() => {
@@ -4846,7 +4814,7 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        // --- 2. Handle State Transitions (Minimize/Close) ---
+        // 2. Handle State Transitions (Minimize/Close)
         
         // Minimized: Keep listeners, but clean up viewer if needed
         if (prevProps.visible && !this.props.visible) {
@@ -4860,7 +4828,7 @@ export default class Widget extends React.PureComponent<
             this.cleanupWidgetEnvironment(true, true);
         }
 
-        // --- 3. Handle Reopening (Seamless Filter Loading) ---
+        // 3. Handle Reopening (Seamless Filter Loading)
         if (prevProps.state === 'CLOSED' && this.props.state === 'OPENED' && this.state.jimuMapView) {
             this.log("Widget reopened - initializing environment...");
 
@@ -4926,7 +4894,7 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        // --- 4. Handle Config Changes (Standard Logic) ---
+        // 4. Handle Config Changes (Standard Logic)
 
         // Traffic Signs Config
         if (prevProps.config.enableTrafficSigns !== this.props.config.enableTrafficSigns) {
@@ -4988,6 +4956,15 @@ export default class Widget extends React.PureComponent<
             }
         }
 
+        /**
+            * Responds to the `hideCoverageCircles` config toggle by hot-swapping
+            * the Mapillary Vector Tile layer with a freshly initialized instance
+            * that reflects the new circle visibility setting.
+            * If a creator filter is configured, resolves the creator ID before
+            * reinitializing to preserve the existing user filter.
+            * After the swap, reorders Turbo coverage, objects, and traffic sign
+            * layers to ensure they remain on top of the base coverage layer.
+        */
         if (prevProps.config.hideCoverageCircles !== this.props.config.hideCoverageCircles) {
             const reInitLayer = async () => {
                 let targetId: number | undefined = undefined;
@@ -5025,7 +5002,7 @@ export default class Widget extends React.PureComponent<
             reInitLayer();
         }
 
-        // --- 5. Handle Dynamic Component Toggling (Bearing/Zoom)
+        // 5. Handle Dynamic Component Toggling (Bearing/Zoom)
         if (this.mapillaryViewer) {
             // Handle Bearing Toggle
             if (prevProps.config.hideBearing !== this.props.config.hideBearing) {
@@ -5046,9 +5023,9 @@ export default class Widget extends React.PureComponent<
         }
     }
 
-    // --- Cleanup lifecycle ---
-    // Ensures all intervals, observers, and event listeners are removed
-    // to prevent memory leaks when widget is closed or reloaded.
+    // Cleanup lifecycle
+    // - Ensures all intervals, observers, and event listeners are removed
+    // - to prevent memory leaks when widget is closed or reloaded.
 	componentWillUnmount() {
 		this.cleanupWidgetEnvironment(true, true);
 
@@ -5118,6 +5095,9 @@ export default class Widget extends React.PureComponent<
         this.log("Active MapView set - Attaching Handlers");
         this.setState({ jimuMapView: jmv });
 
+        this.clearGreenPulse();
+        this.clearTurboHover();
+
         // Use a callback to restore graphics AFTER state is set ---
         this.setState({ jimuMapView: jmv }, () => {
             jmv.view.when(() => {
@@ -5159,7 +5139,7 @@ export default class Widget extends React.PureComponent<
             }
         }
 
-        // --- CLICK HANDLER ---
+        // CLICK HANDLER
         this.mapClickHandle = jmv.view.on("click", async (evt) => {
             if (this.props.state === 'CLOSED') return;
 
@@ -5170,7 +5150,7 @@ export default class Widget extends React.PureComponent<
                 const response = await jmv.view.hitTest(evt);
                 
                 // 1. Blue Markers
-                const seqPointHit = response.results.find(r => 
+                const seqPointHit = response.results.find((r: any) => 
                     r.graphic && 
                     (
                         (r.graphic as any).__isSequenceOverlay || 
@@ -5180,7 +5160,7 @@ export default class Widget extends React.PureComponent<
                 );
 
                 if (seqPointHit) {
-                    const seqId = seqPointHit.graphic.attributes?.sequenceId || this.state.selectedSequenceId;
+                    const seqId = (seqPointHit as any).graphic.attributes?.sequenceId || this.state.selectedSequenceId;
                     if (!seqId) return;
                     
                     let currentSeqData = this.state.sequenceImages;
@@ -5206,17 +5186,17 @@ export default class Widget extends React.PureComponent<
                 }
 
                 // 2. Objects/Signs
-                const featureHit = response.results.find(r => {
+                const featureHit = response.results.find((r: any) => {
                     const layer = r.layer || (r.graphic && r.graphic.layer);
                     return layer && (layer.id === "mapillary-objects-fl" || layer.id === "mapillary-traffic-signs-fl");
                 });
 
-                if (featureHit && featureHit.graphic) {
-                    const attrs = featureHit.graphic.attributes;
+                if (featureHit && (featureHit as any).graphic) {
+                    const attrs = (featureHit as any).graphic.attributes;
                     const featureId = attrs.id || attrs.value; // Mapillary usually uses 'id' for the feature ID
                     
                     // Get feature coordinates
-                    const geoPt = webMercatorUtils.webMercatorToGeographic(featureHit.graphic.geometry) as __esri.Point;
+                    const geoPt = webMercatorUtils.webMercatorToGeographic((featureHit as any).graphic.geometry) as __esri.Point;
 
                     // 1. Highlight the feature (Optional: Draw a specific marker for the selected object)
                     this.drawPoint(geoPt.longitude, geoPt.latitude);
@@ -5229,20 +5209,20 @@ export default class Widget extends React.PureComponent<
                 }
 
                 // 3. Turbo Coverage
-                const turboHit = response.results.find(r => {
+                const turboHit = response.results.find((r: any) => {
                     const layer = r.layer || (r.graphic && r.graphic.layer);
                     return layer && layer.id === "turboCoverage";
                 });
                 
-                // === TURBO MODE BRANCH ===
+                // TURBO MODE BRANCH
                 if (this.state.turboModeActive) {
                     if (turboHit) {
-                        const hitGraphic = turboHit.graphic;
+                        const hitGraphic = (turboHit as any).graphic;
                         const attrs = hitGraphic?.attributes;
 
                         if (this.turboCoverageLayerView && hitGraphic) {
                             if (this.highlightHandle) this.highlightHandle.remove();
-                            this.highlightHandle = this.turboCoverageLayerView.highlight(hitGraphic);
+                            this.highlightHandle = (this.turboCoverageLayerView as any).highlight(hitGraphic);
                         }
 
                         if (attrs) {
@@ -5284,7 +5264,7 @@ export default class Widget extends React.PureComponent<
                     }
                 }
                 
-                // === NORMAL MODE BRANCH ===
+                // NORMAL MODE BRANCH
                 await this.handleMapClick(evt);
 
             } catch (error) {
@@ -5295,7 +5275,7 @@ export default class Widget extends React.PureComponent<
             }
         });
 
-        // --- HOVER HANDLER (Strict Debounce) ---
+        // HOVER HANDLER
         this.pointerMoveHandle = jmv.view.on("pointer-move", async (evt) => {
             const globalX = evt.native.clientX;
             const globalY = evt.native.clientY;
@@ -5303,19 +5283,19 @@ export default class Widget extends React.PureComponent<
             const hit = await jmv.view.hitTest(evt);
             
             // Standard Object Hover Logic
-            const obj = hit.results.find(r => {
+            const obj = hit.results.find((r: any) => {
                 const l = r.layer || (r.graphic && r.graphic.layer);
                 return l && l.id === "mapillary-objects-fl";
             });
 
-            if (obj && obj.graphic) {
+            if (obj && (obj as any).graphic) {
                 this.setState({
                     hoveredMapObject: {
                         x: evt.x,
                         y: evt.y,
-                        objectName: obj.graphic.attributes.value,
-                        firstSeen: new Date(obj.graphic.attributes.first_seen_at).toLocaleString(),
-                        lastSeen: new Date(obj.graphic.attributes.last_seen_at).toLocaleString()
+                        objectName: (obj as any).graphic.attributes.value,
+                        firstSeen: new Date((obj as any).graphic.attributes.first_seen_at).toLocaleString(),
+                        lastSeen: new Date((obj as any).graphic.attributes.last_seen_at).toLocaleString()
                     }
                 });
             } else {
@@ -5325,13 +5305,13 @@ export default class Widget extends React.PureComponent<
             if (!this.tooltipDiv) return;
 
             // Turbo Mode Hover
-            const turboHit = hit.results.find(r => {
+            const turboHit = hit.results.find((r: any) => {
                 const layer = r.layer || (r.graphic && r.graphic.layer);
                 return layer && layer.id === "turboCoverage";
             });
 
             if (turboHit) {
-                const hitGraphic = turboHit.graphic;
+                const hitGraphic = (turboHit as any).graphic;
                 const attrs = hitGraphic?.attributes;
                 if (!attrs) return;
 
@@ -5341,7 +5321,7 @@ export default class Widget extends React.PureComponent<
                 // GROW ANIMATION
                 this.showTurboHover(hitGraphic);
 
-                // TOOLTIP LOGIC (unchanged)
+                // TOOLTIP LOGIC
                 if (this._currentHoveredFeatureId !== featureId) {
                     if (this._hoverTimeout) {
                         clearTimeout(this._hoverTimeout);
@@ -5489,11 +5469,11 @@ export default class Widget extends React.PureComponent<
         this.setState({ noImageMessageVisible: false });
     }
 
-    // --- Map graphics drawing helpers ---
-    // drawPulsingPoint → animates active image point (green).
-    // drawClickRipple → shows short-lived red ripple at click.
-    // drawPoint → draws static red point for clicked location.
-    // drawCone → draws camera direction cone based on bearing.
+    // Map graphics drawing helpers
+    // - drawPulsingPoint → animates active image point (green).
+    // - drawClickRipple → shows short-lived red ripple at click.
+    // - drawPoint → draws static red point for clicked location.
+    // - drawCone → draws camera direction cone based on bearing.
     private drawPulsingPoint(
         lon: number,
         lat: number,
@@ -5501,7 +5481,8 @@ export default class Widget extends React.PureComponent<
     ) {
         const {jimuMapView} = this.state;
         if (!jimuMapView || !this.ArcGISModules) return null;
-
+        
+        this.clearGreenPulse(); // clear any existing before drawing new
         const {Graphic} = this.ArcGISModules;
 
         const graphic = new Graphic({
@@ -5737,7 +5718,6 @@ export default class Widget extends React.PureComponent<
             if ((g as any).__isCone) toRemove.push(g);
         });
         toRemove.forEach(g => view.graphics.remove(g));
-        this.currentConeGraphic = null;
     }
 
     /**
@@ -5783,7 +5763,7 @@ export default class Widget extends React.PureComponent<
                 geometry: { type: "polygon", rings: [coords], spatialReference: { wkid: 4326 } },
                 symbol: {
                     type: "simple-fill",
-                    color: [255, 165, 0, 0.25],
+                    color: [255, 165, 0, 0.35],
                     outline: { color: [255, 165, 0, 0.8], width: 1 },
                 },
             });
@@ -5921,9 +5901,9 @@ export default class Widget extends React.PureComponent<
         }
     }
 
-    // --- Haversine distance ---
-    // Calculates precise distance (in meters) between two coordinates,
-    // used to find nearest image to a click.
+    // Haversine distance
+    // - Calculates precise distance (in meters) between two coordinates,
+    // - used to find nearest image to a click.
     private distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
         const R = 6371000; // Earth radius meters
         const toRad = (deg: number) => deg * Math.PI / 180;
@@ -5939,7 +5919,7 @@ export default class Widget extends React.PureComponent<
         return R * c;
     }
 
-    // --- Main user interaction ---
+    // Main user interaction
     // 1) Gets clicked coordinates from map view
     // 2) Fetches nearby Mapillary sequences via Graph API
     // 3) Selects closest image
@@ -6050,7 +6030,7 @@ export default class Widget extends React.PureComponent<
                 });
 
             } else {
-                // --- LATER CLICK LOGIC ---
+                // LATER CLICK LOGIC
                 // Try to use cached sequenceImages; fetch if missing
                 let updatedSequence = this.state.sequenceImages && this.state.sequenceImages.length
                     ? this.state.sequenceImages
@@ -6076,7 +6056,7 @@ export default class Widget extends React.PureComponent<
                 
                 const DISTANCE_THRESHOLD_METERS = 0.5;
 
-                // === CASE A: Click is far -> New Search ===
+                // CASE A: Click is far -> New Search
                 if (closestImg.dist > DISTANCE_THRESHOLD_METERS) {
                     const nearbySeqs = await this.getSequencesInBBox(lon, lat, this.accessToken);
                     if (!nearbySeqs.length) {
@@ -6129,7 +6109,7 @@ export default class Widget extends React.PureComponent<
                     return; // Exit here, let callback handle the rest
                 }
 
-                // === CASE B: Click is NEAR an image in current sequence ===
+                // CASE B: Click is NEAR an image in current sequence
                 this.log("Same sequence within threshold, reusing cached overlay");
 
                 await this.loadSequenceById(selectedSequenceId, closestImg.id, { lon, lat });
@@ -6156,10 +6136,10 @@ export default class Widget extends React.PureComponent<
         }
     }
 
-    // --- Fetch nearby sequences (single API call) ---
-    // Queries Mapillary Graph API for images within ~5m bbox.
-    // Groups them by sequence ID and keeps the earliest captured_at
-    // date per sequence for UI dropdown display.
+    // Fetch nearby sequences (single API call)
+    // - Queries Mapillary Graph API for images within ~10m bbox.
+    // - Groups them by sequence ID and keeps the earliest captured_at
+    // - date per sequence for UI dropdown display.
     private async getSequencesInBBox(lon: number, lat: number, accessToken: string) {
         // Slightly increased bbox (approx 10m) to ensure hits, but we strictly limit the results below
         const bboxSize = 0.0001; 
@@ -6226,9 +6206,9 @@ export default class Widget extends React.PureComponent<
             .slice(0, 10); 
     }
 
-    // --- Fetch full coordinate list of a sequence ---
-    // Uses sequence_id → image_ids → geometry batch fetch
-    // to get lat/lon for all frames in a sequence efficiently.
+    // Fetch full coordinate list of a sequence
+    // - Uses sequence_id → image_ids → geometry batch fetch
+    // - to get lat/lon for all frames in a sequence efficiently.
     private async getSequenceWithCoords(
             sequenceId: string,
             accessToken: string
@@ -6312,7 +6292,7 @@ export default class Widget extends React.PureComponent<
             }
     }
     
-    // --- Main UI rendering logic ---
+    // Main UI rendering logic
     // Contains 3 key zones:
     //   1. Map + Viewer area
     //   2. Overlay controls (sequence selector, info, legend)
@@ -6324,6 +6304,7 @@ export default class Widget extends React.PureComponent<
     //   - Info box + legend (only when image loaded)
     render() {
         const mapWidgetId = this.props.useMapWidgetIds?.[0];
+        const DatePickerAny = DatePicker as any;
         
         // This is the viewer container. It will be placed either in normal widget or fullscreen portal.
         const viewerArea = (
@@ -6377,26 +6358,26 @@ export default class Widget extends React.PureComponent<
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
                             {this.state.turboModeActive ? (
                                 <React.Fragment>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('#00ff00'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Active frame</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('blue'), border: '1px solid #e3da30'}}></span> <span style={this.legendTextStyle()}>Seq. images</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('#a52a2a'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Turbo coverage</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('transparent'), border: '1.5px solid cyan'}}></span> <span style={this.legendTextStyle()}>First selected</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('yellow'), border: '2px solid orange'}}></span> <span style={this.legendTextStyle()}>Next frame</span></div>
+                                    <div style={legendRowStyle}><span style={{...legendCircleStyle('#00ff00'), border: '1px solid white'}}></span> <span style={legendTextStyle}>Active frame</span></div>
+                                    <div style={legendRowStyle}><span style={{...legendCircleStyle('blue'), border: '1px solid #e3da30'}}></span> <span style={legendTextStyle}>Seq. images</span></div>
+                                    <div style={legendRowStyle}><span style={{...legendCircleStyle('#a52a2a'), border: '1px solid white'}}></span> <span style={legendTextStyle}>Turbo coverage</span></div>
+                                    <div style={legendRowStyle}><span style={{...legendCircleStyle('transparent'), border: '1.5px solid cyan'}}></span> <span style={legendTextStyle}>First selected</span></div>
+                                    <div style={legendRowStyle}><span style={{...legendCircleStyle('yellow'), border: '2px solid orange'}}></span> <span style={legendTextStyle}>Next frame</span></div>
                                 </React.Fragment> 
                             ) : (
                                 <React.Fragment>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('black'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Clicked point</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('#00ff00'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Active frame</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('e3da30'), border: '1px solid white'}}></span> <span style={this.legendTextStyle()}>Active seq</span></div>
-                                    <div style={this.legendRowStyle()}><span style={{...legendCircleStyle('yellow'), border: '2px solid orange'}}></span> <span style={this.legendTextStyle()}>Next frame</span></div>
-                                    <button onClick={this.clearSequenceCache} style={this.compactButtonStyle()}>CLEAR CACHE</button>
+                                    <div style={legendRowStyle}><span style={{...legendCircleStyle('black'), border: '1px solid white'}}></span> <span style={legendTextStyle}>Clicked point</span></div>
+                                    <div style={legendRowStyle}><span style={{...legendCircleStyle('#00ff00'), border: '1px solid white'}}></span> <span style={legendTextStyle}>Active frame</span></div>
+                                    <div style={legendRowStyle}><span style={{...legendCircleStyle('e3da30'), border: '1px solid white'}}></span> <span style={legendTextStyle}>Active seq</span></div>
+                                    <div style={legendRowStyle}><span style={{...legendCircleStyle('yellow'), border: '2px solid orange'}}></span> <span style={legendTextStyle}>Next frame</span></div>
+                                    <button onClick={this.clearSequenceCache} style={compactButtonStyle}>CLEAR CACHE</button>
                                 </React.Fragment> 
                             )}
                         </div>
                     </div>
                 )}
 
-                {/* --- TURBO LOADING IMAGERY REGION --- */}
+                {/* TURBO LOADING IMAGERY REGION */}
                 {this.state.turboLoading && (
                     <div style={glassStyles.loadingContainer}>
                         {/* Use the new Compact Card style */}
@@ -6425,7 +6406,7 @@ export default class Widget extends React.PureComponent<
                     </div>
                 )}
 
-                {/* --- LOADING IMAGERY REGION --- */}
+                {/* LOADING IMAGERY REGION */}
                 {this.state.isLoading && (
                     <div style={glassStyles.loadingContainer}>
                         <div className="loading-card" style={glassStyles.loadingCard}>
@@ -6449,7 +6430,7 @@ export default class Widget extends React.PureComponent<
                     </div>
                 )}
 
-                {/* --- CLICK A POINT TO VIEW IMAGERY REGION --- */}
+                {/* CLICK A POINT TO VIEW IMAGERY REGION */}
                 {!this.state.imageId && !this.state.isLoading && !this.state.turboLoading && !this.state.noImageMessageVisible && (
                     <div style={glassStyles.initialStateContainer}>
                         <div className="initial-state-card" style={glassStyles.initialStateCard}>
@@ -6463,7 +6444,7 @@ export default class Widget extends React.PureComponent<
                     </div>
                 )}
 
-                {/* --- NO IMAGE VISIBLE WARNING REGION --- */}
+                {/* NO IMAGE VISIBLE WARNING REGION */}
                 {this.state.noImageMessageVisible && (
                     <div style={glassStyles.noImageContainer}>
                         <div className="no-image-card" style={glassStyles.noImageContent}>
@@ -6481,7 +6462,7 @@ export default class Widget extends React.PureComponent<
                     </div>
                 )}
 
-                {/* --- IMAGE UTILITY GROUP (Glassmorphism) --- */}
+                {/* IMAGE UTILITY GROUP */}
                 {this.state.imageId && (
                     <div className="glass-image-utility-panel" style={{
                         position: "absolute",
@@ -6864,7 +6845,7 @@ export default class Widget extends React.PureComponent<
                                 </div>
                             )}
                             
-                            {/* --- Turbo Mode Date Legend --- */}
+                            {/* Turbo Mode Date Legend */}
                             {this.state.turboModeActive && this.state.turboColorByDate && this.state.turboYearLegend && this.state.turboYearLegend.length > 0 && (
                                 <div 
                                     className="year-legend-scroll"
@@ -7185,13 +7166,13 @@ export default class Widget extends React.PureComponent<
                     )}
                 </div>
                 
-                {/* --- UNIFIED FILTER BAR --- */}
+                {/* UNIFIED FILTER BAR */}
                 {(this.state.showTurboFilterBox || this.state.showTrafficSignsFilterBox || this.state.showObjectsFilterBox) && (
                     <div  
                         className="glass-scroll-container"
                         style={glassStyles.filterBarContainer}
                     >
-                        {/* === TURBO MODE FILTER GROUP (GOLD) === */}
+                        {/* TURBO MODE FILTER GROUP (GOLD) */}
                         {this.state.showTurboFilterBox && (
                             <div style={glassStyles.filterGroup('#FFD700')}>
                                 <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -7253,9 +7234,9 @@ export default class Widget extends React.PureComponent<
                                 </div>
 
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-                                    <DatePicker
+                                    <DatePickerAny
                                         selected={this.state.turboFilterStartDate ? new Date(this.state.turboFilterStartDate) : null}
-                                        onChange={(date) => {
+                                        onChange={(date: any) => {
                                             const dateString = date ? date.toISOString().split('T')[0] : '';
                                             this.setState({ turboFilterStartDate: dateString }, () => this.debouncedTurboFilter());
                                         }}
@@ -7267,9 +7248,9 @@ export default class Widget extends React.PureComponent<
                                         portalId="root-portal"
                                         customInput={<button type="button" style={glassStyles.glassIconBtn} title="Start Date">📅</button>}
                                     />
-                                    <DatePicker
+                                    <DatePickerAny
                                         selected={this.state.turboFilterEndDate ? new Date(this.state.turboFilterEndDate) : null}
-                                        onChange={(date) => {
+                                        onChange={(date: any) => {
                                             const dateString = date ? date.toISOString().split('T')[0] : '';
                                             this.setState({ turboFilterEndDate: dateString }, () => this.debouncedTurboFilter());
                                         }}
@@ -7336,7 +7317,7 @@ export default class Widget extends React.PureComponent<
                             </div>
                         )}
 
-                        {/* === TRAFFIC SIGNS FILTER GROUP (ORANGE) === */}
+                        {/* TRAFFIC SIGNS FILTER GROUP (ORANGE) */}
                         {this.state.showTrafficSignsFilterBox && (
                             <div style={glassStyles.filterGroup('#FFA500')}>
                                 <Select
@@ -7377,7 +7358,7 @@ export default class Widget extends React.PureComponent<
                             </div>
                         )}
 
-                        {/* === OBJECTS FILTER GROUP (RED) === */}
+                        {/* OBJECTS FILTER GROUP (RED) */}
                         {this.state.showObjectsFilterBox && (
                             <div style={glassStyles.filterGroup('#FF3C3C')}>
                                 <Select
@@ -7430,7 +7411,7 @@ export default class Widget extends React.PureComponent<
                     }}>
                         <div style={glassStyles.splashCard}>
                             
-                            {/* --- LOGO AREA WITH SONAR RIPPLES --- */}
+                            {/* LOGO AREA WITH SONAR RIPPLES */}
                             <div style={glassStyles.logoWrapper}>
                                 {/* Two ripples for depth */}
                                 <div style={glassStyles.splashRipple} /> 
@@ -7444,17 +7425,17 @@ export default class Widget extends React.PureComponent<
                                 />
                             </div>
                             
-                            {/* --- SHIMMERING TITLE --- */}
+                            {/* SHIMMERING TITLE */}
                             <div className="splash-screen-text" style={glassStyles.splashTitle}>
                                 MAPILLARY Explorer
                             </div>
                             
-                            {/* --- GLOWING PROGRESS BAR --- */}
+                            {/* GLOWING PROGRESS BAR */}
                             <div style={glassStyles.progressTrack}>
                                 <div style={glassStyles.progressBar} />
                             </div>
                             
-                            {/* --- ANIMATED MESSAGES --- */}
+                            {/* ANIMATED MESSAGES */}
                             <div style={{ position: "relative", height: "14px", marginTop: "8px", width: "100%" }}>
                                 <div className="splash-msg-1" style={{ 
                                     fontSize: "10px", color: "rgba(255,255,255,0.5)", fontStyle: "italic", 
@@ -7497,7 +7478,7 @@ export default class Widget extends React.PureComponent<
                         }
                     ]
 
-                    // FILTER: If coverageLayerAlwaysOn is true, hide the coverage_toggle button
+                    // If coverageLayerAlwaysOn is true, hide the coverage_toggle button
                     .filter(btn => {
                         if (btn.id === 'coverage_toggle' && this.props.config.coverageLayerAlwaysOn) {
                             return false;
@@ -7514,7 +7495,6 @@ export default class Widget extends React.PureComponent<
                                 onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.15)')}
                                 onMouseLeave={e => (e.currentTarget.style.transform = btn.active ? 'scale(1.1)' : 'scale(1)')}
                             >
-                                {/* Changed from btn.emoji to btn.content */}
                                 {btn.content}
                             </button>
                         ))
@@ -7682,7 +7662,6 @@ export default class Widget extends React.PureComponent<
                                     ...glassStyles.getButtonStyle(this.state.showTrafficSignsFilterBox, 'rgba(255, 165, 0, 0.5)', true),
                                     opacity: this.state.trafficSignsActive ? 1 : 0.6,
                                     cursor: this.state.trafficSignsActive ? 'pointer' : 'default'
-                                    // Removed manual marginTop and gap as groupContainer handles it
                                 }}
                             >
                                 <Icons.Filter size={16}/>
@@ -7734,40 +7713,15 @@ export default class Widget extends React.PureComponent<
         );
 
         /**
-         * FULLSCREEN MODE BLOCK (portal to body)
+            * FULLSCREEN MODE BLOCK (portal to body)
         */
         const fullscreenMode = ReactDOM.createPortal(
-            <div
-                style={{
-                    position: "fixed",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
-                    height: "100%",
-                    background: "#000",
-                    zIndex: 9999,
-                    display: "flex",
-                    flexDirection: "column"
-                }}
-            >
+            <div style={fullscreenOverlayStyle}>
                 {viewerArea}
                 <button
-                onClick={this.toggleFullscreen}
+                    onClick={this.toggleFullscreen}
                     title="Exit Fullscreen"
-                    style={{
-                        position: 'absolute',
-                        top: '10px',
-                        left: '10px',
-                        zIndex: 10000,
-                        background: '#d1000059',
-                        color: 'white',
-                        padding: '4px',
-                        borderRadius: '3px',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center'
-                    }}
+                    style={fullscreenExitButtonStyle}
                 >
                     <Icons.Minimize />
                 </button>
@@ -7776,22 +7730,7 @@ export default class Widget extends React.PureComponent<
                 <button
                     onClick={() => this.setState(prev => ({ showMinimap: !prev.showMinimap }))}
                     title={this.state.showMinimap ? "Hide Minimap" : "Show Minimap"}
-                    style={{
-                        position: 'absolute',
-                        top: '48px', // Positioned below the Exit button (10px + 32px height + 6px gap)
-                        left: '10px',
-                        zIndex: 10000,
-                        background: 'rgba(0, 0, 0, 0.6)', // Neutral dark background
-                        color: 'white',
-                        padding: '6px',
-                        borderRadius: '3px',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        width: '32px',
-                        height: '32px'
-                    }}
+                    style={fullscreenMinimapToggleButtonStyle}
                 >
                     {/* Simple SVG Icons for Map Toggle */}
                     {this.state.showMinimap ? (
@@ -7805,35 +7744,7 @@ export default class Widget extends React.PureComponent<
                 <div
                     ref={this.minimapContainer}
                     className="minimap-container"
-                    style={{
-                        position: 'absolute',
-                        bottom: '30px',
-                        left: '30px',
-                        width: '330px',
-                        height: '220px',
-                        // --- GLASSMORPHISM CORE ---
-                        background: "rgba(20, 20, 20, 0.4)", // Dark tinted glass
-                        backdropFilter: "blur(12px)",        // Frosted effect
-                        WebkitBackdropFilter: "blur(12px)",
-                        // --- BORDERS & CORNERS ---
-                        border: "1px solid rgba(255, 255, 255, 0.15)", // Thin light edge
-                        borderRadius: "20px",                         // Modern rounded look
-                        overflow: "hidden",                           // Clips map to corners
-                        // --- DEPTH & SHADOWS ---
-                        // Inner shadow makes the map look "embedded" into the panel
-                        boxShadow: `
-                            0 8px 32px 0 rgba(0, 0, 0, 0.6), 
-                            inset 0 0 0 1px rgba(255, 255, 255, 0.05)
-                        `,  
-                        zIndex: 10001,
-                        // --- ANIMATIONS & LOGIC ---
-                        visibility: this.state.showMinimap ? 'visible' : 'hidden',
-                        opacity: this.state.showMinimap ? 1 : 0,
-                        pointerEvents: this.state.showMinimap ? 'auto' : 'none',
-                        // Transition: Added transform for a "Pop-in" effect
-                        transition: "all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1)",
-                        transform: this.state.showMinimap ? 'translateY(0) scale(1)' : 'translateY(20px) scale(0.95)',
-                    }}
+                    style={getMinimapContainerStyle(this.state.showMinimap)}
                 />
             </div>,
             document.body

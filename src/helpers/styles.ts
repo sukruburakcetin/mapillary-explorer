@@ -14,6 +14,103 @@ export const legendCircleStyle = (color: string): React.CSSProperties => ({
     flexShrink: 0    // Prevents circle from squishing
 });
 
+// --- SECTION: LEGEND ROW STYLES ---
+export const legendRowStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '2px'
+};
+
+export const legendTextStyle: React.CSSProperties = {
+    fontSize: '9px',
+    color: 'rgba(255,255,255,0.9)',
+    whiteSpace: 'nowrap',
+    fontWeight: 400
+};
+
+export const compactButtonStyle: React.CSSProperties = {
+    marginTop: '4px',
+    background: 'rgba(217, 83, 79, 0.2)',
+    border: '1px solid rgba(217, 83, 79, 0.3)',
+    color: '#ff908d',
+    borderRadius: '2px',
+    fontSize: '8px',
+    padding: '2px 0',
+    cursor: 'pointer',
+    width: '100%',
+    fontWeight: 700
+};
+
+// --- SECTION: FULLSCREEN MODE STYLES ---
+export const fullscreenOverlayStyle: React.CSSProperties = {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    width: "100%",
+    height: "100%",
+    background: "#000",
+    zIndex: 9999,
+    display: "flex",
+    flexDirection: "column"
+};
+
+export const fullscreenExitButtonStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: '10px',
+    left: '10px',
+    zIndex: 10000,
+    background: '#d1000059',
+    color: 'white',
+    padding: '4px',
+    borderRadius: '3px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
+};
+
+export const fullscreenMinimapToggleButtonStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: '48px',
+    left: '10px',
+    zIndex: 10000,
+    background: 'rgba(0, 0, 0, 0.6)',
+    color: 'white',
+    padding: '6px',
+    borderRadius: '3px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '32px',
+    height: '32px'
+};
+
+export const getMinimapContainerStyle = (showMinimap: boolean): React.CSSProperties => ({
+    position: 'absolute',
+    bottom: '30px',
+    left: '30px',
+    width: '330px',
+    height: '220px',
+    background: "rgba(20, 20, 20, 0.4)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    border: "1px solid rgba(255, 255, 255, 0.15)",
+    borderRadius: "20px",
+    overflow: "hidden",
+    boxShadow: `
+        0 8px 32px 0 rgba(0, 0, 0, 0.6), 
+        inset 0 0 0 1px rgba(255, 255, 255, 0.05)
+    `,
+    zIndex: 10001,
+    visibility: showMinimap ? 'visible' : 'hidden',
+    opacity: showMinimap ? 1 : 0,
+    pointerEvents: showMinimap ? 'auto' : 'none',
+    transition: "all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1)",
+    transform: showMinimap ? 'translateY(0) scale(1)' : 'translateY(20px) scale(0.95)',
+});
+
+
 // --- SECTION: GLASSMORPHISM UI COMPONENTS ---
 // This object contains all the logic for the "Glass" look (blur + transparency).
 export const glassStyles = {
