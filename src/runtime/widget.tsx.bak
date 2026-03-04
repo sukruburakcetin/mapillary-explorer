@@ -304,12 +304,6 @@ export default class Widget extends React.PureComponent<
 
             // Draw fresh cone
             this.drawCone(lon, lat, bearing, length, spread);
-            
-            // Always re-surface green pulse above the cone
-            if (this.currentGreenGraphic) {
-                view.graphics.remove(this.currentGreenGraphic);
-                view.graphics.add(this.currentGreenGraphic);
-            }
         };
 
         // 1. Viewer Load Event
@@ -1354,23 +1348,11 @@ export default class Widget extends React.PureComponent<
                     this.mapillaryViewer.getBearing().then((b: number) => {
                         if (typeof b === 'number') this._lastBearing = b;
                         this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing, length, spread);
-                        if (this.currentGreenGraphic) {
-                            const view = this.state.jimuMapView?.view;
-                            if (view) { view.graphics.remove(this.currentGreenGraphic); view.graphics.add(this.currentGreenGraphic); }
-                        }
                     }).catch(() => {
                         this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing || 0, length, spread);
-                        if (this.currentGreenGraphic) {
-                            const view = this.state.jimuMapView?.view;
-                            if (view) { view.graphics.remove(this.currentGreenGraphic); view.graphics.add(this.currentGreenGraphic); }
-                        }
                     });
                 } else {
                     this.drawCone(activeImg.lon, activeImg.lat, this._lastBearing || 0, length, spread);
-                    if (this.currentGreenGraphic) {
-                        const view = this.state.jimuMapView?.view;
-                        if (view) { view.graphics.remove(this.currentGreenGraphic); view.graphics.add(this.currentGreenGraphic); }
-                    }
                 }
             }
         }
@@ -1804,10 +1786,6 @@ export default class Widget extends React.PureComponent<
                         length, 
                         spread
                     );
-                    if (this.currentGreenGraphic) {
-                        const view = this.state.jimuMapView?.view;
-                        if (view) { view.graphics.remove(this.currentGreenGraphic); view.graphics.add(this.currentGreenGraphic); }
-                    }
                 }
                 
                 this.applyCustomCameraAngle();
