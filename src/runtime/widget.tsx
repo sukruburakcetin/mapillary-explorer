@@ -8,13 +8,13 @@ import { VectorTile } from '@mapbox/vector-tile';
 import Select from 'react-select';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
-import { objectNameMap } from "../helpers/mapillaryObjectNameMap";
-import * as Icons from './components/icons'
+import { objectNameMap } from "../utils/mapillaryObjectNameMap";
+import * as Icons from '../components/icons'
 import { legendCircleStyle, glassStyles, getGlassSelectStyles, 
     mobileOverrideStyles, legendRowStyle, legendTextStyle, compactButtonStyle,
     fullscreenOverlayStyle, fullscreenExitButtonStyle, 
     fullscreenMinimapToggleButtonStyle, getMinimapContainerStyle 
-} from "../helpers/styles";
+} from "../utils/styles";
 import { Viewer, OutlineTag, PolygonGeometry } from 'mapillary-js';
 import 'mapillary-js/dist/mapillary.css';
 
