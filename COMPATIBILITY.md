@@ -9,6 +9,9 @@ This widget is developed and tested against **ArcGIS Experience Builder Develope
 | 1.19 | 4.34 | 1.19 | October 2025 | not included | 3.3.3 | 22 | 19 |
 | 1.18 | 4.33 | 1.18 | June 2025 | 12.0 | 3.2.1 | 22 | 18 |
 
+For more details see ESRI's guide about release versions:
+https://developers.arcgis.com/experience-builder/guide/release-versions/
+
 ---
 
 ## Important: Running vs. Building
