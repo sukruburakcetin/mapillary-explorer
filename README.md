@@ -3,85 +3,116 @@
   Mapillary Explorer
 </h1>
 
-![Version](https://img.shields.io/badge/version-4.0.2-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
-![ArcGIS](https://img.shields.io/badge/ArcGIS-Experience%20Builder-007AC2)
-![React](https://img.shields.io/badge/React-18-61DAFB)
-![Esri Enterprise](https://img.shields.io/badge/Esri-Enterprise_12.0+-61DAFB)
-![Esri](https://img.shields.io/badge/Esri-ExB_Developer_Edition_1.18-61BAFB)
+<p align="center">
+  <img src="https://img.shields.io/badge/version-4.1.0-blue.svg" alt="Version"/>
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"/>
+  <img src="https://img.shields.io/badge/ArcGIS-Experience%20Builder%201.19-007AC2" alt="ArcGIS"/>
+  <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React"/>
+  <img src="https://img.shields.io/badge/Esri%20Enterprise-12.0+-61DAFB" alt="Esri Enterprise"/>
+  <img src="https://img.shields.io/badge/zero--dependency%20UI-built--in-blueviolet" alt="Zero Dependency UI"/>
+</p>
 
-A high-performance custom widget for **ArcGIS Experience Builder** that seamlessly integrates **Mapillary imagery** with ArcGIS maps. Designed for speed and interactivity, this widget allows users to explore image sequences, visualize high-volume coverage data in real-time, and interact with detected map features like traffic signs and infrastructure assets.
+<p align="center">
+  A high-performance custom widget for <strong>ArcGIS Experience Builder</strong> that brings <strong>Mapillary street-level imagery</strong> directly into your web maps.<br/>
+  Built for speed, designed for contribution.
+</p>
 
 ## Table of Contents
 
 1. [Key Features](#key-features)
-2. [Setup & Installation](#setup--installation)
-3. [Configuration](#configuration)
-4. [Mapillary Explorer Demo Video](#mapillary-explorer-demo-video)
-5. [Mapillary Explorer Demo Experience Builder App](#mapillary-explorer-demo-experience-builder-app)
-6. [ArcGIS Online Mapillary Explorer App](#arcgis-online-mapillary-explorer-app)
-7. [Download Release](#-download-built-widget-latest-version)
-8. [License](#license)
+2. [Project Structure](#project-structure)
+3. [Technical Stack](#technical-stack)
+3. [Setup & Installation](#setup--installation)
+4. [Configuration](#configuration)
+5. [Contributing](#contributing)
+6. [Mapillary Explorer Demo Video](#mapillary-explorer-demo-video)
+7. [Mapillary Explorer Demo Experience Builder App](#mapillary-explorer-demo-experience-builder-app)
+8. [ArcGIS Online Mapillary Explorer App](#arcgis-online-mapillary-explorer-app)
+9. [Download Release](#-download-built-widget-latest-version)
+10. [License](#license)
    
 ## Key Features
 
-### Deep Map Integration
-*   **Interactive Viewer:** Full synchronization between the Mapillary viewer and the ArcGIS map. Features a dynamic camera bearing cone, pulsing location markers, and "click-to-move" functionality.
-*   **Smart Geocoding:** Real-time reverse geocoding using the ArcGIS World Geocoding Service to display contextual address data.
-*   **Advanced Graphics:** Uses the ArcGIS Maps SDK to draw animated pulsing points, directional cones, and sequence polylines with smooth visual feedback.
+### Map and Viewer Integration
+- **Synchronized viewer and map.** The Mapillary viewer and ArcGIS map stay in sync at all times with a live bearing cone, pulsing location marker, and click-to-move navigation.
+- **Shareable URL state.** Bearing, map scale, image ID, and map type are written to the address bar in real time. Any view can be shared with a single copy-paste and restored exactly on open.
+- **Fullscreen minimap.** A secondary ArcGIS map panel appears in fullscreen mode with a live direction cone. Click any point to jump to that frame or search an entirely new location without leaving fullscreen.
 
-### New Settings Panel Capabilities:
-*  **Turbo Mode Only:** Lock the widget into coverage analysis mode and disable standard navigation.
-*  **Default Creator:** Pre-fill the username filter to load specific user data on startup automatically.
-*  **Force Coverage Layer:** Keep the Mapillary imagery geometry layer always visible.
-*  **UI Customization:** Hide the "Traffic Signs" or "Mapillary Objects" buttons to declutter the interface.
+### Turbo Mode and Coverage Filtering
+- **High-speed coverage rendering.** Millions of Mapillary coverage points are decoded from PBF/VTL tiles and rendered with real-time filtering by creator, date range, and panorama type.
+- **Consistent filtering at all zoom levels.** The green Mapillary coverage layer at overview zoom respects the same date and pano filters as Turbo Mode, so filtered data is always visible without needing to zoom in first.
+- **Year-based color coding.** Coverage points can be colored by capture year with a clickable legend to isolate individual years.
 
-### Turbo Mode (High-Speed Coverage)
-*   **Vector Tile Rendering:** Renders millions of coverage points efficiently using **PBF decoding** and **Mapbox Vector Tiles**.
-*   **Advanced Filtering:** Filter coverage in real-time by:
-    *   Creator Username
-    *   Date Range (Start/End)
-    *   Panorama (360°) status
-*   **Date-Based Visualization:** Optional color-coding of coverage points by year for temporal analysis.
+### Feature Detection Layers
+- **Traffic signs and objects.** Toggleable layers render detected assets with sprite-based icons, interactive popups, and parallel tile fetching for significantly faster load times at zoom level 16 and above.
+- **Configurable detection categories.** Which detection types are visible can be adjusted in `constants.ts` without modifying any rendering logic.
 
-### Feature Recognition Layers
-*   **Traffic Signs & Objects:** Toggleable layers displaying detected assets (benches, manholes, signs) using custom sprite-based icons.
-*   **Zoom-Aware:** Automatically manages layer visibility based on zoom levels to optimize performance.
-*   **Interactive Popups:** Detailed metadata display for every detected feature.
+### Deployment Presets
+- **Settings panel configuration.** Administrators can pre-configure creator username, date range, pano filter, and color-by-date from the Experience Builder settings panel. Any active preset automatically enables Turbo Mode on load.
+- **Per-deployment UI control.** Individual toolbar buttons (Center Map, 3D Bearing Sync, Traffic Signs, Objects) can be hidden to match the needs of each deployment.
 
-### Smart Navigation & UI
-*   **Sequence "Revolver":** An intelligent carousel selector to switch between multiple overlapping image sequences at the same location.
-*   **Fullscreen Minimap:** A secondary map panel within fullscreen mode that allows users to track their route and "click-to-jump" to any frame in the sequence.
-*   **Responsive Design:** Adaptive UI that scales from desktop to mobile, with touch-optimized controls and layout injection.
-
-### Engine Customization
-*   **Pro-Level Render Modes:** Switch between Fill (default immersive view) and Letterbox (ideal for wide-screen widgets to see the original uncropped photo).
-*   **Transition Control:** Choose between Smooth motion blending (cinematic feel) or Instantaneous jumps (snappy, high-speed inspection).
-*   **Camera Horizon Control:** Set custom default X/Y camera angles (0.0 to 1.0) to ensure the viewer always opens at a specific perspective (e.g., tilted down at the road or up at the sky).
+### No Third-Party UI Dependencies
+- **Built-in components.** `GlassSelect` and `GlassDatePicker` are custom zero-dependency components that replace `react-select` and `react-datepicker`, resolving React 19 and `@emotion/react` compatibility issues in ArcGIS Experience Builder v1.19.
 
 ---
 
-## Performance & Architecture
+## Project Structure
 
-*   **Intelligent Caching:** Implements multi-level caching (Session & LocalStorage) for sequence coordinates and sprite assets to minimize API calls.
-*   **Optimized Rendering:** Uses **debouncing** for hover effects/API queries and handles complex state transitions to ensure smooth 60fps map interaction.
-*   **Robust Error Handling:** Graceful degradation for missing imagery or network issues, with user-friendly status messages.
-*   **Secure Configuration:** Centralized token management via the widget manifest to avoid hardcoded credentials.
+```
+mapillary-explorer/
+└── src/
+    ├── runtime/
+    │   └── widget.tsx               # Main widget (organized with #region blocks)
+    ├── setting/
+    │   └── setting.tsx              # ArcGIS EB settings panel
+    ├── components/
+    │   ├── ControlBar.tsx           # Top toolbar (turbo, tiles, fullscreen, filter toggles)
+    │   ├── FilterBar.tsx            # Turbo filter inputs (username, dates, pano, color-by-date)
+    │   ├── GlassDatePicker.tsx      # Built-in date picker (replaces react-datepicker)
+    │   ├── GlassSelect.tsx          # Built-in dropdown (replaces react-select)
+    │   ├── Icons.tsx                # All SVG icon components
+    │   ├── ImageUtilityGroup.tsx    # Floating action buttons (share, download, center, sync)
+    │   ├── InfoBox.tsx              # Live image metadata panel
+    │   ├── Legend.tsx               # Coverage color legend overlay
+    │   ├── SequencePicker.tsx       # Sequence carousel selector
+    │   ├── SplashScreen.tsx         # Initial loading overlay
+    │   └── types.ts                 # Shared TypeScript prop interfaces for all components
+    ├── utils/
+    │   ├── constants.ts             # Layer IDs, API URLs, zoom thresholds, detection filter lists
+    │   ├── filterBuilder.ts         # Mapillary VTL filter expression builder
+    │   ├── geoUtils.ts              # Pure geo math: distance, bearing, tile math, cone, debounce, sequence colors
+    │   ├── mapillaryDetections.ts   # Pure functions: decodeAndNormalizeGeometry, getDetectionColor
+    │   ├── mapillaryObjectNameMap.ts # Human-readable Mapillary object label map
+    │   ├── mapillaryRenderers.ts    # Pure functions: createYearBasedRenderer, YEAR_COLOR_PALETTE
+    │   ├── spriteUtils.ts           # Sprite sheet cropping and icon loading utilities
+    │   └── styles.ts                # All glassStyles objects and mobileOverrideStyles CSS string
+    └── config.ts                    # Widget config TypeScript interface
+```
+
+> Pure utility functions in `utils/` have no React or ArcGIS dependencies and are fully unit-testable in isolation. See [CONTRIBUTING.md](CONTRIBUTING.md) for the local development guide.
+
+---
 
 ## Technical Stack
 
-| Category | Technologies |
-|----------|--------------|
-| **Framework** | ArcGIS Experience Builder (React-based) |
+| Category | Details |
+|---|---|
+| **Framework** | ArcGIS Experience Builder 1.19, React 19 |
 | **Mapping** | ArcGIS Maps SDK for JavaScript (`@arcgis/core`), MapillaryJS |
 | **Data Parsing** | Mapbox Vector Tiles, PBF decoding |
-| **UI Components** | React-Select, React-Datepicker |
+| **UI Components** | GlassSelect, GlassDatePicker (zero-dependency, built-in) |
+| **Compatibility** | ArcGIS Enterprise 12.0+, ArcGIS Online, ExB Developer Edition 1.19 |
 
+> `react-select` and `react-datepicker` have been fully removed. The widget has no third-party UI dependencies.
 ## Setup & Installation
 
 This widget is distributed as a **prebuilt (production) package** containing a `/dist` folder and `manifest.json`.  
 You do **not** need ArcGIS Experience Builder Developer Edition to use it, only a web server (such as IIS) and portal administrator privileges.
 However, if you want to view it on ArcGIS Developer Edition (localhost:3001), follow the CONTRIBUTE.md guide in the repository.
+
+> ArcGIS Enterprise users and contributors: There is an important difference between running the prebuilt widget and building from source. Enterprise ships with a bundled version of Experience Builder that lags behind the Developer Edition. Please read [COMPATIBILITY.md](COMPATIBILITY.md) before building from source to avoid version mismatch issues.
+
+To run it locally for development, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 ### 1. Prepare the Widget Folder
@@ -168,8 +199,8 @@ Below is an example of the `manifest.json` file used for configuration:
   "name": "mapillary-explorer",
   "label": "Mapillary Explorer",
   "type": "widget",
-  "version": "4.0.2",
-  "exbVersion": "1.18.0",
+  "version": "4.1.0",
+  "exbVersion": "1.19.0",
   "author": "Sukru Burak Cetin",
   "description": "Mapillary Explorer is a custom ArcGIS Experience Builder widget that brings
     Mapillary imagery directly into your web maps.",
@@ -191,6 +222,19 @@ Below is an example of the `manifest.json` file used for configuration:
   }
 }
 ```
+## Contributing
+
+Contributions are welcome. The project is structured to make adding new features straightforward.
+
+- **`src/utils/`** contains pure functions with no React or ArcGIS dependencies. New geo helpers, API utilities, or renderer factories added here are immediately unit-testable.
+- **`src/utils/constants.ts`** controls detection filtering, layer IDs, API URLs, zoom thresholds, and timing values. Most behavioral changes can be made here without touching feature logic.
+- **`src/components/`** contains React components, each with a typed props interface defined in `types.ts`.
+- **`src/runtime/widget.tsx`** is organized with `// #region` comment blocks for each feature area: Sequence Management, Minimap, Coverage Layers, Turbo Mode, AI Detections, Share and Export, Map Graphics, Utilities, and more.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full local development setup guide.
+
+---
+
 ## Mapillary Explorer Demo Experience Builder App
 https://sukruburakcetin.github.io/mapillary-explorer-demo/
 
@@ -204,3 +248,6 @@ https://www.arcgis.com/home/item.html?id=b4da7dbf1f684510be0918c6b58905c8
 
 ## License
 This project is licensed under the **MIT License**.
+
+### Third-Party Terms
+Use of Mapillary data or services is subject to [Mapillary's Terms of Use](https://www.mapillary.com/terms).
