@@ -1,5 +1,5 @@
 // A lookup table for Mapillary object classification labels
-// Exported as a named constant.
+// Exported as a named constant. Human-readable labels for Mapillary object classification codes.
 
 export const objectNameMap: Record<string, string> = {
     "construction--barrier--temporary": "Temporary Barrier",

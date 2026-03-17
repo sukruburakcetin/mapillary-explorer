@@ -118,7 +118,7 @@ export const glassStyles = {
     container: {
         position: 'absolute',
         top: '2px',
-        zIndex: 10000,
+        zIndex: 10003,
         display: 'flex',
         flexDirection: 'column',
         gap: '6px',
@@ -425,7 +425,7 @@ export const glassStyles = {
         WebkitBackdropFilter: "blur(12px)",
         padding: "3px 4px", 
         borderRadius: "20px",
-        border: "1px solid rgba(255, 255, 255, 0.15)",
+        border: "1px solid rgba(150, 150, 150, 0.3)",
         boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
         zIndex: 10000,
         display: "flex",
@@ -445,10 +445,14 @@ export const glassStyles = {
         padding: "3px 8px",
         borderRadius: "12px",
         cursor: "pointer",
-        background: isActive ? "rgba(255, 255, 255, 0.25)" : "transparent",
-        border: isActive ? "1px solid rgba(255, 255, 255, 0.8)" : "1px solid transparent",
-        boxShadow: isActive ? "0 2px 4px rgba(0,0,0,0.3)" : "none",
-        transition: "all 0.2s ease",
+        background: isActive ? "rgba(255, 255, 255, 0.35)" : "transparent",
+          border: isActive 
+        ? "1px solid rgba(210, 210, 210, 0.20)" 
+        : "1px solid rgba(175,175,175,0.3)",
+        boxShadow: isActive
+        ? "inset 0 2px 4px rgba(0,0,0,0.5)"
+        : "1px 1px 1px 1px",
+        transition: "all 0.15s ease",
         flex: "1 1 0",
         minWidth: "0"
     }),
@@ -500,8 +504,8 @@ export const glassStyles = {
         background: "rgba(20, 20, 30, 0.65)", 
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
-        padding: "2px",
-        marginTop: "2px",
+        paddingBottom: "2px",
+        marginTop: "1px",
         border: "1px solid rgba(255, 255, 255, 0.1)",
         borderRadius : "20px",
         boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
@@ -557,77 +561,101 @@ export const glassStyles = {
         fontSize: '9px',
         color: 'rgba(255,255,255,0.8)',
         fontWeight: 500
+    } as React.CSSProperties,
+
+    // Warning overlay shown when zoom level is insufficient for the active layer.
+    zoomWarningContainer: {
+        position: "absolute",
+        top: "6px",
+        left: "48px",
+        zIndex: 9999,
+        background: "linear-gradient(135deg, rgba(255, 140, 0, 0.9) 0%, rgba(255, 69, 0, 0.4) 100%)",
+        backdropFilter: "blur(14px)",
+        WebkitBackdropFilter: "blur(14px)",
+        border: "1px solid rgba(255, 165, 0, 0.3)",
+        boxShadow: "0 4px 15px rgba(0, 0, 0, 0.3), inset 0 0 10px rgba(255, 165, 0, 0.1)",
+        color: "#fff",
+        padding: "3px 4px",
+        borderRadius: "10px",
+        fontSize: "9px",
+        fontWeight: "600",
+        maxWidth: "90px",
+        fontFamily: '"Poppins", "Montserrat", sans-serif',
+        lineHeight: "1.25",
+        letterSpacing: "0.4px",
+        textShadow: "0px 1px 2px rgba(0,0,0,0.2)",
+        textAlign: "center",
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        animation: "fadeIn 0.3s ease-out",
+        transformOrigin: "left center"
+    } as React.CSSProperties,
+
+    zoomWarningIcon: {
+        filter: "drop-shadow(0 0 4px rgba(255,165,0,0.6))"
+    } as React.CSSProperties,
+
+    // Toast notification overlay for user feedback (copy, download, center map, etc.)
+    toastContainer: {
+        position: "absolute",
+        bottom: "40px",
+        left: "50%",
+        transform: "translateX(-50%)",
+        background: "rgba(20, 20, 30, 0.85)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        border: "1px solid rgba(255,255,255,0.15)",
+        borderRadius: "12px",
+        padding: "8px 16px",
+        color: "#fff",
+        fontSize: "11px",
+        fontWeight: 500,
+        zIndex: 99999,
+        boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+        whiteSpace: "nowrap",
+        animation: "fadeIn 0.2s ease-out"
+    } as React.CSSProperties,
+
+    // Bottom-center badge shown while traffic signs / objects tiles are loading.
+    featuresLoadingBadge: {
+        position: "absolute",
+        bottom: "28px",
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        padding: "6px 12px",
+        background: "rgba(20, 20, 20, 0.55)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        borderRadius: "8px",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+        pointerEvents: "none",
+        whiteSpace: "nowrap",
+    } as React.CSSProperties,
+ 
+    featuresLoadingSpinner: {
+        width: "12px",
+        height: "12px",
+        border: "2px solid rgba(255,255,255,0.25)",
+        borderTopColor: "#ff9500",
+        borderRadius: "50%",
+        animation: "spin 0.8s linear infinite",
+        flexShrink: 0,
+    } as React.CSSProperties,
+ 
+    featuresLoadingText: {
+        color: "rgba(255,255,255,0.85)",
+        fontSize: "11px",
+        fontWeight: 500,
+        letterSpacing: "0.2px",
     } as React.CSSProperties
 };
 
-// --- SECTION: REACT-SELECT THEME ---
-// Heavily customizes the 'react-select' component to match the dark glass UI.
-export const getGlassSelectStyles = (baseColor: string = "#fff") => ({
-    container: (base: any) => ({
-        ...base,
-        width: '150px',
-        fontSize: '10px'
-    }),
-    control: (base: any, state: any) => ({
-        ...base,
-        minHeight: '28px',
-        height: '28px',
-        backgroundColor: "rgba(0, 0, 0, 0.2)", 
-        borderColor: state.isFocused ? baseColor : "rgba(255, 255, 255, 0.15)",
-        borderRadius: "8px",
-        boxShadow: "none",
-        cursor: "pointer",
-        "&:hover": {
-            borderColor: "rgba(255, 255, 255, 0.3)"
-        }
-    }),
-    singleValue: (base: any) => ({
-        ...base,
-        color: "#fff",
-        fontWeight: 500
-    }),
-    input: (base: any) => ({
-        ...base,
-        color: "#fff",
-        margin: 0,
-        padding: 0
-    }),
-    indicatorSeparator: () => ({ display: "none" }),
-    dropdownIndicator: (base: any) => ({
-        ...base,
-        color: "rgba(255,255,255,0.5)",
-        padding: "4px"
-    }),
-    menuPortal: (base: any) => ({
-        ...base,
-        zIndex: 100005
-    }),
-    menu: (base: any) => ({
-        ...base,
-        backgroundColor: "rgba(30, 30, 35, 0.95)",
-        backdropFilter: "blur(10px)",
-        borderRadius: "8px",
-        border: `1px solid ${baseColor}40`,
-        marginTop: "4px",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.5)"
-    }),
-    menuList: (base: any) => ({
-        ...base,
-        maxHeight: '250px',
-        padding: '4px',
-        "::-webkit-scrollbar": { width: "6px" },
-        "::-webkit-scrollbar-thumb": { background: "rgba(255,255,255,0.2)", borderRadius: "3px" }
-    }),
-    option: (base: any, state: any) => ({
-        ...base,
-        backgroundColor: state.isFocused ? `${baseColor}33` : "transparent",
-        color: state.isFocused ? "#fff" : "rgba(255,255,255,0.8)",
-        fontSize: "10px",
-        borderRadius: "4px",
-        cursor: "pointer",
-        padding: "6px 8px"
-    })
-});
+
 
 // --- SECTION: GLOBAL CSS STRING ---
 // Contains CSS animations, responsive container queries, and specific fixes for ArcGIS Experience Builder panels.
@@ -650,8 +678,6 @@ export const mobileOverrideStyles = `
 
     /* Z-INDEX STACKING FIXES */
     .legend-container { display: flex !important; }
-    .react-datepicker-popper { z-index: 100005 !important; }
-    .react-select__menu-portal { z-index: 100005 !important; }
     .glass-scroll-container::-webkit-scrollbar { display: none; }
     .glass-scroll-container { -ms-overflow-style: none; scrollbar-width: none; }
 
@@ -709,7 +735,7 @@ export const mobileOverrideStyles = `
         max-height: calc(100% - 10px) !important;
         overflow-y: auto !important;
         scrollbar-width: none;
-        gap: 3px !important; 
+        gap: 3px !important;
     }
     .glass-control-panel::-webkit-scrollbar { display: none; }
     .glass-control-panel .unified-control-buttons,
@@ -740,8 +766,7 @@ export const mobileOverrideStyles = `
     .glass-image-utility-panel {
         padding: clamp(2px, 1cqmin, 4px) !important;
         gap: clamp(2px, 1cqh, 6px) !important;
-        borderRadius: clamp(6px, 2cqmin, 12px) !important;
-        right: clamp(40px, 10cqw, 60px) !important;
+        right: clamp(40px, 10cqw, 55px) !important;
         bottom: clamp(20px, 5cqh, 27px) !important;
     }
 
@@ -894,8 +919,6 @@ export const mobileOverrideStyles = `
         .widget-mapillary input[type="date"]::-webkit-datetime-edit { display: none !important; }
         .show-panorama-only-filter::after { content: "Panoramas:"; font-size: 9px !important; }
         .show-color-by-date-filter::after { content: "CBD:"; font-size: 9px !important; }
-        .react-datepicker { transform: scale(0.6) !important; }
-        .react-datepicker-popper { height: 230px !important; }
         .info-box { font-size: 8px !important; max-width: 110px !important; }
         .legend-container { display: none !important; }
         .esri-popup__main-container { width: 250px !important; top: 8% !important; max-height:22% !important; }
@@ -906,5 +929,16 @@ export const mobileOverrideStyles = `
         .splash-screen-text { font-size: 10px !important; }
         .minimap-container { top: 50px !important; left: 50% !important; right: auto !important; transform: translateX(-50%) !important; width: 90% !important; max-width: 350px !important; height: 150px !important; }
         .warning-message-container { font-size: 8px !important; }
+        .glass-scroll-container { border-radius: 0px !important; padding: 0px !important; margin-top: 0px !important; gap: 2px !important }
+        .glass-datepicker-calendar { width: 160px !important; padding: 6px 6px 5px !important; }
+        .day-cell { padding: 2px 1px !important; font-size: 8px !important; }
+        .nav-row span { font-size: 9px !important; }
+        .today-btn { font-size: 8px !important; padding: 2px 0 !important; }
+        .turbo-filter-container { gap: 0 !important; padding: 0 !important; border: none !important; }
+    }
+
+    @keyframes spin {
+        0%   { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
     }
 `;

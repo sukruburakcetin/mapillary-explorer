@@ -60,10 +60,45 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
 
   // Handle Creator Input
   onCreatorChange = (evt: React.ChangeEvent<HTMLInputElement>) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      config: this.props.config.set('turboCreator', evt.target.value)
-    });
+      const value = evt.target.value;
+      let config = this.props.config.set('turboCreator', value);
+      config = this.autoSetTurboMode(config);
+      this.props.onSettingChange({ id: this.props.id, config });
+  }
+
+  // Turbo Preset Handlers
+  onTurboDefaultStartDateChange = (evt: React.ChangeEvent<HTMLInputElement>) => {
+      const value = evt.target.value || undefined;
+      let config = this.props.config.set('turboDefaultStartDate', value);
+      config = this.autoSetTurboMode(config);
+      this.props.onSettingChange({ id: this.props.id, config });
+  }
+
+  onTurboDefaultEndDateChange = (evt: React.ChangeEvent<HTMLInputElement>) => {
+      const value = evt.target.value || undefined;
+      let config = this.props.config.set('turboDefaultEndDate', value);
+      config = this.autoSetTurboMode(config);
+      this.props.onSettingChange({ id: this.props.id, config });
+  }
+
+  /**
+    * Cycles the Is Pano preset through three states via a <Select>:
+    *   ''      → no filter (undefined)
+    *   'true'  → panoramas only
+    *   'false' → non-panoramas only
+  */
+  onTurboDefaultIsPanoChange = (evt: React.ChangeEvent<HTMLSelectElement>) => {
+      const raw = evt.target.value;
+      const value = raw === 'true' ? true : raw === 'false' ? false : null;
+      let config = this.props.config.set('turboDefaultIsPano', value);
+      config = this.autoSetTurboMode(config);
+      this.props.onSettingChange({ id: this.props.id, config });
+  }
+
+  onToggleTurboDefaultColorByDate = (evt: React.ChangeEvent<HTMLInputElement>) => {
+      let config = this.props.config.set('turboDefaultColorByDate', evt.target.checked);
+      config = this.autoSetTurboMode(config);
+      this.props.onSettingChange({ id: this.props.id, config });
   }
 
   onToggleHideLegend = (evt: React.ChangeEvent<HTMLInputElement>) => {
@@ -99,6 +134,20 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
       id: this.props.id,
       config: this.props.config.set('hideShareButton', evt.target.checked)
     });
+  }
+
+  onToggleHideSyncHeadingButton = (evt: React.ChangeEvent<HTMLInputElement>) => {
+      this.props.onSettingChange({
+          id: this.props.id,
+          config: this.props.config.set('hideSyncHeadingButton', evt.target.checked)
+      });
+  }
+
+  onToggleHideCenterMapButton = (evt: React.ChangeEvent<HTMLInputElement>) => {
+      this.props.onSettingChange({
+          id: this.props.id,
+          config: this.props.config.set('hideCenterMapButton', evt.target.checked)
+      });
   }
 
   // Handler for Render Mode
@@ -144,6 +193,25 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
       id: this.props.id,
       config: this.props.config.set('debugMode', evt.target.checked)
     });
+  }
+
+  // Helper: converts stored boolean | null | undefined to the <Select> string value
+  private isPanoSelectValue(): string {
+    const v = this.props.config.turboDefaultIsPano;
+    if (v === true)  return 'true';
+    if (v === false) return 'false';
+    return '';
+  }
+  
+  private autoSetTurboMode(config: any): any {
+    const hasAnyPreset = !!(
+        config.turboCreator ||
+        config.turboDefaultStartDate ||
+        config.turboDefaultEndDate ||
+        (config.turboDefaultIsPano !== null && config.turboDefaultIsPano !== undefined) ||
+        config.turboDefaultColorByDate
+    );
+    return config.set('turboModeOnly', hasAnyPreset);
   }
 
   render() {
@@ -254,6 +322,144 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
               </div>
             </SettingRow>
         </SettingSection>
+
+        {/*Turbo Coverage Presets */}
+        <SettingSection title="Turbo Coverage Presets">
+          <SettingRow>
+            <span className="text" style={{ fontSize: '12px', fontStyle: 'italic', opacity: '0.4' }}>
+              These values pre-populate the Turbo Mode filter panel when the widget loads.
+              Users can still override them at runtime via the filter button (unless it is hidden).
+            </span>
+          </SettingRow>
+
+          {/* Start Date */}
+          <SettingRow flow="wrap">
+            <div style={{ width: '100%' }}>
+              <div style={{ marginBottom: '5px', fontWeight: 500 }}>Default Start Date</div>
+              <input
+                type="date"
+                value={config.turboDefaultStartDate || ''}
+                onChange={this.onTurboDefaultStartDateChange}
+                style={{
+                  width: '100%',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border-color, #ccc)',
+                  background: 'var(--input-bg, #fff)',
+                  color: 'var(--input-color, #333)',
+                  fontSize: '13px',
+                  boxSizing: 'border-box'
+                }}
+              />
+              {config.turboDefaultStartDate && (
+                <button
+                  onClick={() => {
+                      let config = this.props.config.set('turboDefaultStartDate', undefined);
+                      config = this.autoSetTurboMode(config);
+                      this.props.onSettingChange({ id: this.props.id, config });
+                  }}
+                  style={{
+                    marginTop: '4px',
+                    fontSize: '11px',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--danger-color, #c00)',
+                    cursor: 'pointer',
+                    padding: '0'
+                  }}
+                >
+                  ✕ Clear start date
+                </button>
+              )}
+            </div>
+          </SettingRow>
+
+          {/* End Date */}
+          <SettingRow flow="wrap">
+            <div style={{ width: '100%' }}>
+              <div style={{ marginBottom: '5px', fontWeight: 500 }}>Default End Date</div>
+              <input
+                type="date"
+                value={config.turboDefaultEndDate || ''}
+                onChange={this.onTurboDefaultEndDateChange}
+                style={{
+                  width: '100%',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  border: '1px solid var(--border-color, #ccc)',
+                  background: 'var(--input-bg, #fff)',
+                  color: 'var(--input-color, #333)',
+                  fontSize: '13px',
+                  boxSizing: 'border-box'
+                }}
+              />
+              {config.turboDefaultEndDate && (
+                <button
+                  onClick={() => {
+                      let config = this.props.config.set('turboDefaultEndDate', undefined);
+                      config = this.autoSetTurboMode(config);
+                      this.props.onSettingChange({ id: this.props.id, config });
+                  }}
+                  style={{
+                    marginTop: '4px',
+                    fontSize: '11px',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--danger-color, #c00)',
+                    cursor: 'pointer',
+                    padding: '0'
+                  }}
+                >
+                  ✕ Clear end date
+                </button>
+              )}
+            </div>
+          </SettingRow>
+
+          {/* Date range validation hint */}
+          {config.turboDefaultStartDate && config.turboDefaultEndDate &&
+            config.turboDefaultStartDate > config.turboDefaultEndDate && (
+            <SettingRow>
+              <span style={{ fontSize: '11px', color: 'var(--danger-color, #c00)', fontWeight: 500 }}>
+                ⚠ Start date is after end date - no images will match this range.
+              </span>
+            </SettingRow>
+          )}
+
+          {/* Is Pano Filter */}
+          <SettingRow flow="wrap">
+            <div style={{ width: '100%' }}>
+              <div style={{ marginBottom: '5px', fontWeight: 500 }}>Default Panorama Filter</div>
+              <Select
+                size="sm"
+                value={this.isPanoSelectValue()}
+                onChange={this.onTurboDefaultIsPanoChange}
+                style={{ width: '100%' }}
+              >
+                <Option value="">All images (no filter)</Option>
+                <Option value="true">Panoramas only</Option>
+                <Option value="false">Non-panoramas only</Option>
+              </Select>
+              <div style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '4px', opacity: '0.4' }}>
+                Restricts Turbo coverage to panoramic or flat images only.
+              </div>
+            </div>
+          </SettingRow>
+
+          {/* Color by Date */}
+          <SettingRow label="Default Color by Capture Year">
+            <Switch
+              checked={config.turboDefaultColorByDate === true}
+              onChange={this.onToggleTurboDefaultColorByDate}
+            />
+          </SettingRow>
+          <SettingRow>
+            <span className="text" style={{ fontSize: '11px', fontStyle: 'italic', opacity: '0.4' }}>
+              When enabled, Turbo coverage points are coloured by their capture year on first load.
+              The legend in the info box will reflect the year breakdown.
+            </span>
+          </SettingRow>
+        </SettingSection>
         <SettingSection title="Appearance Settings">    
           <SettingRow>
             <span className="text" style={{ fontSize: '12px', marginTop: '5px', opacity: '0.3', fontStyle:'italic' }}>
@@ -302,6 +508,25 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
               checked={config.hideShareButton === true} 
               onChange={this.onToggleHideShareButton} 
             />
+          </SettingRow>
+          <SettingRow label="Hide Lock Map Rotation Button (3D)">
+              <Switch
+                  checked={config.hideSyncHeadingButton === true}
+                  onChange={evt => this.props.onSettingChange({
+                      id: this.props.id,
+                      config: this.props.config.set('hideSyncHeadingButton', evt.target.checked)
+                  })}
+              />
+          </SettingRow>
+
+          <SettingRow label="Hide Center Map Button">
+              <Switch
+                  checked={config.hideCenterMapButton === true}
+                  onChange={evt => this.props.onSettingChange({
+                      id: this.props.id,
+                      config: this.props.config.set('hideCenterMapButton', evt.target.checked)
+                  })}
+              />
           </SettingRow>
         </SettingSection>
 
