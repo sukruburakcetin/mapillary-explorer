@@ -134,6 +134,11 @@ export interface Config {
   hideCenterMapButton?: boolean;
 
   /**
+    * If true, the Street Coverage Analysis button inside the InfoBox is hidden.
+  */
+  hideCoverageAnalysis?: boolean;
+
+  /**
     * Controls the visibility/availability of the Traffic Signs button and functionality.
     * Accessed in widget via: this.props.config.enableTrafficSigns
   */

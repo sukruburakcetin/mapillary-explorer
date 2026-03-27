@@ -228,3 +228,130 @@ export const DETECTION_HIDDEN_CATEGORIES: ReadonlyArray<string> = [
   'wire',
   'void',
 ];
+
+
+// Street Coverage Analysis
+ 
+/**
+ * Maximum distance in meters between a Mapillary coverage point and the
+ * MIDPOINT of an OSM road segment to consider that segment as "covered".
+ 
+ * Using the midpoint (not nearest-point-on-segment) prevents intersection
+ * corner points from falsely covering two perpendicular segments at once —
+ * a corner point is near the endpoint of both crossing segments but almost
+ * never near the midpoint of either.
+ 
+ * 8m is tight enough to reject parallel-street false positives in a dense
+ * urban grid (NYC blocks ~80m wide) while still catching well-photographed roads.
+ */
+export const COVERAGE_SNAP_THRESHOLD_METERS = 8;
+ 
+/**
+  * Minimum number of coverage points that must fall within the threshold of a
+  * segment's probe point before it is counted as "covered".
+  * Requiring 2+ points eliminates stray single points at intersections.
+*/
+export const COVERAGE_MIN_POINTS_PER_SEGMENT = 2;
+ 
+/**
+  * Inset margin in metres applied to the analysis bounding box.
+  * WHY THIS EXISTS — bbox edge truncation:
+  * Turbo coverage points are loaded for the current map extent. Any sequence
+  * that crosses the bbox boundary is truncated at that edge. A road segment
+  * sitting near the edge of the view therefore has an INCOMPLETE set of
+  * coverage points around it — the sequence continues beyond the loaded area
+  * but those points were never fetched. This causes the same segment to appear
+  * covered or uncovered depending on how close to the edge it sits
+*/
+export const COVERAGE_ANALYSIS_INSET_METERS = 5;
+ 
+
+/**
+  * Overpass QL query template for fetching OSM road segments within a bbox.
+  * Returns ways with geometry AND tags so the highway type can be used
+  * client-side for per-type snap threshold selection.
+*/
+export const OVERPASS_ROAD_QUERY = (
+  south: number,
+  west: number,
+  north: number,
+  east: number
+) => `
+[out:json][timeout:25];
+(
+  way["highway"](${south},${west},${north},${east});
+  relation["highway"](${south},${west},${north},${east});
+);
+out body geom tags;
+>;
+out skel qt;
+`.trim();
+ 
+/**
+  * Per highway-type snap threshold in metres.
+
+  * Why different thresholds per type?
+  * OSM models divided roads (primary, secondary, motorway, trunk) as TWO
+  * separate parallel way geometries — one per direction — offset from the
+  * physical road centre by the lane/median width (typically 5-12m).
+  * A Mapillary camera driving in one lane is therefore 8-15m from the OSM
+  * centreline of the opposing-direction way.
+
+  * Narrow residential/service roads are single-way with centrelines close
+  * to where cars drive, so a tight 8m threshold is correct and avoids
+  * cross-street false positives in dense grids.
+
+  * Arterials (primary, secondary, trunk, motorway) need a wider threshold
+  * to bridge the dual-carriageway offset without re-introducing the
+  * cross-street false positives that plagued the original 15m approach.
+  * 18m covers a 10m median + 8m GPS drift without reaching the next block.
+*/
+export const HIGHWAY_THRESHOLDS: Record<string, number> = {
+  motorway:      20,
+  trunk:         18,
+  primary:       18,
+  secondary:     16,
+  tertiary:      12,
+  residential:    8,
+  unclassified:   8,
+  living_street:  8,
+  service:        8,
+  path:           8,
+  footway:        8,
+  cycleway:       8,
+};
+
+/**
+  * Per highway-type snap threshold in metres.
+
+  * Why different thresholds per type?
+  * OSM models divided roads (primary, secondary, motorway, trunk) as TWO
+  * separate parallel way geometries — one per direction — offset from the
+  * physical road centre by the lane/median width (typically 5-12m).
+  * A Mapillary camera driving in one lane is therefore 8-15m from the OSM
+  * centreline of the opposing-direction way.
+
+  * Narrow residential/service roads are single-way with centrelines close
+  * to where cars drive, so a tight 8m threshold is correct and avoids
+  * cross-street false positives in dense grids.
+
+  * Arterials (primary, secondary, trunk, motorway) need a wider threshold
+  * to bridge the dual-carriageway offset without re-introducing the
+  * cross-street false positives that plagued the original 15m approach.
+  * 18m covers a 10m median + 8m GPS drift without reaching the next block.
+*/
+
+/**
+  * Coverage freshness thresholds (milliseconds).
+  * Segments are classified into three tiers based on the most recent
+  * Mapillary image that covers them:
+  *   FRESH  — captured within the last 2 years  → green
+  *   AGING  — captured 2–4 years ago            → amber
+  *   STALE  — captured more than 4 years ago    → orange-red
+  *   NONE   — no coverage at all                → red (dashed)
+*/
+export const COVERAGE_FRESHNESS = {
+    FRESH_MS:  2 * 365.25 * 24 * 60 * 60 * 1000,  // 2 years
+    AGING_MS:  4 * 365.25 * 24 * 60 * 60 * 1000,  // 4 years
+} as const;
+ 

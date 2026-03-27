@@ -30,6 +30,7 @@ export const ControlBar: React.FC<ControlBarProps> = ({
     showTrafficSignsFilterBox,
     objectsActive,
     showObjectsFilterBox,
+    jimuMapView,
     onToggleFullscreen,
     onToggleTiles,
     onToggleTurboMode,
@@ -37,8 +38,10 @@ export const ControlBar: React.FC<ControlBarProps> = ({
     onToggleTrafficSigns,
     onToggleTrafficSignsFilter,
     onToggleObjects,
-    onToggleObjectsFilter,
+    onToggleObjectsFilter
 }) => {
+    const zoom = jimuMapView?.view?.zoom ?? 0;
+    const coverageReady = turboModeActive && zoom >= 16;
     // Individual icon buttons (fullscreen + coverage toggle)
     const singleButtons = [
         {

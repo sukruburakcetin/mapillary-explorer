@@ -20,6 +20,7 @@
   "hideShareButton": false,
   "hideSyncHeadingButton": false,
   "hideCenterMapButton": false,
+  "hideCoverageAnalysis": false,
   "enableTrafficSigns": true,
   "enableMapillaryObjects": true,
   "renderMode": 1,

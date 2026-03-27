@@ -221,3 +221,318 @@ export function pickSequenceColor(index: number): number[] {
   }
   return color;
 }
+
+// Street Coverage Analysis
+ 
+/**
+  * Represents a single OSM road segment as a pair of [lon, lat] endpoints.
+*/
+export interface RoadSegment {
+  start:        [number, number];
+  end:          [number, number];
+  lengthMeters: number;
+  /** OSM highway tag value e.g. 'residential', 'primary'. Used for per-type threshold. */
+  highwayType:  string;
+  /**
+    * True when the OSM way has oneway=yes/-1/true.
+    * Oneway ways are always ONE half of a dual-carriageway pair ; the OSM
+    * centreline is offset from the physical road centre by the lane/median
+    * width. A boosted threshold is applied so coverage points driving in
+    * either lane still match the opposing-direction way.
+  */
+  isOneway:     boolean;
+}
+ 
+/**
+  * Parses raw Overpass API response into a flat array of RoadSegments.
+  * Each OSM way is split into consecutive node pairs.
+*/
+export function parseOverpassRoads(overpassJson: any): RoadSegment[] {
+  const R = 6_371_000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+ 
+  const haversine = (a: [number, number], b: [number, number]) => {
+    const dLat = toRad(b[1] - a[1]);
+    const dLon = toRad(b[0] - a[0]);
+    const sin2 =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(sin2), Math.sqrt(1 - sin2));
+  };
+ 
+  const segments: RoadSegment[] = [];
+  for (const element of overpassJson?.elements ?? []) {
+    if (element.type !== 'way' || !element.geometry) continue;
+    const highwayType: string = element.tags?.highway ?? 'residential';
+    const onewayTag = element.tags?.oneway;
+    const isOneway  = onewayTag === 'yes' || onewayTag === '-1' || onewayTag === 'true' || onewayTag === '1';
+    const nodes: [number, number][] = element.geometry.map((n: any) => [n.lon, n.lat]);
+    for (let i = 0; i < nodes.length - 1; i++) {
+      segments.push({
+        start:        nodes[i],
+        end:          nodes[i + 1],
+        lengthMeters: haversine(nodes[i], nodes[i + 1]),
+        highwayType,
+        isOneway,
+      });
+    }
+  }
+  return segments;
+}
+ 
+/**
+  * Returns the distance in metres between two [lon, lat] points.
+  * Uses planar approximation ; accurate enough at street scale.
+*/
+function pointDistanceMeters(
+  p: [number, number],
+  q: [number, number]
+): number {
+  const R = 6_371_000;
+  const mPerDegLat = (Math.PI / 180) * R;
+  const mPerDegLon = mPerDegLat * Math.cos((p[1] + q[1]) / 2 * Math.PI / 180);
+  const dx = (p[0] - q[0]) * mPerDegLon;
+  const dy = (p[1] - q[1]) * mPerDegLat;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+ 
+/**
+  * Returns an interpolated point along segment AB at fraction t (0=A, 1=B).
+*/
+function interpolate(
+  a: [number, number],
+  b: [number, number],
+  t: number
+): [number, number] {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+}
+ 
+ 
+/**
+  * Computes an inset bounding box in WGS84 degrees by shrinking each edge
+  * inward by `insetMeters`. Used to exclude segments near the bbox edge whose
+  * coverage point neighbourhood may be incomplete due to tile truncation.
+
+  * @param bbox        [west, south, east, north] in WGS84 degrees
+  * @param insetMeters Margin to strip from each edge
+  * @returns           [west, south, east, north] of the inner bbox
+*/
+export function insetBbox(
+  bbox:        [number, number, number, number],
+  insetMeters: number
+): [number, number, number, number] {
+  const [west, south, east, north] = bbox;
+  const R          = 6_371_000;
+  const midLat     = (south + north) / 2;
+  const degPerMLat = 180 / (Math.PI * R);
+  const degPerMLon = degPerMLat / Math.cos(midLat * Math.PI / 180);
+ 
+  const dLat = insetMeters * degPerMLat;
+  const dLon = insetMeters * degPerMLon;
+ 
+  return [west + dLon, south + dLat, east - dLon, north - dLat];
+}
+ 
+/**
+  * Returns true if the midpoint of segment [start, end] falls inside bbox.
+  * Used to exclude edge segments from analysis.
+*/
+export function segmentMidpointInBbox(
+  seg:  { start: [number, number]; end: [number, number] },
+  bbox: [number, number, number, number]
+): boolean {
+  const midLon = (seg.start[0] + seg.end[0]) / 2;
+  const midLat = (seg.start[1] + seg.end[1]) / 2;
+  const [west, south, east, north] = bbox;
+  return midLon >= west && midLon <= east && midLat >= south && midLat <= north;
+}
+ 
+/**
+  * Determines which road segments are covered by Mapillary coverage points
+  * using a hybrid multi-probe strategy that eliminates both intersection
+  * false-positives AND short-segment false-negatives.
+  
+  * THE PROBLEM WITH PURE MIDPOINT MATCHING:
+  *  OSM splits roads at every node ; bus stops, fire hydrant tags, kerb lines.
+  *  A photographed block of 60m may have 8 segments of 5-10m each. Midpoint
+  *  matching on a 5m segment has its midpoint only 2.5m from each end, so
+  *  coverage points clustered at one end (common at intersections) still miss
+  *  the midpoint and the segment is falsely marked red.
+  *
+  * THE HYBRID SOLUTION ; three probe points + length-aware rules:
+
+  *  SHORT segments (< SHORT_SEGMENT_M, typically 20m):
+  *    → Check the MIDPOINT only, require just 1 point.
+  *    → These tiny segments are almost entirely intersection geometry.
+  *      One point anywhere near the middle is sufficient evidence of coverage.
+  *      Endpoint-only hits are still rejected because the midpoint is far
+  *      from the corner even on a 10m segment.
+
+  *  LONG segments (≥ SHORT_SEGMENT_M):
+  *    → Check THREE probes at 25%, 50%, 75% along the segment.
+  *    → The segment is covered if at least ONE probe has ≥ minPoints
+  *      coverage points within the threshold.
+  *    → Three probes means a well-photographed long street is always caught
+  *      even if coverage is uneven. The 25%/75% probes are far enough from
+  *      the endpoints that pure intersection-corner points cannot reach them,
+  *      preserving the false-positive rejection that motivated midpoint matching.
+
+  * @param points          Array of [lon, lat] Mapillary coverage points
+  * @param segments        Road segments from parseOverpassRoads()
+  * @param thresholdMeters Max distance from probe point (use COVERAGE_SNAP_THRESHOLD_METERS)
+  * @param minPoints       Min coverage points required per probe (use COVERAGE_MIN_POINTS_PER_SEGMENT)
+  * @returns               Covered and total segment counts and lengths in km
+*/
+export function snapPointsToSegments(
+  points:            [number, number][],
+  segments:          RoadSegment[],
+  thresholdMeters:   number,
+  minPoints:         number = 2,
+  highwayThresholds: Record<string, number> = {},
+  /** Optional captured_at timestamps (ms since epoch) parallel to `points` array */
+  pointTimestamps:   (number | null)[] = []
+): {
+  coveredCount:     number;
+  totalCount:       number;
+  coveredKm:        number;
+  remainingKm:      number;
+  percentCovered:   number;
+  /** Most-recent captured_at (ms) per segment, null if uncovered */
+  segmentDates:     (number | null)[];
+  /** Per-segment tier: 'fresh' | 'aging' | 'stale' | 'none' */
+  segmentTiers:     Array<'fresh' | 'aging' | 'stale' | 'none'>;
+  freshCount:   number;  freshKm:   number;
+  agingCount:   number;  agingKm:   number;
+  staleCount:   number;  staleKm:   number;
+  noneCount:    number;  noneKm:    number;
+} {
+  // Freshness thresholds in ms (2yr and 4yr)
+  const FRESH_MS = 2 * 365.25 * 24 * 60 * 60 * 1000;
+  const AGING_MS = 4 * 365.25 * 24 * 60 * 60 * 1000;
+  const now      = Date.now();
+ 
+  if (!segments.length) {
+    return {
+      coveredCount: 0, totalCount: 0, coveredKm: 0, remainingKm: 0, percentCovered: 0,
+      segmentDates: [], segmentTiers: [],
+      freshCount: 0, freshKm: 0, agingCount: 0, agingKm: 0,
+      staleCount: 0, staleKm: 0, noneCount: 0, noneKm: 0,
+    };
+  }
+ 
+  // Segments shorter than this use midpoint-only with 1 point minimum
+  const SHORT_SEGMENT_M = 20;
+ 
+  let coveredCount = 0;
+  let coveredKm    = 0;
+  let remainingKm  = 0;
+  let freshCount   = 0, freshKm   = 0;
+  let agingCount   = 0, agingKm   = 0;
+  let staleCount   = 0, staleKm   = 0;
+  let noneCount    = 0, noneKm    = 0;
+ 
+  const segmentDates: (number | null)[]                      = [];
+  const segmentTiers: Array<'fresh'|'aging'|'stale'|'none'>  = [];
+ 
+  for (const seg of segments) {
+    const baseT = highwayThresholds[seg.highwayType] ?? thresholdMeters;
+    const T     = seg.isOneway ? Math.round(baseT * 1.25) : baseT;
+    let covered        = false;
+    let mostRecentDate: number | null = null;
+    // Collect timestamps of ALL matching points for majority-vote tier classification.
+    // Using a Set of point indices avoids double-counting the same point across probes.
+    const matchedIndices = new Set<number>();
+ 
+    if (seg.lengthMeters < SHORT_SEGMENT_M) {
+      const mid = interpolate(seg.start, seg.end, 0.5);
+      for (let i = 0; i < points.length; i++) {
+        if (pointDistanceMeters(points[i], mid) <= T) {
+          covered = true;
+          matchedIndices.add(i);
+          const ts = pointTimestamps[i] ?? null;
+          if (ts !== null && (mostRecentDate === null || ts > mostRecentDate)) mostRecentDate = ts;
+        }
+      }
+    } else {
+      const probes = [
+        interpolate(seg.start, seg.end, 0.25),
+        interpolate(seg.start, seg.end, 0.50),
+        interpolate(seg.start, seg.end, 0.75),
+      ];
+      for (const probe of probes) {
+        let nearCount = 0;
+        for (let i = 0; i < points.length; i++) {
+          if (pointDistanceMeters(points[i], probe) <= T) {
+            nearCount++;
+            matchedIndices.add(i);
+            const ts = pointTimestamps[i] ?? null;
+            if (ts !== null && (mostRecentDate === null || ts > mostRecentDate)) mostRecentDate = ts;
+            if (nearCount >= minPoints) covered = true;
+          }
+        }
+      }
+    }
+ 
+    // Build flat timestamp array from deduplicated matched indices for tier voting
+    const tierMatchTimestamps = Array.from(matchedIndices).map(i => pointTimestamps[i] ?? null);
+ 
+    segmentDates.push(covered ? mostRecentDate : null);
+ 
+    const km = seg.lengthMeters / 1000;
+    if (!covered) {
+      noneCount++; noneKm += km; remainingKm += km;
+      segmentTiers.push('none');
+    } else {
+      coveredCount++; coveredKm += km;
+ 
+      // TIER CLASSIFICATION ; Option 5: majority vote among all matching points.
+      // "Most recent wins" causes a single stray fresh point to override hundreds
+      // of stale points, making a poorly-documented street look green.
+      // Instead we count how many matching points fall into each tier and let the
+      // plurality decide. The covered/uncovered decision above is still generous
+      // (any match = covered), only the color tier uses the majority.
+      const tierVotes = { fresh: 0, aging: 0, stale: 0 };
+      for (let i = 0; i < tierMatchTimestamps.length; i++) {
+        const ts = tierMatchTimestamps[i];
+        const age = ts !== null ? now - ts : Infinity;
+        if (age <= FRESH_MS)       tierVotes.fresh++;
+        else if (age <= AGING_MS)  tierVotes.aging++;
+        else                       tierVotes.stale++;
+      }
+      // Pick tier with the most votes; ties broken in favour of worse tier
+      // (stale > aging > fresh) so we don't over-report coverage quality.
+      let dominantTier: 'fresh' | 'aging' | 'stale';
+      if (tierVotes.stale >= tierVotes.aging && tierVotes.stale >= tierVotes.fresh) {
+        dominantTier = 'stale';
+      } else if (tierVotes.aging >= tierVotes.fresh) {
+        dominantTier = 'aging';
+      } else {
+        dominantTier = 'fresh';
+      }
+ 
+      if (dominantTier === 'fresh') {
+        freshCount++; freshKm += km; segmentTiers.push('fresh');
+      } else if (dominantTier === 'aging') {
+        agingCount++; agingKm += km; segmentTiers.push('aging');
+      } else {
+        staleCount++; staleKm += km; segmentTiers.push('stale');
+      }
+    }
+  }
+ 
+  const totalCount     = segments.length;
+  const percentCovered = totalCount > 0 ? Math.round((coveredCount / totalCount) * 100) : 0;
+ 
+  return {
+    coveredCount, totalCount,
+    coveredKm:   Math.round(coveredKm   * 100) / 100,
+    remainingKm: Math.round(remainingKm * 100) / 100,
+    percentCovered,
+    segmentDates,
+    segmentTiers,
+    freshCount, freshKm:  Math.round(freshKm  * 100) / 100,
+    agingCount,  agingKm: Math.round(agingKm  * 100) / 100,
+    staleCount,  staleKm: Math.round(staleKm  * 100) / 100,
+    noneCount,   noneKm:  Math.round(noneKm   * 100) / 100,
+  };
+}

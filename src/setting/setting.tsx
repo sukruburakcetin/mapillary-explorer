@@ -150,6 +150,13 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
       });
   }
 
+  onToggleHideCoverageAnalysis = (evt: React.ChangeEvent<HTMLInputElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('hideCoverageAnalysis', evt.target.checked)
+    });
+  }
+ 
   // Handler for Render Mode
   onRenderModeChange = (evt: React.ChangeEvent<HTMLSelectElement>) => {
     this.props.onSettingChange({
@@ -488,6 +495,12 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                   onChange={this.onToggleHideTurboFilter} 
                 />
           </SettingRow>
+
+          <SettingRow label="Hide Coverage Analysis">
+            <Switch checked={config.hideCoverageAnalysis === true} 
+            onChange={this.onToggleHideCoverageAnalysis} />
+          </SettingRow>
+ 
 
           <SettingRow label="Hide Image Download">
             <Switch 

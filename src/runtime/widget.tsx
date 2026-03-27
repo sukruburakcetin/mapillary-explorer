@@ -9,7 +9,7 @@ import { VectorTile } from '@mapbox/vector-tile';
 import { objectNameMap } from "../utils/mapillaryObjectNameMap";
 import * as Icons from '../components/Icons'
 import { glassStyles, 
-    mobileOverrideStyles,
+    overrideStyles,
     fullscreenOverlayStyle, fullscreenExitButtonStyle, 
     fullscreenMinimapToggleButtonStyle, getMinimapContainerStyle 
 } from "../utils/styles";
@@ -18,13 +18,17 @@ import {
     TILE_URLS, GRAPH_API, SPRITE_URLS, GEOCODE_URL,
     ZOOM, BBOX, LIMITS, TIME_TRAVEL as TIME_TRAVEL_THRESHOLDS,
     CACHE_KEYS, SHARE_PARAMS, TIMING, DEFAULT_FILTER_LABELS, 
-    DETECTION_HIDDEN_RAW, DETECTION_HIDDEN_CATEGORIES
+    DETECTION_HIDDEN_RAW, DETECTION_HIDDEN_CATEGORIES,
+    COVERAGE_SNAP_THRESHOLD_METERS, COVERAGE_MIN_POINTS_PER_SEGMENT,
+    COVERAGE_ANALYSIS_INSET_METERS,
+    OVERPASS_ROAD_QUERY, HIGHWAY_THRESHOLDS
 } from "../utils/constants";
 import {
     distanceMeters, calculateBearing,
     bboxToTileRange,
     createConeGeometry, debounce as debounceUtil,
-    formatTrafficSignName
+    formatTrafficSignName, parseOverpassRoads, snapPointsToSegments,
+    insetBbox, segmentMidpointInBbox
 } from "../utils/geoUtils";
 import { buildAllFilters } from "../utils/filterBuilder";
 import { decodeAndNormalizeGeometry, getDetectionColor } from "../utils/mapillaryDetections";
@@ -70,6 +74,9 @@ interface State {
     turboModeActive?: boolean;
     turboLoading?: boolean;
     featuresLoading?: boolean;  // traffic signs / objects tile fetch in progress
+    coverageAnalysisLoading?: boolean;
+    coverageResult?: import('../components/types').CoverageResult | null;
+    coverageSegmentsVisible?: boolean;
     turboFilterStartDate?: string; // ISO yyyy-mm-dd
     turboFilterEndDate?: string;   // ISO yyyy-mm-dd
     turboFilterIsPano?: boolean; // true = only panoramas, false = only non-panos, undefined/empty = no filter
@@ -161,6 +168,11 @@ export default class Widget extends React.PureComponent<
     private mapillaryTrafficSignsFeatureLayer: __esri.FeatureLayer | null = null;
     private mapillaryObjectsFeatureLayer: __esri.FeatureLayer | null = null;
     private turboCoverageLayer: __esri.FeatureLayer | null = null;
+    private _coverageSegmentsLayer: __esri.GraphicsLayer | null = null;
+    private _coverageZoneGraphic: __esri.Graphic | null = null;
+    private _coverageSegments: import("../utils/geoUtils").RoadSegment[] = [];
+    private _coverageCoveredFlags: boolean[] = [];
+    private _coverageSegmentTiers: import("../components/types").SegmentTier[] = [];
     private turboCoverageLayerView: __esri.LayerView | null = null;
     
     // UI elements
@@ -223,6 +235,9 @@ export default class Widget extends React.PureComponent<
         objectsActive: false,
         turboLoading: false,
         featuresLoading: false,
+        coverageAnalysisLoading: false,
+        coverageResult: null,
+        coverageSegmentsVisible: false,
         turboFilterUsername: "",
         turboFilterStartDate: "",
         turboFilterEndDate: "",
@@ -3593,7 +3608,7 @@ export default class Widget extends React.PureComponent<
         const tiles = bboxToTileRange(bbox, ZOOM.TILE_FETCH);
 
         // Fetch all tiles in parallel instead of sequentially.
-        // At zoom 16 a typical viewport covers 4-9 tiles — fetching them
+        // At zoom 16 a typical viewport covers 4-9 tiles ; fetching them
         // concurrently cuts tile-fetch time by ~4-9x.
         const tileResults = await Promise.all(
             tiles.map(async ([x, y, z]) => {
@@ -3643,7 +3658,7 @@ export default class Widget extends React.PureComponent<
         if (cfg.postFilter) features = cfg.postFilter(features);
 
         // Fetch sprite JSON once and reuse for dropdown icons,
-        // filter resolution, AND renderer icon loading — was fetched 2-3 times.
+        // filter resolution, AND renderer icon loading ; was fetched 2-3 times.
         let spriteData: Record<string, any> = {};
         let spriteImg: HTMLImageElement | null = null;
         try {
@@ -4604,6 +4619,288 @@ export default class Widget extends React.PureComponent<
             });
         }
     }
+
+     // #region STREET COVERAGE ANALYSIS
+
+    /**
+        * Runs street coverage analysis for the current map view.
+        * Requires Turbo Mode to be active and zoom >= 16 so that
+        * turboCoverageLayer already holds decoded coverage points.
+        * Flow:
+        *  1. Fetch OSM road segments for current bbox via Overpass API
+        *  2. Query turbo coverage layer for point geometries
+        *  3. Snap points to segments within COVERAGE_SNAP_THRESHOLD_METERS
+        *  4. Store result in state ; InfoBox renders the summary
+    */
+    private runCoverageAnalysis = async () => {
+        const { jimuMapView } = this.state;
+        if (!jimuMapView || !this.turboCoverageLayer) return;
+
+        this.setState({ coverageAnalysisLoading: true, coverageResult: null });
+        // Yield to render cycle so the spinner paints before heavy work begins
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        try {
+            // 1. Get current bbox in WGS84
+            const extent = jimuMapView.view.extent;
+            const geo = webMercatorUtils.webMercatorToGeographic(extent) as __esri.Extent;
+            const { xmin: west, ymin: south, xmax: east, ymax: north } = geo;
+
+            // 2. Fetch OSM road network for this bbox.
+            // One automatic retry after 3s if the server returns 504 or 429.
+            // Hard stop after the retry ; no loop risk.
+            const query = OVERPASS_ROAD_QUERY(south, west, north, east);
+            const fetchOverpass = () => fetch("https://overpass-api.de/api/interpreter", {
+                method: "POST",
+                body: query
+            });
+
+            let resp = await fetchOverpass();
+            if (!resp.ok && (resp.status === 504 || resp.status === 429)) {
+                const reason = resp.status === 429 ? "rate limit" : "timeout";
+                this.showToast(`Overpass API ${reason} ; retrying in 3s…`, 3000);
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                resp = await fetchOverpass(); // exactly one retry, no further loop
+            }
+            if (!resp.ok) {
+                if (resp.status === 504) throw new Error("Road network server is busy (504). Please try again in a moment.");
+                if (resp.status === 429) throw new Error("Too many requests to road network server (429). Please wait a minute and try again.");
+                throw new Error(`Overpass API error: ${resp.status}`);
+            }
+            const osmData = await resp.json();
+            const segments = parseOverpassRoads(osmData);
+
+            if (!segments.length) {
+                this.showToast("No road network found in this area.");
+                return;
+            }
+
+            // Filter segments to inner bbox only.
+            // Turbo coverage points are truncated at the view extent boundary ;
+            // sequences that cross the edge are cut off, leaving edge segments
+            // with an incomplete point neighbourhood. Restricting analysis to
+            // segment midpoints that fall within an inset inner bbox ensures
+            // every analysed segment has a full surrounding of coverage points
+            // and results are stable regardless of pan position.
+            const innerBbox = insetBbox(
+                [west, south, east, north],
+                COVERAGE_ANALYSIS_INSET_METERS
+            );
+            const innerSegments = segments.filter(seg => segmentMidpointInBbox(seg, innerBbox));
+
+            if (!innerSegments.length) {
+                this.showToast("Analysis area too small after edge filtering. Zoom out slightly.");
+                return;
+            }
+
+            this.log(`Coverage analysis: ${segments.length} total segments → ${innerSegments.length} inner segments (${segments.length - innerSegments.length} edge segments excluded)`);
+
+            // Drawing dashed rectangle on the map showing the analysed inner area.
+            // This makes the analysis zone visible so the user understands why
+            // segments near the view edges are not shown.
+            this.drawCoverageZone(innerBbox);
+
+            // 3. Extracting [lon, lat] points from the loaded turbo coverage layer.
+            // Query the layer SOURCE directly (not the LayerView) so we get all
+            // features regardless of whether the LayerView has finished rendering.
+            // A LayerView-based query returns only features that have been drawn
+            // so far, which varies between button presses and causes non-determinism.
+            // Also constrain to the full view extent so we don't pull in features
+            // that were loaded from a previous pan position.
+            const featureQuery = this.turboCoverageLayer.createQuery();
+            featureQuery.where = "1=1";
+            featureQuery.outFields = ["*"];
+            featureQuery.returnGeometry = true;
+            featureQuery.outSpatialReference = { wkid: 3857 };
+            // Wait for the layer to finish loading before querying
+            await this.turboCoverageLayer.when();
+            const result = await this.turboCoverageLayer.queryFeatures(featureQuery);
+
+            const points: [number, number][]    = [];
+            const pointTimestamps: (number | null)[] = [];
+            result.features.forEach((f: any) => {
+                const pt = webMercatorUtils.webMercatorToGeographic(f.geometry) as any;
+                points.push([pt.x, pt.y]);
+                // captured_at stored as ms epoch in the turbo layer
+                const ts = f.attributes?.captured_at;
+                pointTimestamps.push(typeof ts === 'number' && ts > 0 ? ts : null);
+            });
+
+            if (!points.length) {
+                this.showToast("No coverage points loaded. Try refreshing Turbo Mode.");
+                return;
+            }
+
+            // 4. Running snap analysis; returns tier data alongside counts.
+            // segmentTiers drives both map drawing colors and InfoBox breakdown.
+            const coverage = snapPointsToSegments(
+                points, innerSegments,
+                COVERAGE_SNAP_THRESHOLD_METERS, COVERAGE_MIN_POINTS_PER_SEGMENT,
+                HIGHWAY_THRESHOLDS, pointTimestamps
+            );
+
+            // Store segments and tier data for drawCoverageSegments.
+            // Assign BEFORE calling drawCoverageSegments so the draw loop
+            // always finds a populated tiers array.
+            this._coverageSegments     = innerSegments;
+            this._coverageCoveredFlags = coverage.segmentTiers.map(t => t !== 'none');
+            this._coverageSegmentTiers = coverage.segmentTiers;
+
+            this.setState({ coverageResult: coverage, coverageSegmentsVisible: false });
+            this.log(`Coverage: ${coverage.percentCovered}% covered ; fresh:${coverage.freshCount} aging:${coverage.agingCount} stale:${coverage.staleCount} none:${coverage.noneCount}`);
+
+        } catch (err) {
+            console.error("Coverage analysis failed:", err);
+            const msg = err instanceof Error ? err.message : "Coverage analysis failed.";
+            this.showToast(msg, 5000);
+        } finally {
+            this.setState({ coverageAnalysisLoading: false });
+        }
+    };
+
+
+    /**
+        * Draws road segments on the ArcGIS map using a 4-tier freshness color scheme.
+        *  FRESH  (< 2 yrs); green        [55, 213, 130]  solid, width 2
+        *  AGING  (2–4 yrs); amber        [255, 193, 7]   solid, width 2
+        *  STALE  (> 4 yrs); orange-red   [255, 110, 50]  solid, width 3
+        *  NONE   (no data); red dashed   [220, 50, 50]   dash, width 3
+        * Draw order: fresh → aging → stale → none so that problem segments
+        * always render on top and are never hidden by green.
+    */
+    private async drawCoverageSegments() {
+        const { jimuMapView } = this.state;
+        if (!jimuMapView || !this._coverageSegments.length) return;
+
+        this.clearCoverageSegments();
+
+        const [GraphicsLayer, Graphic] = await loadArcGISJSAPIModules([
+            "esri/layers/GraphicsLayer",
+            "esri/Graphic"
+        ]);
+
+        const layer = new GraphicsLayer({ id: "coverage-segments-layer", listMode: "hide" });
+
+        // Tier style definitions ; rendered bottom-to-top so red always shows on top
+        const tierStyles: Record<string, { color: number[]; width: number; style: string }> = {
+            fresh: { color: [55,  213, 130, 0.9], width: 2, style: "solid" },
+            aging: { color: [255, 193,   7, 0.95], width: 2, style: "solid" },
+            stale: { color: [255, 110,  50, 1.0], width: 3, style: "solid" },
+            none:  { color: [220,  50,  50, 1.0], width: 3, style: "dash"  },
+        };
+
+        const drawOrder: Array<'fresh'|'aging'|'stale'|'none'> = ['fresh', 'aging', 'stale', 'none'];
+
+        for (const tier of drawOrder) {
+            const style = tierStyles[tier];
+            this._coverageSegments.forEach((seg, i) => {
+                if ((this._coverageSegmentTiers[i] ?? (this._coverageCoveredFlags[i] ? 'fresh' : 'none')) !== tier) return;
+                const graphic = new Graphic({
+                    geometry: {
+                        type: "polyline",
+                        paths: [[[seg.start[0], seg.start[1]], [seg.end[0], seg.end[1]]]],
+                        spatialReference: { wkid: 4326 }
+                    },
+                    symbol: { type: "simple-line", color: style.color, width: style.width, style: style.style }
+                });
+                layer.add(graphic);
+            });
+        }
+
+        jimuMapView.view.map.add(layer);
+        this._coverageSegmentsLayer = layer;
+        this.setState({ coverageSegmentsVisible: true });
+    }
+
+    /**
+        * Removes the coverage segments GraphicsLayer from the map and resets state.
+    */
+    private clearCoverageSegments(resetTiers: boolean = false) {
+        const { jimuMapView } = this.state;
+        if (this._coverageSegmentsLayer) {
+            jimuMapView?.view.map.remove(this._coverageSegmentsLayer);
+            this._coverageSegmentsLayer = null;
+        }
+        // Only wipe tiers when the analysis result is being fully discarded
+        // (e.g. user pans away). When called from drawCoverageSegments to
+        // replace an existing layer, tiers must survive to colour the new graphics.
+        if (resetTiers) {
+            this._coverageSegmentTiers = [];
+            this._coverageCoveredFlags = [];
+            this._coverageSegments     = [];
+            this.clearCoverageZone();
+        }
+        this.setState({ coverageSegmentsVisible: false });
+    }
+
+    /**
+     * Draws a dashed rectangle on the map outlining the inner analysis bbox.
+     * Helps the user understand why segments near the view edges are excluded.
+     */
+    private drawCoverageZone(innerBbox: [number, number, number, number]) {
+        const { jimuMapView } = this.state;
+        if (!jimuMapView || !this.ArcGISModules) return;
+
+        // Remove any existing zone graphic first
+        this.clearCoverageZone();
+
+        const [west, south, east, north] = innerBbox;
+        const { Graphic } = this.ArcGISModules;
+
+        const zoneGraphic = new Graphic({
+            geometry: {
+                type: "polygon",
+                rings: [[
+                    [west,  south],
+                    [east,  south],
+                    [east,  north],
+                    [west,  north],
+                    [west,  south],
+                ]],
+                spatialReference: { wkid: 4326 }
+            },
+            symbol: {
+                type: "simple-fill",
+                color: [0, 0, 0, 0], // transparent fill
+                outline: {
+                    type: "simple-line",
+                    color: [30, 144, 255, 0.8], // blue dashed border
+                    width: 1.5,
+                    style: "dash"
+                }
+            } as any
+        });
+
+        (zoneGraphic as any).__isCoverageZone = true;
+        jimuMapView.view.graphics.add(zoneGraphic);
+        this._coverageZoneGraphic = zoneGraphic;
+    }
+
+    /**
+        * Removes the coverage analysis zone rectangle from the map.
+    */
+    private clearCoverageZone() {
+        if (this._coverageZoneGraphic) {
+            const view = this.state.jimuMapView?.view;
+            if (view) view.graphics.remove(this._coverageZoneGraphic);
+            this._coverageZoneGraphic = null;
+        }
+    }
+
+    /**
+        * Toggles the coverage segments layer visibility.
+        * Called from the InfoBox toggle button.
+    */
+    private toggleCoverageSegments = () => {
+        if (this.state.coverageSegmentsVisible) {
+            this.clearCoverageSegments(false); // keep tiers so re-show works
+        } else {
+            this.drawCoverageSegments();
+        }
+    };
+
+    // #endregion STREET COVERAGE ANALYSIS
+
     // #endregion TURBO MODE
 
     // Initial setup lifecycle
@@ -4708,7 +5005,7 @@ export default class Widget extends React.PureComponent<
         }, 500);
         
         const styleSheet = document.createElement("style");
-        styleSheet.innerText = mobileOverrideStyles;
+        styleSheet.innerText = overrideStyles;
         document.head.appendChild(styleSheet);
 
         if (this.props.config.turboCreator) {
@@ -6542,10 +6839,38 @@ export default class Widget extends React.PureComponent<
                     ) : null}
                 </div>
 
-                {/* showing error only if strictly needed, separate from the logic component */}
-                {!mapWidgetId && (
-                    <div style={{padding: "10px", color: "red"}}>
-                        Please link a Map widget in Experience Builder settings
+                {/* showing error only if strictly needed, 
+                    separate from the logic component 
+                    missing map widget warning overlay*/}
+                                {!mapWidgetId && (
+                    <div style={glassStyles.missingMapContainer}>
+                        <div style={glassStyles.missingMapCard}>
+                            
+                            <div style={glassStyles.missingMapIcon}>
+                                <Icons.Warning size={36} />
+                            </div>
+                            
+                            <h3 style={glassStyles.missingMapTitle}>
+                                Map Connection Required
+                            </h3>
+                            
+                            <p style={glassStyles.missingMapText}>
+                                The Mapillary Explorer needs to be linked to a Map Widget to function properly.
+                            </p>
+                            
+                            <div style={glassStyles.missingMapInstructionsBox}>
+                                <div style={glassStyles.missingMapInstructionsTitle}>
+                                    How to fix:
+                                </div>
+                                <ol style={glassStyles.missingMapInstructionsList}>
+                                    <li>Open this widget's <b>Settings</b> panel</li>
+                                    <li>Go to the <b>Source</b> tab</li>
+                                    <li>Click <b>Select Map widget</b></li>
+                                    <li>Select your target map name</li>
+                                </ol>
+                            </div>
+                            
+                        </div>
                     </div>
                 )}
 
@@ -6607,6 +6932,18 @@ export default class Widget extends React.PureComponent<
                     onToggleAiTags={this.toggleAiTags}
                     onCloseAlternates={() => this.setState({ alternateImages: [], targetDetectionId: null })}
                     onSelectAlternateImage={this._handleSelectAlternateImage}
+                    coverageAnalysisLoading={this.state.coverageAnalysisLoading}
+                    coverageResult={this.state.coverageResult}
+                    coverageSegmentsVisible={this.state.coverageSegmentsVisible}
+                    turboPointsAvailable={!!this.turboCoverageLayer && !this.state.turboLoading}
+                    turboMinZoom={ZOOM.TURBO_MIN}
+                    onToggleCoverageSegments={this.toggleCoverageSegments}
+                    onRunCoverageAnalysis={this.runCoverageAnalysis}
+                    hideCoverageAnalysis={this.props.config.hideCoverageAnalysis}
+                    onDismissCoverageResult={() => {
+                        this.clearCoverageSegments(true);
+                        this.setState({ coverageResult: null });
+                    }}
                 />
                 
                 {/* UNIFIED FILTER BAR */}
