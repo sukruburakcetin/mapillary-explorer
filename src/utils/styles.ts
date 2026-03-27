@@ -652,14 +652,86 @@ export const glassStyles = {
         fontSize: "11px",
         fontWeight: 500,
         letterSpacing: "0.2px",
-    } as React.CSSProperties
+    } as React.CSSProperties,
+
+    // --- MISSING MAP WIDGET OVERLAY ---
+    missingMapContainer: {
+        position: "absolute",
+        top: 0, left: 0, right: 0, bottom: 0,
+        background: "rgba(15, 15, 20, 0.85)",
+        backdropFilter: "blur(5px)",
+        WebkitBackdropFilter: "blur(5px)",
+        zIndex: 10005,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "20px"
+    } as React.CSSProperties,
+
+    missingMapCard: {
+        background: "rgba(255, 255, 255, 0.05)",
+        border: "1px solid rgba(255, 255, 255, 0.15)",
+        borderRadius: "8px",
+        padding: "20px",
+        maxWidth: "280px",
+        textAlign: "center",
+        color: "#fff",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.5)"
+    } as React.CSSProperties,
+
+    missingMapIcon: {
+        color: "#ffc107",
+        marginBottom: "12px",
+        display: "flex",
+        justifyContent: "center"
+    } as React.CSSProperties,
+
+    missingMapTitle: {
+        margin: "0 0 10px 0",
+        fontSize: "15px",
+        color: "rgba(232, 190, 20, 0.7)",
+        fontWeight: 600,
+        letterSpacing: "0.5px"
+    } as React.CSSProperties,
+
+    missingMapText: {
+        margin: "0 0 15px 0",
+        fontSize: "12px",
+        color: "rgba(255,255,255,0.7)",
+        lineHeight: "1.5"
+    } as React.CSSProperties,
+
+    missingMapInstructionsBox: {
+        background: "rgba(0, 0, 0, 0.4)",
+        borderRadius: "6px",
+        padding: "12px",
+        textAlign: "left",
+        border: "1px solid rgba(255,255,255,0.05)"
+    } as React.CSSProperties,
+
+    missingMapInstructionsTitle: {
+        fontSize: "11px",
+        fontWeight: 700,
+        color: "#37d582",
+        textTransform: "uppercase",
+        marginBottom: "8px",
+        letterSpacing: "0.5px"
+    } as React.CSSProperties,
+
+    missingMapInstructionsList: {
+        margin: 0,
+        paddingLeft: "18px",
+        fontSize: "11px",
+        color: "rgba(255,255,255,0.85)",
+        lineHeight: "1.8"
+    } as React.CSSProperties,
 };
 
 
 
 // --- SECTION: GLOBAL CSS STRING ---
 // Contains CSS animations, responsive container queries, and specific fixes for ArcGIS Experience Builder panels.
-export const mobileOverrideStyles = `
+export const overrideStyles = `
     /* EXPERIENCE BUILDER UI FIXES */
     .mobile-panel-content-header { height: 30px !important; }
     .expand-mobile-panel-touch-container { height: 30px !important; }

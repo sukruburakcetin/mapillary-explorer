@@ -53,6 +53,19 @@ export interface InfoBoxProps {
     onToggleAiTags: () => void;
     onCloseAlternates: () => void;
     onSelectAlternateImage: (img: AlternateImage) => void;
+    // coverage analysis
+    coverageAnalysisLoading?: boolean;
+    coverageResult?: CoverageResult | null;
+    coverageSegmentsVisible?: boolean;
+    /** True when turbo layer is loaded and has features in the current view */
+    turboPointsAvailable?: boolean;
+    /** Minimum zoom level required for Turbo Mode; from ZOOM.TURBO_MIN */
+    turboMinZoom?: number;
+    /** If true, hides the coverage analysis button entirely */
+    hideCoverageAnalysis?: boolean;
+    onToggleCoverageSegments: () => void;
+    onRunCoverageAnalysis: () => void;
+    onDismissCoverageResult: () => void;
 }
 
 // FilterBar props
@@ -94,6 +107,25 @@ export interface SplashScreenProps {
     filtersLoaded: boolean;
 }
 
+// Street Coverage Analysis
+export type SegmentTier = 'fresh' | 'aging' | 'stale' | 'none';
+ 
+export interface CoverageResult {
+    coveredCount:    number;
+    totalCount:      number;
+    coveredKm:       number;
+    remainingKm:     number;
+    percentCovered:  number;
+    /** Most-recent captured_at (ms) per segment, null if uncovered */
+    segmentDates:    (number | null)[];
+    /** Freshness tier per segment */
+    segmentTiers:    SegmentTier[];
+    freshCount: number;  freshKm: number;
+    agingCount: number;  agingKm: number;
+    staleCount: number;  staleKm: number;
+    noneCount:  number;  noneKm:  number;
+}
+
 // ControlBar props
 export interface ControlBarProps {
     // config flags
@@ -112,6 +144,9 @@ export interface ControlBarProps {
     objectsActive?: boolean;
     showObjectsFilterBox: boolean;
     jimuMapView: JimuMapView | null;
+    // coverage analysis
+    coverageAnalysisLoading?: boolean;
+    coverageResult?: CoverageResult | null;
     // callbacks
     onToggleFullscreen: () => void;
     onToggleTiles: () => void;

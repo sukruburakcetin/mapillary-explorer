@@ -24,7 +24,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ showIntro, filtersLo
                     <div style={{ ...glassStyles.splashRipple, animationDelay: "1s" }} />
                     <img
                         className="splash-screen-logo"
-                        src="https://images2.imgbox.com/ec/73/iwr0gH9D_o.gif"
+                        src="https://images2.imgbox.com/8c/de/6JZumb4i_o.jpg"
                         alt="Logo"
                         style={glassStyles.splashLogo}
                     />

@@ -1,20 +1,64 @@
 /** @jsx jsx */
+/** @jsxFrag React.Fragment */
 import { React, jsx } from "jimu-core";
 import * as Icons from "../components/Icons";
 import { InfoBoxProps } from "./types";
+
+interface InfoBoxState {
+    isOverflowing: boolean;
+}
+
 
 /**
     * InfoBox
     * Right-hand side panel stack containing:
     *  - Status / coordinates / address card
     *  - Turbo year-legend with click-to-filter
+    *  - Coverage Analysis
     *  - Feature export button (when traffic signs or objects active)
     *  - AI Overlay toggle button
     *  - AI tag show/hide toggle
     *  - Alternate images panel
 */
-export class InfoBox extends React.PureComponent<InfoBoxProps> {
+export class InfoBox extends React.PureComponent<InfoBoxProps, InfoBoxState> {
+
+    private scrollContainerRef = React.createRef<HTMLDivElement>();
+
+    constructor(props: InfoBoxProps) {
+        super(props);
+        this.state = {
+            isOverflowing: false
+        };
+    }
+
+    componentDidMount() {
+        this.checkOverflow();
+        window.addEventListener('resize', this.checkOverflow);
+    }
+
+    componentDidUpdate() {
+        // Automatically check if expanding panels caused a scrollbar to appear
+        this.checkOverflow();
+    }
+
+    componentWillUnmount() {
+        window.removeEventListener('resize', this.checkOverflow);
+    }
+
+    checkOverflow = () => {
+        if (this.scrollContainerRef.current) {
+            const { scrollHeight, clientHeight } = this.scrollContainerRef.current;
+            // It overflows if the inner content height is greater than the visible height
+            const isOverflowing = scrollHeight > clientHeight;
+            
+            if (this.state.isOverflowing !== isOverflowing) {
+                this.setState({ isOverflowing });
+            }
+        }
+    };
+
     render() {
+        const { isOverflowing } = this.state;
         const {
             hideInfoBox, turboCreator,
             imageId, address, currentZoom, jimuMapViewZoom,
@@ -22,10 +66,15 @@ export class InfoBox extends React.PureComponent<InfoBoxProps> {
             turboYearLegend, selectedTurboYear,
             trafficSignsActive, objectsActive,
             detectionsActive, showAiTags,
-            alternateImages, accessToken,
+            alternateImages,
             onYearLegendClick, onDownloadFeatures,
             onToggleDetections, onToggleAiTags,
             onCloseAlternates, onSelectAlternateImage,
+            coverageAnalysisLoading, coverageResult,
+            coverageSegmentsVisible, onToggleCoverageSegments,
+            onRunCoverageAnalysis, onDismissCoverageResult, 
+            turboPointsAvailable, turboMinZoom = 16,
+            hideCoverageAnalysis,
         } = this.props;
 
         const currentImg = (imageId && sequenceImages.length > 0)
@@ -33,19 +82,23 @@ export class InfoBox extends React.PureComponent<InfoBoxProps> {
             : null;
 
         return (
-            <div style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "flex-end",
-                position: "absolute",
-                top: "2px",
-                right: "4px",
-                zIndex: 10002,
-                pointerEvents: "none",
-                maxHeight: "calc(100% - 100px)",
-                overflowY: "auto",
-                scrollbarWidth: "none"
-            }}>
+            <div 
+                ref={this.scrollContainerRef}
+                style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-end",
+                    position: "absolute",
+                    top: "2px",
+                    right: isOverflowing ? "0" : "4px",
+                    zIndex: 10002,
+                    pointerEvents: "auto",
+                    maxHeight: "calc(100% - 120px)",
+                    overflowY: "auto",
+                    // Firefox: thin scrollbar with transparent track and subtle thumb
+                    scrollbarWidth: "thin",
+                    scrollbarColor: "rgba(255,255,255,0.25) transparent"
+                }}>
                 {/* STATUS CARD */}
                 {!hideInfoBox && (
                     <div
@@ -121,6 +174,94 @@ export class InfoBox extends React.PureComponent<InfoBoxProps> {
                                 {turboCreator}
                             </div>
                         )}
+
+                        {/* Street Coverage Analysis button ;
+                             visible only when Turbo Mode is active so the
+                             button appears exactly when it is relevant */}
+                        {turboModeActive && !hideCoverageAnalysis && (() => {
+                            const zoom = currentZoom ?? jimuMapViewZoom ?? 0;
+                            const belowZoom  = zoom < turboMinZoom;
+                            const noPoints   = !turboPointsAvailable;
+                            // Button is ready only when zoom ≥ 16, turbo points are
+                            // loaded, and no analysis is currently running.
+                            const canRun     = !belowZoom && !noPoints && !coverageAnalysisLoading;
+ 
+                            const tooltip = coverageAnalysisLoading
+                                ? "Analysing…"
+                                : belowZoom
+                                ? `Zoom in to street level (≥ ${turboMinZoom}) first`
+                                : noPoints
+                                ? "No Turbo coverage points loaded in this area"
+                                : "Run Street Coverage Analysis";
+ 
+                            const btnBg = canRun && coverageResult
+                                ? "rgba(30, 144, 255, 0.42)"
+                                : "rgba(30, 144, 255, 0.17)";
+ 
+                            return (
+                                <div style={{
+                                    marginTop: "5px",
+                                    borderTop: "1px solid rgba(255,255,255,0.08)",
+                                    paddingTop: "4px",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "space-between",
+                                }}>
+                                    <button
+                                        onClick={canRun ? onRunCoverageAnalysis : undefined}
+                                        title={tooltip}
+                                        style={{
+                                            width: "100%",
+                                            textAlign: "center",
+                                            borderRadius: "4px",
+                                            border: `1px solid ${canRun ? "rgba(30, 144, 255, 0.4)" : "rgba(255,255,255,0.1)"}`,
+                                            background: btnBg,
+                                            color: canRun
+                                                ? "rgba(255,255,255,0.9)"
+                                                : "rgba(255,255,255,0.65)",
+                                            fontSize: "7px",
+                                            fontWeight: 500,
+                                            cursor: canRun ? "pointer" : "not-allowed",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            gap: "4px",
+                                            transition: "background 0.2s, color 0.2s",
+                                            whiteSpace: "nowrap",
+                                            opacity: canRun ? 1 : 0.5,
+                                        }}
+                                        onMouseEnter={e => {
+                                            if (canRun)
+                                                e.currentTarget.style.background = "rgba(30, 144, 255, 0.3)";
+                                        }}
+                                        onMouseLeave={e => {
+                                            e.currentTarget.style.background = btnBg;
+                                        }}
+                                    >
+                                        {coverageAnalysisLoading ? (
+                                            <>
+                                                <div style={{
+                                                    width: "8px", height: "8px",
+                                                    border: "1.5px solid rgba(255,255,255,0.2)",
+                                                    borderTopColor: "#1e90ff",
+                                                    borderRadius: "50%",
+                                                    animation: "spin 0.8s linear infinite",
+                                                    flexShrink: 0,
+                                                    justifyContent: "center"
+                                                }} />
+                                                Analysing…
+                                            </>
+                                        ) : belowZoom ? (
+                                            "Zoom in to analyse"
+                                        ) : noPoints ? (
+                                            "No points"
+                                        ) : (
+                                            coverageResult ? "Run New Analysis" : "Analyse Coverage"
+                                        )}
+                                    </button>
+                                </div>
+                            );
+                        })()}
 
                         {/* Turbo year legend */}
                         {turboModeActive && turboColorByDate && turboYearLegend && turboYearLegend.length > 0 && (
@@ -341,6 +482,101 @@ export class InfoBox extends React.PureComponent<InfoBoxProps> {
                                 </div>
                             </div>
                         ))}
+                    </div>
+                )}
+
+                {/* STREET COVERAGE ANALYSIS RESULT */}
+                {(coverageAnalysisLoading || coverageResult) && (
+                    <div style={{
+                        marginTop: "3px",
+                        padding: "5px",
+                        borderRadius: "6px",
+                        background: "rgba(0, 0, 0, 0.40)",
+                        border: "1px solid rgba(30, 144, 255, 0.3)",
+                        backdropFilter: "blur(5px)",
+                        pointerEvents: "auto",
+                        width: "80px",
+                        boxSizing: "border-box"
+                    }}>
+                        {/* Header */}
+                        <div style={{
+                            fontSize: "7px", fontWeight: 600, color: "rgba(255,255,255,0.7)",
+                            display: "flex", justifyContent: "space-between", alignItems: "center",
+                            borderBottom: "1px solid rgba(255,255,255,0.2)", marginBottom: "4px"
+                        }}>
+                            <span>STREET COVERAGE</span>
+                            <button onClick={onDismissCoverageResult} style={{ background: "none", border: "none", color: "white", cursor: "pointer", fontSize: "10px", paddingBottom: "2px" }}>×</button>
+                        </div>
+
+                        {coverageAnalysisLoading && (
+                            <div style={{ textAlign: "center", fontSize: "8px", color: "#ccc", padding: "1px" }}>Analysing...</div>
+                        )}
+
+                        {coverageResult && !coverageAnalysisLoading && (() => {
+                            const r = coverageResult;
+                            const total = r.totalCount || 1;
+                            const freshPct = Math.round((r.freshCount / total) * 100);
+                            const agingPct  = Math.round((r.agingCount  / total) * 100);
+                            const stalePct  = Math.round((r.staleCount  / total) * 100);
+                            const nonePct   = Math.round((r.noneCount   / total) * 100);
+
+                            // Compact Row Component
+                            const row = (color: string, label: string, age: string, pct: number, km: number) => (
+                                <div style={{ marginBottom: "3px" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "7px" }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "3px" }}>
+                                            <div style={{ width: 5, height: 5, borderRadius: "50%", background: color, flexShrink: 0 }} />
+                                            <span style={{ color: "rgba(255,255,255,0.9)", fontWeight: 500 }}>{label}</span>
+                                            <span style={{ color: "rgba(255,255,255,0.5)" }}>{age}</span>
+                                        </div>
+                                        <span style={{ fontWeight: 700, color: "#fff" }}>{pct}%</span>
+                                    </div>
+                                    <div style={{ textAlign: "right", fontSize: "6.5px", color: "rgba(255,255,255,0.5)", marginTop: "1px" }}>
+                                        {km} km
+                                    </div>
+                                </div>
+                            );
+
+                            return (
+                                <>
+                                    {/* Segmented Colored Bar */}
+                                    <div style={{
+                                        height: "4px", borderRadius: "2px", background: "rgba(255,255,255,0.1)",
+                                        display: "flex", overflow: "hidden", marginBottom: "5px"
+                                    }}>
+                                        {freshPct > 0 && <div style={{ width: `${freshPct}%`, background: "#37d582" }} />}
+                                        {agingPct > 0 && <div style={{ width: `${agingPct}%`, background: "#ffc107" }} />}
+                                        {stalePct > 0 && <div style={{ width: `${stalePct}%`, background: "#ff6e32" }} />}
+                                        {nonePct > 0 && <div style={{ width: `${nonePct}%`, background: "#dc3232" }} />}
+                                    </div>
+
+                                    {/* Totals */}
+                                    <div style={{ textAlign: "center", marginBottom: "5px" }}>
+                                        <div style={{ fontWeight: 800, fontSize: "9px", color: "#fff" }}>{r.percentCovered}% covered</div>
+                                        <div style={{ fontSize: "6.5px", color: "rgba(255,255,255,0.5)" }}>{r.coveredCount} / {r.totalCount} segments</div>
+                                    </div>
+
+                                    {/* Data Rows */}
+                                    {row("#37d582", "Fresh", "(<2y)", freshPct, r.freshKm)}
+                                    {row("#ffc107", "Aging", "(2-4y)", agingPct, r.agingKm)}
+                                    {row("#ff6e32", "Stale", "(>4y)", stalePct, r.staleKm)}
+                                    {row("#dc3232", "None", "", nonePct, r.noneKm)}
+
+                                    {/* Toggle Button */}
+                                    <button
+                                        onClick={onToggleCoverageSegments}
+                                        style={{
+                                            width: "100%", marginTop: "3px", borderRadius: "3px",
+                                            border: "1px solid rgba(255,255,255,0.15)",
+                                            background: coverageSegmentsVisible ? "rgba(30, 144, 255, 0.4)" : "rgba(255,255,255,0.1)",
+                                            color: "white", fontSize: "7px", fontWeight: 600, cursor: "pointer", padding: "3px 0"
+                                        }}
+                                    >
+                                        {coverageSegmentsVisible ? "HIDE MAP" : "SHOW MAP"}
+                                    </button>
+                                </>
+                            );
+                        })()}
                     </div>
                 )}
             </div>
