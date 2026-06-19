@@ -29,13 +29,29 @@ const SequencePicker: React.FC<SequencePickerProps> = ({
     clearGreenPulse,
     accessToken,
 }) => {
+    const SLOTS = 3;
+    const total = sequences?.length ?? 0;
+    const showArrows = total > SLOTS;
+
     const [offset, setOffset] = React.useState(0);
 
-    if (!sequences || sequences.length <= 1) return null;
+    const activeIndex = activeSequenceId
+        ? sequences.findIndex(s => s.sequenceId === activeSequenceId)
+        : -1;
 
-    const SLOTS = 3;
-    const visible = Array.from({ length: Math.min(SLOTS, sequences.length) });
-    const showArrows = sequences.length > SLOTS;
+    // Scroll the window just enough to keep the active item visible.
+    // Does not center; only nudges when the item falls outside the window.
+    React.useEffect(() => {
+        if (activeIndex === -1) return;
+        setOffset(prev => {
+            if (activeIndex < prev) return activeIndex;
+            if (activeIndex >= prev + SLOTS) return activeIndex - SLOTS + 1;
+            return prev;
+        });
+    }, [activeSequenceId, activeIndex]);
+
+    // Early return AFTER all hooks
+    if (!sequences || total <= 1) return null;
 
     const handleSelect = async (seq: SequenceInfo) => {
         clearGreenPulse();
@@ -58,9 +74,14 @@ const SequencePicker: React.FC<SequencePickerProps> = ({
             {/* Prev Arrow */}
             {showArrows && (
                 <button
-                    style={glassStyles.sequenceArrow}
-                    onClick={() => setOffset(prev => (prev - 1 + sequences.length) % sequences.length)}
-                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.2)"}
+                    style={{
+                        ...glassStyles.sequenceArrow,
+                        opacity: offset <= 0 ? 0.3 : 1,
+                        cursor: offset <= 0 ? "default" : "pointer",
+                    }}
+                    disabled={offset <= 0}
+                    onClick={() => setOffset(prev => Math.max(0, prev - 1))}
+                    onMouseEnter={e => { if (offset > 0) e.currentTarget.style.background = "rgba(255,255,255,0.2)"; }}
                     onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
                 >
                     ◀
@@ -68,8 +89,9 @@ const SequencePicker: React.FC<SequencePickerProps> = ({
             )}
 
             {/* Sequence Slots */}
-            {visible.map((_, slotIdx) => {
-                const seqIndex = (offset + slotIdx) % sequences.length;
+            {Array.from({ length: Math.min(SLOTS, total) }).map((_, slotIdx) => {
+                const seqIndex = offset + slotIdx;
+                if (seqIndex >= total) return null;
                 const seq = sequences[seqIndex];
                 const colorArr = seq._color || pickSequenceColor(seqIndex);
                 const cssColor = `rgba(${colorArr[0]}, ${colorArr[1]}, ${colorArr[2]}, ${colorArr[3] ?? 1})`;
@@ -98,9 +120,14 @@ const SequencePicker: React.FC<SequencePickerProps> = ({
             {/* Next Arrow */}
             {showArrows && (
                 <button
-                    style={glassStyles.sequenceArrow}
-                    onClick={() => setOffset(prev => (prev + 1) % sequences.length)}
-                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.2)"}
+                    style={{
+                        ...glassStyles.sequenceArrow,
+                        opacity: offset + SLOTS >= total ? 0.3 : 1,
+                        cursor: offset + SLOTS >= total ? "default" : "pointer",
+                    }}
+                    disabled={offset + SLOTS >= total}
+                    onClick={() => setOffset(prev => Math.min(prev + 1, total - SLOTS))}
+                    onMouseEnter={e => { if (offset + SLOTS < total) e.currentTarget.style.background = "rgba(255,255,255,0.2)"; }}
                     onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
                 >
                     ▶

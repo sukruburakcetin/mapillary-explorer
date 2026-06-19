@@ -24,6 +24,15 @@ export interface LegendProps {
     onClearCache: () => void;
 }
 
+export interface NearbyImage {
+  id: string;
+  thumb_256_url: string;
+  thumb_512_url: string;
+  captured_at: number;
+  geometry: { type: 'Point'; coordinates: [number, number] };
+  creator?: { username: string };
+}
+
 // InfoBox props
 export interface InfoBoxProps {
     // visibility / config
@@ -66,6 +75,46 @@ export interface InfoBoxProps {
     onToggleCoverageSegments: () => void;
     onRunCoverageAnalysis: () => void;
     onDismissCoverageResult: () => void;
+    isSightMode?: boolean;
+    sightObserver?: any | null;
+    sightTargets?: any[];
+    isViewshedMode?: boolean;
+    onToggleViewshedMode?: () => void;
+    onClearViewshed?: () => void;
+    onToggleSightMode?: () => void;
+    onClearSight?: () => void;
+    pointCloudVisible?: boolean;
+    isMeasureMode?: boolean;
+    measurePoints?: Array<any>;
+    onToggleMeasureMode?: () => void;
+    onClearMeasurement?: () => void;
+    showCalibrationPanel?: boolean;
+    nudgeStep?: number;
+    onToggleCalibrationPanel?: () => void;
+    onJoystickNudge?: (axis: 'x'|'y'|'z', direction: 1|-1) => void;
+    onResetCalibration?: () => void;
+    onSetNudgeStep?: (step: number) => void;
+    pointCloudColorMode?: 'rgb' | 'elevation';
+    pointCloudLength: number;
+    pointCloudMaxLength: number;
+    pointCloudActualLength: number;
+    pointCloudWidth?: number;
+    pointCloudMaxWidth?: number;
+    pointCloudActualWidth: number;
+    onWidthChange?: (width: number) => void;
+    onLengthChange: (length: number) => void;
+    onDownloadPointCloud?: () => void;
+    // Quality View
+    enableQualityView?: boolean;
+    qualityViewActive?: boolean;
+    onToggleQualityView: () => void;
+    nearbyImages?: NearbyImage[];
+    nearbyLoading?: boolean;
+    onSelectNearbyImage?: (id: string) => void;
+    onHoverNearbyImage?: (img: NearbyImage | null) => void;
+    nearbyCount?: number;
+    nearbyStripOpen?: boolean;
+    onToggleNearbyStrip?: () => void;
 }
 
 // FilterBar props
@@ -174,6 +223,7 @@ export interface ImageUtilityGroupProps {
     hideImageDownload?: boolean;
     hideSyncHeadingButton?: boolean;
     hideCenterMapButton?: boolean;
+    hidePointCloud?: boolean;
     // state
     hasTimeTravel: boolean;
     isDownloading?: boolean;
@@ -181,10 +231,14 @@ export interface ImageUtilityGroupProps {
     is3D: boolean;
     imageId: string | null;
     sequenceImages: { id: string; lat: number; lon: number }[];
+    pointCloudLoading?: boolean;
+    pointCloudVisible?: boolean;
+    pointCloudAvailable?: boolean; // false = no sfm_cluster for this image
     // callbacks
     onTimeTravel: (lat: number, lon: number, imageId: string) => void;
     onShare: () => void;
     onDownload: () => void;
     onToggleSyncHeading: () => void;
     onCenterMap: () => void;
+    onTogglePointCloud: () => void;
 }

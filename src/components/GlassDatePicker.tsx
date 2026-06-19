@@ -19,7 +19,7 @@ interface GlassDatePickerState {
     open: boolean;
     viewYear: number;
     viewMonth: number;
-    hoveredDay: number | null;
+    hoveredDay: number; // -1 = none
 }
 
 // Helpers
@@ -66,7 +66,7 @@ export class GlassDatePicker extends React.PureComponent<GlassDatePickerProps, G
             open: false,
             viewYear: now.getFullYear(),
             viewMonth: now.getMonth(),
-            hoveredDay: null,
+            hoveredDay: -1,
         };
     }
 
@@ -97,7 +97,7 @@ export class GlassDatePicker extends React.PureComponent<GlassDatePickerProps, G
         e.preventDefault();
         e.stopPropagation();
         if (this.props.disabled) return;
-        this.setState(prev => ({ open: !prev.open, hoveredDay: null }));
+        this.setState(prev => ({ open: !prev.open, hoveredDay: -1 }));
     };
 
     private clear = (e: React.MouseEvent) => {
@@ -139,7 +139,7 @@ export class GlassDatePicker extends React.PureComponent<GlassDatePickerProps, G
         e.stopPropagation();
         const d = new Date(this.state.viewYear, this.state.viewMonth, day);
         this.props.onChange(d);
-        this.setState({ open: false, hoveredDay: null });
+        this.setState({ open: false, hoveredDay: -1 });
     };
 
     render() {
@@ -290,10 +290,10 @@ export class GlassDatePicker extends React.PureComponent<GlassDatePickerProps, G
                                 return (
                                     <div
                                         key={day}
-                                        className="day-cell" 
+                                        className="day-cell"
                                         onClick={e => this.selectDay(e, day)}
                                         onMouseEnter={() => this.setState({ hoveredDay: day })}
-                                        onMouseLeave={() => this.setState({ hoveredDay: null })}
+                                        onMouseLeave={() => this.setState({ hoveredDay: -1 })}
                                         style={{
                                             textAlign: "center",
                                             padding: "4px 2px",

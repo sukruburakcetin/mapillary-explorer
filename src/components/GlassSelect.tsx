@@ -45,7 +45,7 @@ const controlStyle = (accent: string, open: boolean): React.CSSProperties => ({
     boxShadow: open ? `0 0 8px ${accent}55` : "none",
     transition: "border-color 0.15s, box-shadow 0.15s",
     boxSizing: "border-box" as const,
-    minWidth:"130px"
+    minWidth: "130px",
 });
 
 const menuStyle = (accent: string, placement: "top" | "bottom"): React.CSSProperties => ({
@@ -103,12 +103,16 @@ const chevron = (open: boolean, accent: string): React.CSSProperties => ({
 // Component
 export class GlassSelect extends React.PureComponent<
     GlassSelectProps,
-    { open: boolean; hoveredIdx: number | null; searchQuery: string }
+    { open: boolean; hoveredIdx: number; searchQuery: string }
 > {
     private containerRef = React.createRef<HTMLDivElement>();
     private searchRef = React.createRef<HTMLInputElement>();
 
-    state = { open: false, hoveredIdx: null as number | null, searchQuery: "" };
+    state: { open: boolean; hoveredIdx: number; searchQuery: string } = {
+        open: false,
+        hoveredIdx: -1,
+        searchQuery: "",
+    };
 
     componentDidMount() {
         document.addEventListener("mousedown", this.handleOutsideClick);
@@ -126,7 +130,7 @@ export class GlassSelect extends React.PureComponent<
 
     private toggle = () => {
         this.setState(
-            prev => ({ open: !prev.open, searchQuery: "", hoveredIdx: null }),
+            prev => ({ open: !prev.open, searchQuery: "", hoveredIdx: -1 }),
             () => {
                 if (this.state.open) {
                     // Focus the search input when menu opens
@@ -196,7 +200,7 @@ export class GlassSelect extends React.PureComponent<
                                     ref={this.searchRef}
                                     type="text"
                                     value={searchQuery}
-                                    onChange={e => this.setState({ searchQuery: e.target.value, hoveredIdx: null })}
+                                    onChange={e => this.setState({ searchQuery: e.target.value, hoveredIdx: -1 })}
                                     placeholder="Search…"
                                     onClick={e => e.stopPropagation()}
                                     style={{
@@ -225,7 +229,7 @@ export class GlassSelect extends React.PureComponent<
                                     key={opt.value}
                                     style={optionStyle(hoveredIdx === idx, opt.value === value?.value, accentColor)}
                                     onMouseEnter={() => this.setState({ hoveredIdx: idx })}
-                                    onMouseLeave={() => this.setState({ hoveredIdx: null })}
+                                    onMouseLeave={() => this.setState({ hoveredIdx: -1 })}
                                     onMouseDown={e => { e.preventDefault(); this.select(opt); }}
                                     title={opt.label}
                                 >

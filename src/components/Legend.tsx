@@ -53,7 +53,7 @@ export const Legend: React.FC<LegendProps> = ({ turboModeActive, onClearCache })
                 <React.Fragment>
                     <div style={legendRowStyle}><span style={{ ...legendCircleStyle("black"), border: "1px solid white" }}></span> <span style={legendTextStyle}>Clicked point</span></div>
                     <div style={legendRowStyle}><span style={{ ...legendCircleStyle("#00ff00"), border: "1px solid white" }}></span> <span style={legendTextStyle}>Active frame</span></div>
-                    <div style={legendRowStyle}><span style={{ ...legendCircleStyle("e3da30"), border: "1px solid white" }}></span> <span style={legendTextStyle}>Active seq</span></div>
+                    <div style={legendRowStyle}><span style={{ ...legendCircleStyle("blue"), border: "1px solid white" }}></span> <span style={legendTextStyle}>Active sequence</span></div>
                     <div style={legendRowStyle}><span style={{ ...legendCircleStyle("yellow"), border: "2px solid orange" }}></span> <span style={legendTextStyle}>Next frame</span></div>
                     <button onClick={onClearCache} style={compactButtonStyle}>CLEAR CACHE</button>
                 </React.Fragment>
