@@ -258,8 +258,7 @@ export const glassStyles = {
         fontSize: "11px",
         fontWeight: 700,
         letterSpacing: "0.8px",
-        color: "#ffffff",
-        textTransform: "uppercase" as const,
+        color: "#ffffff"
     } as React.CSSProperties,
 
     initialStateTextSecondary: {
@@ -403,8 +402,7 @@ export const glassStyles = {
         background: "linear-gradient(90deg, #fff 0%, #ffc107 100%)",
         WebkitBackgroundClip: "text",
         WebkitTextFillColor: "transparent",
-        backgroundClip: "text",
-        textTransform: "uppercase"
+        backgroundClip: "text"
     } as React.CSSProperties,
 
     // DYNAMIC ISLAND IMAGE LOADING PILL
@@ -443,8 +441,7 @@ export const glassStyles = {
         background: "linear-gradient(90deg, #fff 0%, #37d582 100%)",
         WebkitBackgroundClip: "text",
         WebkitTextFillColor: "transparent",
-        backgroundClip: "text",
-        textTransform: "uppercase"
+        backgroundClip: "text"
     } as React.CSSProperties,
 
     // SPLASH SCREEN
@@ -540,7 +537,6 @@ export const glassStyles = {
         fontSize:      "clamp(9px,2vw,16px)",
         fontWeight:    300,
         letterSpacing: "clamp(3px,1vw,5px)",
-        textTransform: "uppercase" as const,
         color:         "rgba(255,255,255,0.3)",
         marginBottom:  "4px",
     } as React.CSSProperties,
@@ -826,7 +822,6 @@ export const glassStyles = {
         fontWeight: 700,
         fontSize: "9px",
         letterSpacing: "0.8px",
-        textTransform: "uppercase" as const,
         filter: "drop-shadow(0 0 6px rgba(255, 165, 0, 0.55))",
         animation: "mly-warn-pulse 2.4s ease-in-out infinite",
     } as React.CSSProperties,
@@ -948,7 +943,6 @@ export const glassStyles = {
         fontSize: "11px",
         fontWeight: 700,
         color: "#37d582",
-        textTransform: "uppercase",
         marginBottom: "8px",
         letterSpacing: "0.5px"
     } as React.CSSProperties,

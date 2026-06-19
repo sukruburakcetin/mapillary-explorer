@@ -9622,7 +9622,7 @@ export default class Widget extends React.PureComponent<
                             
                             {/* Premium Gradient Text */}
                             <div style={glassStyles.turboDynamicPillText}>
-                                Fetching Turbo Coverage Points...
+                                FETCHING COVERAGE POINTS...
                             </div>
                         </div>
                     </div>
@@ -9652,7 +9652,7 @@ export default class Widget extends React.PureComponent<
                             
                             {/* Premium Gradient Text */}
                             <div style={glassStyles.imageDynamicPillText}>
-                                Loading Imagery...
+                                LOADING IMAGERY...
                             </div>
                         </div>
                     </div>
@@ -9893,7 +9893,7 @@ export default class Widget extends React.PureComponent<
                             
                             <div style={glassStyles.missingMapInstructionsBox}>
                                 <div style={glassStyles.missingMapInstructionsTitle}>
-                                    How to fix:
+                                    HOW TO FIX:
                                 </div>
                                 <ol style={glassStyles.missingMapInstructionsList}>
                                     <li>Open this widget's <b>Settings</b> panel</li>
