@@ -4,12 +4,11 @@
 </h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-4.2.0-blue.svg" alt="Version"/>
+  <img src="https://img.shields.io/badge/version-4.4.0-blue.svg" alt="Version"/>
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"/>
-  <img src="https://img.shields.io/badge/ArcGIS-Experience%20Builder%201.19-007AC2" alt="ArcGIS"/>
-  <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React"/>
+  <img src="https://img.shields.io/badge/ArcGIS%20Experience%20Builder-1.18%20%7C%201.19%20%7C%201.20-007AC2" alt="ArcGIS Experience Builder"/>
+  <img src="https://img.shields.io/badge/React-18%20%7C%2019-61DAFB" alt="React 18 | 19"/>
   <img src="https://img.shields.io/badge/Esri%20Enterprise-12.0+-61DAFB" alt="Esri Enterprise"/>
-  <img src="https://img.shields.io/badge/zero--dependency%20UI-built--in-blueviolet" alt="Zero Dependency UI"/>
 </p>
 
 ## Table of Contents
@@ -27,25 +26,94 @@
 ## Key Features
 
 ### Map and Viewer Integration
-- **Synchronized viewer and map.** The Mapillary viewer and ArcGIS map stay in sync at all times with a live bearing cone, pulsing location marker, and click-to-move navigation.
-- **Shareable URL state.** Bearing, map scale, image ID, and map type are written to the address bar in real time. Any view can be shared with a single copy-paste and restored exactly on open.
-- **Fullscreen minimap.** A secondary ArcGIS map panel appears in fullscreen mode with a live direction cone. Click any point to jump to that frame or search an entirely new location without leaving fullscreen.
+- **Synchronized viewer and map.** The Mapillary viewer and ArcGIS map stay in sync
+  at all times with a live bearing cone, pulsing location marker, and click-to-move
+  navigation.
+- **Shareable URL state.** Bearing, map scale, image ID, and map type are written to
+  the address bar in real time. Any view can be shared with a single copy-paste and
+  restored exactly on open.
+- **Fullscreen minimap.** A secondary ArcGIS map panel appears in fullscreen mode with
+  a live direction cone. Click any point to jump to that frame or search an entirely
+  new location without leaving fullscreen.
+- **Nearby captures carousel.** A live counter in the lower-right corner shows how many
+  images were captured near your current position. Click it to open a thumbnail carousel
+  and jump directly to any nearby frame.
 
 ### Turbo Mode and Coverage Filtering
-- **High-speed coverage rendering.** Millions of Mapillary coverage points are decoded from PBF/VTL tiles and rendered with real-time filtering by creator, date range, and panorama type.
-- **Consistent filtering at all zoom levels.** The green Mapillary coverage layer at overview zoom respects the same date and pano filters as Turbo Mode, so filtered data is always visible without needing to zoom in first.
-- **Year-based color coding.** Coverage points can be colored by capture year with a clickable legend to isolate individual years.
+- **High-speed coverage rendering.** Millions of Mapillary coverage points are decoded
+  from PBF/VTL tiles and rendered with real-time filtering by creator, date range, and
+  panorama type.
+- **Persistent spatial tile cache.** Only tiles not yet seen this session are fetched on
+  each pan or zoom. Empty tiles are remembered and never re-requested; server errors are
+  retried automatically, eliminating redundant network traffic across the session.
+- **Consistent filtering at all zoom levels.** The green Mapillary coverage layer at
+  overview zoom respects the same date and pano filters as Turbo Mode, so filtered data
+  is always visible without needing to zoom in first.
+- **Year-based color coding.** Coverage points can be colored by capture year with a
+  clickable legend to isolate individual years.
+- **Image quality scoring.** Coverage sequences are color-coded by per-image quality
+  score so survey-grade imagery is immediately distinguishable from lower-fidelity
+  captures when planning routes or selecting source imagery.
+
+### 3D Point Cloud Studio
+- **Photorealistic SfM point clouds.** Mapillary Structure-from-Motion cluster data loads
+  directly into the ArcGIS 3D scene and the panoramic viewer simultaneously, rendered via
+  a custom WebGL ICustomRenderer with per-point RGB color.
+- **Elevation heatmap and ground mode.** Switch between true RGB and an elevation color
+  ramp (`C` key) that maps points from below ground to rooftop level. Ground Mode (`X`
+  key) instantly hides everything above 1.5 m, isolating the road surface for pavement
+  inspection.
+- **GIS calibration (Nudge tool).** WASD keyboard controls and an on-screen joystick
+  panel shift the point cloud in real-world metres relative to the camera heading for
+  precise GIS alignment. Shift multiplies the step size by 5×.
+- **Radius filtering.** A distance slider in the Calibration Panel limits how many points
+  are rendered around the camera position, eliminating frame rate drops when large SfM
+  clusters load and allowing users to isolate a single sign, wall, or road marking with
+  smooth performance.
+- **Auto-advance.** When navigating into a new SfM cluster boundary the next point cloud
+  block downloads silently with no user interaction required.
+- **Georeferenced CSV export.** Points are exported with Longitude, Latitude, Elevation,
+  R, G, B columns with active calibration offsets baked in, ready for direct import into
+  AutoCAD Civil 3D or ArcGIS Pro.
+
+### Sight Mode and Viewshed Analysis
+- **3D Line of Sight.** Click to place an observer, then click targets; visible segments
+  render green and obstructed segments render red, powered by ArcGIS
+  LineOfSightViewModel.
+- **360° Viewshed.** Computes full-sphere sight coverage from the current camera position
+  using the loaded SfM point cloud as the obstruction mesh, giving results grounded in
+  real geometry rather than a DTM.
+- **Mutually exclusive modes.** Activating Sight Mode or Measure Mode automatically
+  resets and cleans up the other. Clear buttons fully release WebGL renderers and ArcGIS
+  graphics layers to prevent memory leaks between sessions.
 
 ### Feature Detection Layers
-- **Traffic signs and objects.** Toggleable layers render detected assets with sprite-based icons, interactive popups, and parallel tile fetching for significantly faster load times at zoom level 16 and above.
-- **Configurable detection categories.** Which detection types are visible can be adjusted in `constants.ts` without modifying any rendering logic.
+- **Traffic signs and objects.** Toggleable layers render detected assets with
+  sprite-based icons, interactive popups, and fully parallel tile fetching for
+  significantly faster load times at zoom level 16 and above.
+- **Shared sprite cache.** The sprite sheet is loaded once per session and reused across
+  dropdown icon generation, filter resolution, and renderer building, reducing redundant
+  network requests.
+- **Configurable detection categories.** Which detection types are visible can be
+  adjusted in `constants.ts` without modifying any rendering logic.
+
+### Street Coverage Analysis
+- **On-demand road coverage freshness analysis.** Run a coverage analysis directly in the
+  InfoBox. Segments are classified into four tiers (fresh, aging, stale, uncovered) using
+  majority vote across matched Turbo coverage points and drawn on the map in real time.
+- **StreetGap integration.** StreetGap project data by Ryan Lopez appears alongside
+  existing coverage metrics in the InfoBox so unmapped corridors can be identified and
+  capture routes planned without leaving the widget.
+- **Configurable toolbar.** The coverage analysis panel, StreetGap shortcut, and image
+  quality shortcut can each be hidden independently to keep the toolbar minimal during
+  fieldwork.
 
 ### Deployment Presets
-- **Settings panel configuration.** Administrators can pre-configure creator username, date range, pano filter, and color-by-date from the Experience Builder settings panel. Any active preset automatically enables Turbo Mode on load.
-- **Per-deployment UI control.** Individual toolbar buttons (Center Map, 3D Bearing Sync, Traffic Signs, Objects) can be hidden to match the needs of each deployment.
-
-### Street Coverage Analysis. 
-- **Run an on-demand analysis of road coverage freshness** directly in the InfoBox. Segments are classified into four tiers (fresh, aging, stale, uncovered) using majority vote across matched Turbo coverage points and drawn on the map in real time.
+- **Settings panel configuration.** Administrators can pre-configure creator username,
+  date range, pano filter, and color-by-date from the Experience Builder settings panel.
+  Any active preset automatically enables Turbo Mode on load.
+- **Per-deployment UI control.** Individual toolbar buttons (Center Map, 3D Bearing Sync,
+  Traffic Signs, Objects) can be hidden to match the needs of each deployment.
 
 ---
 
@@ -69,6 +137,7 @@ mapillary-explorer/
     │   ├── Legend.tsx               # Coverage color legend overlay
     │   ├── SequencePicker.tsx       # Sequence carousel selector
     │   ├── SplashScreen.tsx         # Initial loading overlay
+    │   ├── NearbyCarousel.tsx       # Nearby captures carousel
     │   └── types.ts                 # Shared TypeScript prop interfaces for all components
     ├── utils/
     │   ├── constants.ts             # Layer IDs, API URLs, zoom thresholds, detection filter lists
@@ -78,6 +147,8 @@ mapillary-explorer/
     │   ├── mapillaryObjectNameMap.ts # Human-readable Mapillary object label map
     │   ├── mapillaryRenderers.ts    # Pure functions: createYearBasedRenderer, YEAR_COLOR_PALETTE
     │   ├── spriteUtils.ts           # Sprite sheet cropping and icon loading utilities
+    │   ├── useNearbyImages.ts       # Fetches and tracks Mapillary images near
+    │   ├── pointCloudUtils.ts       # Point cloud utilities
     │   └── styles.ts                # All glassStyles objects and mobileOverrideStyles CSS string
     └── config.ts                    # Widget config TypeScript interface
 ```
