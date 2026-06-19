@@ -30,7 +30,10 @@ Install both the server and client services following [Esri's official install g
 ### Node.js
 
 Both ExB 1.18 and 1.19 require **Node.js 22**. Using an older version will cause build failures.
+For ExB 1.20, Esri recommends Node.js 24. However, during development and testing of this project, Node.js 24 resulted in dependency compatibility issues (including ESM/CommonJS conflicts such as ERR_REQUIRE_ESM with uuid).
+For the most reliable development experience, use Node.js 20.19.0 when working with ExB 1.20.
 
+Note: While other Node.js versions may work, all builds and testing for this project are performed using Node.js 20.19.0.
 ```bash
 node -v   # should print v22.x.x
 ```
@@ -73,7 +76,7 @@ From the Experience Builder **client** directory, install the widget's dependenc
 
 ```bash
 cd <experience-builder-root>/client
-npm install mapillary-js pbf @mapbox/vector-tile
+npm install mapillary-js pbf@4.0.1 @mapbox/vector-tile
 ```
 
 Pinned versions used in this project:
@@ -83,8 +86,9 @@ Pinned versions used in this project:
 | `mapillary-js` | 4.1.2 |
 | `pbf` | 4.0.1 |
 | `@mapbox/vector-tile` | 2.0.4 |
+| pako | 1.x - 2.x | Transitive dependency — installed automatically. Not required to install manually. Used internally for point cloud decompression. |
 
-> `react-select` and `react-datepicker` are **not** required. They have been replaced by the built-in `GlassSelect` and `GlassDatePicker` components, which have no external dependencies.
+> **Note:** `pako` is not installed directly but is pulled in as a transitive dependency by the packages above. The widget has been tested with both pako `1.0.11` (ExB 1.20) and `2.1.0` (ExB 1.18). If you encounter point cloud decompression errors, run `npm install pako` to pin it explicitly.
 
 ---
 
