@@ -9663,7 +9663,6 @@ export default class Widget extends React.PureComponent<
                     <div style={glassStyles.initialStateContainer}>
                         <div className="initial-state-card" style={glassStyles.initialStateCard}>
 
-                            
                             {/* Polished text with clean gradient styling */}
                             <span style={{
                                 ...glassStyles.initialStateTextPrimary,
@@ -9672,7 +9671,7 @@ export default class Widget extends React.PureComponent<
                                 WebkitTextFillColor: "transparent",
                                 backgroundClip: "text"
                             }}>
-                                Click a point to view imagery
+                                CLICK A POINT TO VIEW IMAGERY
                             </span>
                             
                             {/* Kept intact for TypeScript mapping, automatically hidden by glassStyles config */}

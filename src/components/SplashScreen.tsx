@@ -121,7 +121,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ showIntro, filtersLo
                 </div>
 
                 {/* Wordmark */}
-                <div style={glassStyles.splashWordmark}>Mapillary</div>
+                <div style={glassStyles.splashWordmark}>MAPILLARY</div>
 
                 {/* Title */}
                 <div style={glassStyles.splashTitle}>Explorer</div>
