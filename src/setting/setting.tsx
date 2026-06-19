@@ -156,6 +156,13 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
       config: this.props.config.set('hideCoverageAnalysis', evt.target.checked)
     });
   }
+
+  onToggleHidePointCloud = (evt: React.ChangeEvent<HTMLInputElement>) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('hidePointCloud', evt.target.checked)
+    });
+  }
  
   // Handler for Render Mode
   onRenderModeChange = (evt: React.ChangeEvent<HTMLSelectElement>) => {
@@ -496,11 +503,19 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                 />
           </SettingRow>
 
-          <SettingRow label="Hide Coverage Analysis">
-            <Switch checked={config.hideCoverageAnalysis === true} 
-            onChange={this.onToggleHideCoverageAnalysis} />
+          <SettingRow label="Hide Analysis, StreetGap & Quality View">
+            <Switch 
+              checked={config.hideCoverageAnalysis === true} 
+              onChange={this.onToggleHideCoverageAnalysis} 
+            />
           </SettingRow>
- 
+
+          <SettingRow label="Hide Point Cloud (3D only)">
+            <Switch 
+              checked={config.hidePointCloud === true}
+              onChange={this.onToggleHidePointCloud} 
+            />
+          </SettingRow>
 
           <SettingRow label="Hide Image Download">
             <Switch 

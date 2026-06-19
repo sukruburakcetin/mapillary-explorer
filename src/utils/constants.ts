@@ -36,11 +36,21 @@ export const LAYER_IDS = {
 // MapGL style layer IDs (inside VectorTileLayer .style.layers[])
 // Used when mutating the style JSON to apply filters.
 export const STYLE_LAYER_IDS = {
-  OVERVIEW: 'overview',
-  SEQUENCE: 'sequence',
-  IMAGE: 'image',
-  TRAFFIC_SIGNS_ICONS: 'traffic-signs-icons',
-  OBJECTS_ICONS: 'mapillary-objects-icons',
+    OVERVIEW: 'overview',
+    SEQUENCE: 'sequence',
+    IMAGE: 'image',
+    TRAFFIC_SIGNS_ICONS: 'traffic-signs-icons',
+    OBJECTS_ICONS: 'mapillary-objects-icons',
+
+    // Quality-banded variants (active when qualityViewActive === true)
+    SEQUENCE_GOOD:     'sequence-good',
+    SEQUENCE_FAIR:     'sequence-fair',
+    SEQUENCE_POOR:     'sequence-poor',
+    SEQUENCE_UNSCORED: 'sequence-unscored',
+    IMAGE_GOOD:        'image-good',
+    IMAGE_FAIR:        'image-fair',
+    IMAGE_POOR:        'image-poor',
+    IMAGE_UNSCORED:    'image-unscored',
 } as const;
 
 
@@ -83,6 +93,9 @@ export const GRAPH_API = {
 
   /** Look up a user's numeric creator ID via username */
   creatorLookup:(username: string) => `https://graph.mapillary.com/images?creator_username=${username}&limit=1&fields=creator`,
+
+  nearbyImages: (lat: number, lon: number, radius: number, limit: number) =>
+    `https://graph.mapillary.com/images?fields=id,thumb_256_url,thumb_512_url,captured_at,geometry,creator&lat=${lat}&lng=${lon}&radius=${Math.min(radius, 50)}&limit=${Math.min(limit, 100)}`,
 } as const;
 
 
@@ -133,7 +146,7 @@ export const BBOX = {
 // API result limits
 export const LIMITS = {
   /** Max images returned from bbox sequence search */
-  SEQUENCE_SEARCH_IMAGES: 100,
+  SEQUENCE_SEARCH_IMAGES: 200,
 
   /** Max sequences kept after distance sort */
   SEQUENCE_SEARCH_RESULTS: 10,
@@ -292,7 +305,7 @@ out skel qt;
 
   * Why different thresholds per type?
   * OSM models divided roads (primary, secondary, motorway, trunk) as TWO
-  * separate parallel way geometries — one per direction — offset from the
+  * separate parallel way geometries, one per direction, offset from the
   * physical road centre by the lane/median width (typically 5-12m).
   * A Mapillary camera driving in one lane is therefore 8-15m from the OSM
   * centreline of the opposing-direction way.
@@ -322,36 +335,79 @@ export const HIGHWAY_THRESHOLDS: Record<string, number> = {
 };
 
 /**
-  * Per highway-type snap threshold in metres.
-
-  * Why different thresholds per type?
-  * OSM models divided roads (primary, secondary, motorway, trunk) as TWO
-  * separate parallel way geometries — one per direction — offset from the
-  * physical road centre by the lane/median width (typically 5-12m).
-  * A Mapillary camera driving in one lane is therefore 8-15m from the OSM
-  * centreline of the opposing-direction way.
-
-  * Narrow residential/service roads are single-way with centrelines close
-  * to where cars drive, so a tight 8m threshold is correct and avoids
-  * cross-street false positives in dense grids.
-
-  * Arterials (primary, secondary, trunk, motorway) need a wider threshold
-  * to bridge the dual-carriageway offset without re-introducing the
-  * cross-street false positives that plagued the original 15m approach.
-  * 18m covers a 10m median + 8m GPS drift without reaching the next block.
-*/
-
-/**
   * Coverage freshness thresholds (milliseconds).
   * Segments are classified into three tiers based on the most recent
   * Mapillary image that covers them:
-  *   FRESH  — captured within the last 2 years  → green
-  *   AGING  — captured 2–4 years ago            → amber
-  *   STALE  — captured more than 4 years ago    → orange-red
-  *   NONE   — no coverage at all                → red (dashed)
+  *   FRESH: captured within the last 2 years  → green
+  *   AGING: captured 2–4 years ago            → amber
+  *   STALE: captured more than 4 years ago    → orange-red
+  *   NONE: no coverage at all                 → red (dashed)
 */
 export const COVERAGE_FRESHNESS = {
     FRESH_MS:  2 * 365.25 * 24 * 60 * 60 * 1000,  // 2 years
     AGING_MS:  4 * 365.25 * 24 * 60 * 60 * 1000,  // 4 years
 } as const;
  
+
+// Coverage VTL Quality Score
+// Controls how the green coverage layer is colored when "Quality View" is active.
+// Sequences/images scoring below FLOOR are hidden entirely.
+// Above FLOOR they are bucketed into GOOD / FAIR / POOR tiers and colored.
+
+export const QUALITY_SCORE = {
+    /** Score at or above this → green (high quality) */
+    GOOD:  0.70,
+
+    /** Score at or above this but below GOOD → amber (fair quality) */
+    FAIR:  0.45,
+
+    /** Hard floor: sequences scoring below this are hidden (likely corrupted/black frames) */
+    FLOOR: 0.10,
+} as const;
+
+// Point Cloud
+ 
+/**
+  * Sanity check radius in metres.
+  * After converting SfM local coordinates to WGS84, the first point is
+  * checked against the image's computed_geometry. If it lands further than
+  * this threshold from the image location the conversion is likely wrong
+  * and the load is aborted with a clear error message.
+*/
+export const POINT_CLOUD_SANITY_RADIUS_M = 600;
+
+/**
+  * The maximum height (in meters) above the road surface to display 
+  * when the user activates "Ground Mode" (X key) in the point cloud viewer.
+  * Points higher than this are instantly hidden.
+*/
+export const POINT_CLOUD_GROUND_MODE_HEIGHT_M = 1.5;
+
+// Default box: 40 × 20 = 800 m²: less than half the current default
+// Max box: 120 × 80 = 9,600 m²: less than a third of the current max
+
+/** Default N-S corridor half-length in meters (road length shown forward+backward) */
+export const POINT_CLOUD_LENGTH_DEFAULT = 40;
+
+/** Maximum N-S corridor half-length in meters (slider ceiling) */
+export const POINT_CLOUD_LENGTH_MAX = 120;
+
+/** Default E-W corridor half-width in meters (road width, left+right from center) */
+export const POINT_CLOUD_WIDTH_DEFAULT = 20;
+
+/** Maximum E-W corridor half-width in meters (slider ceiling / FULL sentinel) */
+export const POINT_CLOUD_WIDTH_MAX = 80;
+
+/**
+  * Maximum corridor half-length fetched from Mapillary at load time (metres).
+  * Must be >= POINT_CLOUD_LENGTH_MAX so the user can slide freely without
+  * re-downloading. Kept well below unlimited to prevent browser crashes on
+  * dense urban reconstructions with 200+ clusters.
+*/
+export const POINT_CLOUD_FETCH_LENGTH = 200;
+
+/**
+  * Maximum corridor half-width fetched from Mapillary at load time (metres).
+  * Same reasoning as POINT_CLOUD_FETCH_LENGTH.
+*/
+export const POINT_CLOUD_FETCH_WIDTH = 150;

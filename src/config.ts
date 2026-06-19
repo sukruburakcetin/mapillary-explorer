@@ -83,6 +83,13 @@ export interface Config {
   turboDefaultColorByDate?: boolean;
 
   /**
+    * If true, the "Quality View" toggle button is shown in the control bar,
+    * allowing users to color the coverage layer by image quality score.
+    * Keep false (default) until the quality_score field is fully stable on Mapillary's end.
+  */
+  enableQualityView?: boolean;
+
+  /**
     * If true, the legend overlay inside the viewer is hidden.
   */
   hideLegend?: boolean;
@@ -134,10 +141,16 @@ export interface Config {
   hideCenterMapButton?: boolean;
 
   /**
-    * If true, the Street Coverage Analysis button inside the InfoBox is hidden.
+    * If true, the Street Coverage Analysis, StreetGap, and Quality View features inside the InfoBox are hidden.
   */
   hideCoverageAnalysis?: boolean;
 
+  /**
+    * If true, the Point Cloud button in the image utility group is hidden.
+    * Only visible in 3D map mode, hiding it has no effect in 2D.
+  */
+  hidePointCloud?: boolean;
+  
   /**
     * Controls the visibility/availability of the Traffic Signs button and functionality.
     * Accessed in widget via: this.props.config.enableTrafficSigns

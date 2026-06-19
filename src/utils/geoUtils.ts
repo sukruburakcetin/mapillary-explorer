@@ -536,3 +536,21 @@ export function snapPointsToSegments(
     noneCount,   noneKm:  Math.round(noneKm   * 100) / 100,
   };
 }
+
+/**
+ * Fast pure-math lon/lat → Web Mercator (EPSG:3857) conversion.
+ * Returns an ArcGIS-compatible plain point object, or null if the
+ * coordinates are invalid (lat ±90 causes tan → ±Infinity).
+ * Use instead of webMercatorUtils.geographicToWebMercator() when
+ * converting large batches of points (e.g. tile feature loops).
+ */
+export function lonLatToWebMercator(
+    lon: number,
+    lat: number
+): { x: number; y: number; type: "point"; spatialReference: { wkid: 3857 } } | null {
+    if (lat >= 90 || lat <= -90) return null;
+    const x = lon * 111319.49079327358;
+    let y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
+    y = y * 111319.49079327358;
+    return { x, y, type: "point", spatialReference: { wkid: 3857 } };
+}
