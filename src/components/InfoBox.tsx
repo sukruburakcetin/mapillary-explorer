@@ -356,6 +356,7 @@ export class InfoBox extends React.PureComponent<InfoBoxProps, InfoBoxState> {
                                         fontWeight: 600,
                                         fontSize: "8px",
                                         lineHeight: 1,
+                                        paddingTop: "1px",
                                         color: qualityViewActive ? "#F5A623" : "rgba(255,255,255,0.7)"
                                     }}>
                                         <Icons.Star
