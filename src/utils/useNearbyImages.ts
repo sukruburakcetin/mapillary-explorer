@@ -10,7 +10,7 @@ export function useNearbyImages(
   lon: number | null,
   accessToken: string,
   radiusM = 50,
-  limit = 12
+  limit = 20
 ) {
   const [images, setImages] = useState<NearbyImage[]>([]);
   const [loading, setLoading] = useState(false);

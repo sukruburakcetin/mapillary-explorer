@@ -1,5 +1,5 @@
 // NearbyCarousel.tsx
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import type { NearbyImage } from '../components/types';
 
 interface Props {
@@ -15,6 +15,18 @@ export const NearbyCarousel: React.FC<Props> = ({
 }) => {
   const [open, setOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const pickedFromCarouselRef = useRef(false);
+
+  // Close drawer when image changes
+  // but NOT when the user
+  // picked from the carousel (we want it to stay open in that case)
+  useEffect(() => {
+    if (pickedFromCarouselRef.current) {
+      pickedFromCarouselRef.current = false; // consume flag, skip close
+      return;
+    }
+    setOpen(false);
+  }, [currentImageId]);
 
   if (!loading && images.length === 0) return null;
 
@@ -43,15 +55,19 @@ export const NearbyCarousel: React.FC<Props> = ({
           whiteSpace: 'nowrap',
         }}
       >
-        {/* camera SVG icon */}
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
           <circle cx="12" cy="13" r="4"/>
         </svg>
-        {loading ? '…' : images.length}
+
+        {loading ? (
+          <span style={{ opacity: 0.6 }}>…</span>
+        ) : (
+          images.length
+        )}
+
         <span style={{ fontWeight: 400, opacity: 0.8 }}>nearby</span>
-        {/* chevron */}
         <svg
           width="10" height="10" viewBox="0 0 10 10" fill="currentColor"
           style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
@@ -61,7 +77,7 @@ export const NearbyCarousel: React.FC<Props> = ({
       </button>
 
       {/* Drawer */}
-      {open && (
+      {open && images.length > 0 && (
         <div style={{
           position: 'absolute',
           bottom: 36,
@@ -100,7 +116,13 @@ export const NearbyCarousel: React.FC<Props> = ({
                 key={img.id}
                 img={img}
                 isCurrent={img.id === currentImageId}
-                onSelect={() => { onSelectImage(img.id); setOpen(false); }}
+                onSelect={() => {
+                  // Set flag BEFORE calling onSelectImage so the
+                  // useEffect sees it when currentImageId updates
+                  pickedFromCarouselRef.current = true;
+                  onSelectImage(img.id);
+                  // Do NOT call setOpen(false) here
+                }}
                 onHover={onHoverImage}
               />
             ))}
@@ -111,7 +133,6 @@ export const NearbyCarousel: React.FC<Props> = ({
   );
 };
 
-// Thumbnail
 const NearbyThumb: React.FC<{
   img: NearbyImage;
   isCurrent: boolean;

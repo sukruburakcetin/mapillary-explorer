@@ -43,8 +43,6 @@ export const ImageUtilityGroup: React.FC<ImageUtilityGroupProps> = ({
             bottom: "22px",
             right: "55px",
             zIndex: 10000,
-            display: "flex",
-            flexDirection: "column",
             gap: "3px",
             padding: "1px 3px 1px 2px",
             background: "rgba(20, 20, 20, 0.4)",
@@ -141,7 +139,7 @@ export const ImageUtilityGroup: React.FC<ImageUtilityGroupProps> = ({
             </button>
         )}
 
-        {/* 6. Point Cloud — 3D only, hidden when no sfm_cluster or config hides it */}
+        {/* 6. Point Cloud, 3D only, hidden when no sfm_cluster or config hides it */}
         {is3D && !hidePointCloud && (
             <button
                 className="utility-button"
