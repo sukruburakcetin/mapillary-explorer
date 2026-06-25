@@ -258,6 +258,8 @@ export default class Widget extends React.PureComponent<
     private _debouncedBearingUrlUpdate: (() => void) & { cancel?: () => void } = Object.assign(() => {}, { cancel: () => {} });
     private _debouncedZoomUrlUpdate:    (() => void) & { cancel?: () => void } = Object.assign(() => {}, { cancel: () => {} });
     private zoomDisplayHandle: __esri.WatchHandle | null = null;
+    private _nearbyDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private _nearbyAbortController: AbortController | null = null;
 
     // Request tracking
     private _turboRequestCount: number = 0;
@@ -271,6 +273,8 @@ export default class Widget extends React.PureComponent<
     private _lastHoveredTurboOid: number | null = null;
     private _hoveredSequenceId: string | null = null;
     private _sequenceHighlightLayer: __esri.VectorTileLayer | null = null;
+    private _nearbySelectedId: string | null = null;
+    private _nearbyDirectionGraphic: __esri.Graphic | null = null;
 
     state: State = {
         jimuMapView: null,
@@ -520,7 +524,10 @@ export default class Widget extends React.PureComponent<
         // 3. Image Change Event
         this.mapillaryViewer.on("image", async (event: any) => {
             // Apply custom angle if set in config
-            this.applyCustomCameraAngle();
+            // Only apply custom angle on the initial load, not during sequence navigation
+            if (this._isInitialImageLoad) {
+                this.applyCustomCameraAngle();
+            }
             const newId = event.image.id;
             const view = this.state.jimuMapView?.view;
             if (!view) return;
@@ -619,6 +626,7 @@ export default class Widget extends React.PureComponent<
 
             // Update State with New ID
             this.setState({ imageId: newId }, () => {
+                this._nearbySelectedId = null; // real imageId is now in state, clear the optimistic selection
                 
                 // 1. FRESH LOOKUP: Ensure we have the exact coordinates for the active ID
                 // This guarantees the graphics are drawn exactly where the new image is.
@@ -1142,6 +1150,7 @@ export default class Widget extends React.PureComponent<
 
             // Create new Mapillary viewer
             if (this.viewerContainer.current) {
+                this._isInitialImageLoad = true;
                 this.mapillaryViewer = new Viewer({
                     container: this.viewerContainer.current,
                     accessToken: this.accessToken,
@@ -1693,6 +1702,13 @@ export default class Widget extends React.PureComponent<
 			clearInterval((this.currentGreenGraphic as any)._pulseInterval);
 			this.currentGreenGraphic = null;
 		}
+
+        if (this._nearbyDebounceTimer) {
+            clearTimeout(this._nearbyDebounceTimer);
+            this._nearbyDebounceTimer = null;
+        }
+        this._nearbyAbortController?.abort();
+        this._nearbyAbortController = null;
 
         if (this._sequenceHighlightLayer) {
             const view = this.state.jimuMapView?.view;
@@ -2382,7 +2398,7 @@ export default class Widget extends React.PureComponent<
             await new Promise(resolve => setTimeout(resolve, 50));
 
             if (this.viewerContainer.current && currentImageId) {
-                
+                this._isInitialImageLoad = true;
                 // Create new viewer
                 this.mapillaryViewer = new Viewer({
                     container: this.viewerContainer.current,
@@ -5359,11 +5375,25 @@ export default class Widget extends React.PureComponent<
             );
             
             // Draw the Mapillary Viewer Overlay
-            const initialPoints = this.state.pointCloudLength > 0
-                ? result.points.filter(p =>
-                    distanceMeters(p.lat, p.lon, this._cameraLat, this._cameraLon) <= this.state.pointCloudLength
-                )
-                : result.points;
+
+            const currentLength = this.state.pointCloudLength;
+            const halfWidth = this.state.pointCloudWidth;
+
+            const initialPoints = result.points.filter(p => {
+                const dy = (p.lat - this._cameraLat) * 111320;
+                const dx = (p.lon - this._cameraLon) * 111320 * Math.cos((this._cameraLat * Math.PI) / 180);
+                const forward = dx * sinB + dy * cosB;
+                const right = dx * cosB - dy * sinB;
+                
+                // Always apply width filter
+                if (halfWidth > 0 && Math.abs(right) > halfWidth) return false;
+                
+                // Apply length filter
+                if (currentLength > 0) {
+                    if (forward < -currentLength || forward > currentLength) return false;
+                }
+                return true;
+            });
 
             // Pass a shallow copy of result with filtered points for the viewer
             // _currentPointCloudResult still holds the full unfiltered cloud
@@ -7059,27 +7089,28 @@ export default class Widget extends React.PureComponent<
         const halfWidth = this.state.pointCloudWidth;
 
         const effectiveLength = currentRadius > 0 ? currentRadius : (this.state.pointCloudActualLength ?? 100);
-        const effectiveMax = Math.max(effectiveLength, halfWidth > 0 ? halfWidth : 0);
+        const effectiveWidth = halfWidth > 0 ? halfWidth : (this.state.pointCloudActualWidth ?? 100);
+        const effectiveMax = Math.max(effectiveLength, effectiveWidth);
 
         // Base step on the LARGER dimension so long corridors don't get flooded with rings.
         // Then clamp to a minimum of 10m so we never draw rings every 5m.
-        const rawStep = Math.max(effectiveLength, halfWidth > 0 ? halfWidth : effectiveLength) / 6;
+        const rawStep = effectiveMax / 6;
         const niceSteps = [10, 25, 50, 100, 200, 500];
         const step = Math.max(
             niceSteps.find(s => s >= rawStep) ?? niceSteps[niceSteps.length - 1],
             10
         );
 
-        const allIntervals: number[] = [];
-        for (let r = step; r < effectiveMax; r += step) allIntervals.push(Math.round(r));
-        if (currentRadius > 0) allIntervals.push(currentRadius);
-        if (halfWidth > 0 && halfWidth !== currentRadius) allIntervals.push(halfWidth);
+        const allIntervals = new Set<number>();
+        for (let r = step; r < effectiveMax; r += step) allIntervals.add(Math.round(r));
+        allIntervals.add(effectiveLength);
+        allIntervals.add(effectiveWidth);
 
-        allIntervals.forEach(radius => {
-            const isLengthBoundary = currentRadius > 0 && radius === currentRadius;
-            const isWidthBoundary  = halfWidth > 0 && radius === halfWidth;
-            // Skip intermediate rings beyond length, but never skip boundary rings
-            if (!isLengthBoundary && !isWidthBoundary && currentRadius > 0 && radius > currentRadius) return;
+        const sortedIntervals = Array.from(allIntervals).sort((a, b) => a - b);
+
+        sortedIntervals.forEach(radius => {
+            const isLengthBoundary = radius === effectiveLength;
+            const isWidthBoundary  = radius === effectiveWidth;
 
             const isBoundary = isLengthBoundary || isWidthBoundary;
             const bearing = this.getStreetBearing();
@@ -7092,8 +7123,8 @@ export default class Widget extends React.PureComponent<
             // Draw as a true ellipse scaled to the corridor proportions.
             // Each ring's semi-axis = radius scaled by how far the corridor
             // extends in that direction, capped at the corridor boundary.
-            const semiForward = currentRadius > 0 ? Math.min(radius, currentRadius) : effectiveLength;
-            const semiRight   = halfWidth > 0     ? Math.min(radius, halfWidth)     : radius;
+            const semiForward = Math.min(radius, effectiveLength);
+            const semiRight   = Math.min(radius, effectiveWidth);
 
             for (let i = 0; i <= 360; i += 3) {
                 const rad = (i * Math.PI) / 180;
@@ -8245,7 +8276,9 @@ export default class Widget extends React.PureComponent<
 
                     if (pcHit && (pcHit as any).graphic) {
                         const attrs = (pcHit as any).graphic.attributes || {};
-                        const idx = attrs.pointIndex ?? ((attrs.ObjectID || 1) - 1);
+                        const rawPointIdx = attrs.pointIndex ?? attrs.pointindex;
+                        const rawObjectId = attrs.ObjectID ?? attrs.objectid;
+                        const idx = rawPointIdx !== undefined ? rawPointIdx : ((rawObjectId || 1) - 1);
                         
                         if (this._pointCloudViewerRenderer) {
                             this._pointCloudViewerRenderer.setHighlight(idx);
@@ -8344,7 +8377,7 @@ export default class Widget extends React.PureComponent<
                                         hitGraphic.attributes.thumb_url = data.thumb_256_url;
                                         if (data.captured_at) hitGraphic.attributes.captured_at = new Date(data.captured_at).getTime();
                                         this.highlightSequenceOnVTL(hitGraphic.attributes.sequence_id ?? null);
-                                        console.log('[hover] fetched sequence:', data.sequence);
+                                        this.log('[hover] fetched sequence:', data.sequence);
 
                                         const dateStr = data.captured_at
                                             ? new Date(data.captured_at).toLocaleString()
@@ -9477,32 +9510,51 @@ export default class Widget extends React.PureComponent<
         * @param imageId - ID of the currently active image, excluded from results
         *                  so the viewer does not show the current image as a "nearby" suggestion.
     */
-    private async fetchNearbyImages(lat: number, lon: number, imageId: string) {
-        
-        const doFetch = async () => {
-            this.setState({ nearbyLoading: true, nearbyImages: [], nearbyStripOpen: false });
-            try {
-                const url = GRAPH_API.nearbyImages(lat, lon, 50, 13) +
-                            `&access_token=${this.accessToken}`;
-                const res = await fetch(url);
-                const data = await res.json();
-                const images = (data.data as NearbyImage[])
-                    .filter(img => img.id !== imageId)
-                    .slice(0, 12);
-                this.setState({ nearbyImages: images });
-            } catch {
-                this.setState({ nearbyImages: [] });
-            } finally {
-                this.setState({ nearbyLoading: false });
-            }
+    private fetchNearbyImages(lat: number, lon: number, imageId: string) {
+        // Cancel previous pending timer, user is still navigating
+        if (this._nearbyDebounceTimer) {
+            clearTimeout(this._nearbyDebounceTimer);
+            this._nearbyDebounceTimer = null;
+        }
+
+        const doFetch = () => {
+            // Cancel any in-flight request from a previous stop
+            this._nearbyAbortController?.abort();
+            const ctrl = new AbortController();
+            this._nearbyAbortController = ctrl;
+
+            // Never clear existing images, keep stale thumbnails visible during fetch
+            this.setState({ nearbyLoading: true });
+
+            const url = GRAPH_API.nearbyImages(lat, lon, 50, 21) +
+                        `&access_token=${this.accessToken}`;
+
+            fetch(url, { signal: ctrl.signal })
+                .then(r => r.json())
+                .then(data => {
+                    if (ctrl.signal.aborted) return;
+                    const images = (data.data as NearbyImage[])
+                        .filter(img => img.id !== imageId)
+                        .slice(0, 20);
+                    this.setState({ nearbyImages: images });
+                })
+                .catch(() => {
+                    // Aborted or network error, keep previous images
+                })
+                .finally(() => {
+                    if (!ctrl.signal.aborted) {
+                        this.setState({ nearbyLoading: false });
+                    }
+                });
         };
 
         if (this._isInitialImageLoad) {
+            // First image ever, wait for splash to finish then fetch immediately
             this._isInitialImageLoad = false;
-            // wait for splash fade + a little breathing room
-            setTimeout(doFetch, TIMING.SPLASH_FADE_MS + 300);
+            this._nearbyDebounceTimer = setTimeout(doFetch, TIMING.SPLASH_FADE_MS + 300);
         } else {
-            doFetch();
+            // Wait 1500ms after the user stops navigating before fetching
+            this._nearbyDebounceTimer = setTimeout(doFetch, 1500);
         }
     }
 
@@ -9519,10 +9571,14 @@ export default class Widget extends React.PureComponent<
         const view = this.state.jimuMapView?.view;
         if (!view || !this.ArcGISModules) return;
 
-        // Remove previous pin
+        // Remove previous pin and direction cone
         if (this._nearbyPinGraphic) {
             view.graphics.remove(this._nearbyPinGraphic);
             this._nearbyPinGraphic = null;
+        }
+        if (this._nearbyDirectionGraphic) {
+            view.graphics.remove(this._nearbyDirectionGraphic);
+            this._nearbyDirectionGraphic = null;
         }
 
         if (!img) return;
@@ -9530,6 +9586,7 @@ export default class Widget extends React.PureComponent<
         const [lon, lat] = img.geometry.coordinates;
         const { Graphic } = this.ArcGISModules;
 
+        // 1. Yellow dot at hovered image position
         this._nearbyPinGraphic = new Graphic({
             geometry: {
                 type: 'point',
@@ -9540,13 +9597,44 @@ export default class Widget extends React.PureComponent<
             symbol: {
                 type: 'simple-marker',
                 style: 'circle',
-                color: [255, 200, 0, 0.9],      // yellow, matches your direction hover
-                size: 10,
-                outline: { color: [255, 255, 255, 1], width: 1.5 }
+                color: [255, 200, 0, 0.95],
+                size: 12,
+                outline: { color: [255, 255, 255, 1], width: 2 }
             }
         });
-
         view.graphics.add(this._nearbyPinGraphic);
+
+        // 2. Direction cone, get current camera position from sequenceImages
+        // (_cameraLat/_cameraLon are only populated during point cloud sessions)
+        const { imageId, sequenceImages } = this.state;
+        const activeImg = imageId
+            ? sequenceImages.find(s => s.id === imageId)
+            : null;
+
+        const fromLat = activeImg?.lat ?? 0;
+        const fromLon = activeImg?.lon ?? 0;
+
+        if (!fromLat || !fromLon) return;
+
+        // Calculate bearing FROM hovered image TOWARD current camera position.
+        // This shows which direction the hovered image points back at you,
+        // giving a sense of what you would see if you jumped to it.
+        const bearing = calculateBearing(lat, lon, fromLat, fromLon);
+
+        const coneGeom = createConeGeometry(lon, lat, bearing, 10, 60);
+
+        this._nearbyDirectionGraphic = new Graphic({
+            geometry: coneGeom,
+            symbol: {
+                type: 'simple-fill',
+                color: [50, 205, 50, 0.9],
+                outline: {
+                    color: [255, 200, 0, 0.9],
+                    width: 3
+                }
+            } as any
+        });
+        view.graphics.add(this._nearbyDirectionGraphic);
     }
     // #endregion UTILITIES
     
@@ -9785,7 +9873,13 @@ export default class Widget extends React.PureComponent<
                             paddingBottom: "2px",
                         }}>
                             {(this.state.nearbyImages ?? []).map(img => {
-                                const isCurrent = img.id === this.state.imageId;
+                                // Use _nearbySelectedId for instant highlight on click,
+                                // fall back to imageId so the current sequence image
+                                // stays highlighted when no carousel pick is pending
+                                const isCurrent = this._nearbySelectedId
+                                    ? img.id === this._nearbySelectedId
+                                    : img.id === this.state.imageId;
+
                                 const date = new Date(img.captured_at).toLocaleDateString(undefined, {
                                     year: "numeric", month: "short"
                                 });
@@ -9793,8 +9887,11 @@ export default class Widget extends React.PureComponent<
                                     <div
                                         key={img.id}
                                         onClick={() => {
+                                            // Set instantly, no waiting for image event
+                                            this._nearbySelectedId = img.id;
+                                            // Force re-render so green border appears immediately
+                                            this.forceUpdate();
                                             this.mapillaryViewer?.moveTo(img.id);
-                                            this.setState({ nearbyStripOpen: false });
                                         }}
                                         onMouseEnter={(e) => {
                                             e.currentTarget.style.transform = "scale(1.04)";

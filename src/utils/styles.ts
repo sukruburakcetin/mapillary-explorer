@@ -367,7 +367,7 @@ export const glassStyles = {
     } as React.CSSProperties,
 
     // DYNAMIC ISLAND TURBO PILL
-    turboDynamicPillContainer: {
+     turboDynamicPillContainer: {
         position: "absolute",
         top: 0, left: 0, right: 0, bottom: 0,
         display: "flex",
@@ -389,14 +389,14 @@ export const glassStyles = {
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         border: "1px solid rgba(255, 193, 7, 0.3)",
-        padding: "10px 22px",
+        padding: "clamp(6px, 1.5cqw, 10px) clamp(12px, 3cqw, 22px)",
         borderRadius: "30px",
         boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
         animation: "turboDataPulse 2s infinite"
    } as React.CSSProperties,
 
     turboDynamicPillText: {
-        fontSize: "11px",
+        fontSize: "clamp(8px, 2cqw, 11px)", 
         fontWeight: 700,
         letterSpacing: "0.8px",
         background: "linear-gradient(90deg, #fff 0%, #ffc107 100%)",
@@ -428,14 +428,14 @@ export const glassStyles = {
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         border: "1px solid rgba(55, 213, 130, 0.3)",
-        padding: "10px 22px",
+        padding: "clamp(6px, 1.5cqw, 10px) clamp(12px, 3cqw, 22px)",
         borderRadius: "30px",
         boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
         animation: "imageDataPulse 2s infinite"
     } as React.CSSProperties,
  
     imageDynamicPillText: {
-        fontSize: "11px",
+        fontSize: "clamp(8px, 2cqw, 11px)",
         fontWeight: 700,
         letterSpacing: "0.8px",
         background: "linear-gradient(90deg, #fff 0%, #37d582 100%)",
@@ -477,9 +477,8 @@ export const glassStyles = {
         display:            "flex",
         flexDirection:      "column",
         alignItems:         "center",
-        width:              "min(92vw, 420px)",
-        maxWidth:           "420px",
-        padding:            "clamp(22px,5vw,44px) clamp(24px,6vw,52px) clamp(20px,5vw,38px)",
+        width:              "clamp(200px, 70cqw, 420px)", 
+        padding:            "clamp(12px, 3cqw, 44px) clamp(12px, 4cqw, 52px) clamp(10px, 3cqw, 38px)",
         background:         "rgba(255,255,255,0.028)",
         border:             "1px solid rgba(255,255,255,0.07)",
         borderRadius:       "20px",
@@ -492,9 +491,9 @@ export const glassStyles = {
     /** Container that holds the globe SVG + ripple rings + camera pin. */
     splashGlobeWrapper: {
         position:     "relative",
-        width:        "clamp(72px, 22vw, 96px)",
-        height:       "clamp(72px, 22vw, 96px)",
-        marginBottom: "clamp(9px, 4vw, 15px)",
+        width:        "clamp(56px, 15cqw, 96px)",
+        height:       "clamp(56px, 15cqw, 96px)",
+        marginBottom: "clamp(6px, 2cqw, 15px)",
     } as React.CSSProperties,
 
     /** One ripple ring; pass delay as inline style override. */
@@ -521,8 +520,8 @@ export const glassStyles = {
         position:       "absolute",
         top: "50%", left: "50%",
         transform:      "translate(-50%,-50%)",
-        width:          "clamp(38px, 11vw, 51px)",
-        height:         "clamp(38px, 11vw, 51px)",
+        width:          "clamp(32px, 9cqw, 51px)",
+        height:         "clamp(32px, 9cqw, 51px)",
         borderRadius:   "50%",
         overflow:       "hidden",
         animation:      "mly-cam-pulse 2.6s ease-in-out infinite",
@@ -534,16 +533,16 @@ export const glassStyles = {
 
     /** Wordmark ("MAPILLARY") above the title. */
     splashWordmark: {
-        fontSize:      "clamp(9px,2vw,16px)",
+        fontSize:      "clamp(8px, 2cqw, 16px)",
         fontWeight:    300,
-        letterSpacing: "clamp(3px,1vw,5px)",
+        letterSpacing: "clamp(2px, 0.5cqw, 5px)",
         color:         "rgba(255,255,255,0.3)",
         marginBottom:  "4px",
     } as React.CSSProperties,
 
     /** Large "Explorer" title. */
     splashTitle: {
-        fontSize:      "clamp(22px,7vw,28px)",
+        fontSize:      "clamp(18px, 5cqw, 28px)",
         fontWeight:    600,
         letterSpacing: "-0.5px",
         color:         "#ffffff",
@@ -554,7 +553,7 @@ export const glassStyles = {
 
     /** Tagline + version beneath the title. */
     splashTagline: {
-        fontSize:      "clamp(10px,3vw,11px)",
+        fontSize:      "clamp(9px, 2.2cqw, 11px)",
         textAlign:     "center",
         lineHeight:    1.45,
         color:         "rgba(255,255,255,0.25)",
@@ -596,7 +595,7 @@ export const glassStyles = {
         position:   "absolute",
         width:      "100%",
         textAlign:  "center",
-        fontSize:   "10px",
+        fontSize:   "clamp(8px, 2cqw, 10px)",
         fontStyle:  "italic",
         color:      "rgba(255,255,255,0.60)",
         textShadow: "0 0 8px rgba(255,255,255,0.12)",
@@ -608,7 +607,7 @@ export const glassStyles = {
         position:      "absolute",
         width:         "100%",
         textAlign:     "center",
-        fontSize:      "10px",
+        fontSize:      "clamp(8px, 2cqw, 10px)",
         fontWeight:    500,
         color:         "#37d582",
         letterSpacing: "0.2px",
@@ -837,9 +836,9 @@ export const glassStyles = {
         WebkitBackdropFilter: "blur(12px)",
         border: "1px solid rgba(255,255,255,0.15)",
         borderRadius: "12px",
-        padding: "8px 16px",
+        padding: "clamp(6px, 1.5cqw, 8px) clamp(12px, 3cqw, 16px)",
         color: "#fff",
-        fontSize: "11px",
+        fontSize: "clamp(9px, 2.2cqw, 11px)",
         fontWeight: 500,
         zIndex: 99999,
         boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
@@ -1065,9 +1064,12 @@ export const overrideStyles = `
 
     /* GLASS UTILITY PANEL */
     .glass-image-utility-panel {
+        display: grid !important;
+        grid-template-columns: 1fr;
+        justify-items: center;
         padding: clamp(2px, 1cqmin, 4px) !important;
         gap: clamp(2px, 1cqh, 6px) !important;
-        right: clamp(40px, 10cqw, 55px) !important;
+        right: clamp(40px, 5cqw, 55px) !important;
         bottom: clamp(20px, 5cqh, 27px) !important;
     }
 
@@ -1299,19 +1301,27 @@ export const overrideStyles = `
     }
 
     /* MOBILE (768px) OVERRIDES */
+
+    @container (max-height: 350px) {
+        .glass-image-utility-panel {
+            grid-template-columns: repeat(2, 1fr) !important;
+        }
+    }
+
     @media (max-width: 768px) {
         .widget-mapillary input[type="date"]::-webkit-datetime-edit { display: none !important; }
         .show-panorama-only-filter::after { content: "Panoramas:"; font-size: 9px !important; }
         .show-color-by-date-filter::after { content: "CBD:"; font-size: 9px !important; }
         .info-box { font-size: 8px !important; max-width: 110px !important; }
         .legend-container { display: none !important; }
-        .esri-popup__main-container { width: 250px !important; top: 8% !important; max-height:22% !important; }
+        .glass-image-utility-panel { grid-template-columns: repeat(2, 1fr) !important;}
+        .esri-popup__main-container { width: 250px !important;}
         .esri-widget__heading { font-size: 10px !important; }
         .esri-feature-content { font-size: 10px !important; }
         .esri-view-width-xsmall .esri-popup--docked-bottom-center .esri-popup__main-container { left: auto !important; right: auto !important; }
         .splash-screen-logo { margin-bottom: 15px !important; }
         .splash-screen-text { font-size: 10px !important; }
-        .minimap-container { top: 50px !important; left: 50% !important; right: auto !important; transform: translateX(-50%) !important; width: 90% !important; max-width: 350px !important; height: 150px !important; }
+        .minimap-container { top: 100px !important; left: 50% !important; right: auto !important; transform: translateX(-50%) !important; width: 90% !important; max-width: 350px !important; height: 200px !important; }
         .warning-message-container { font-size: 8px !important; }
         .glass-scroll-container { border-radius: 0px !important; padding: 0px !important; margin-top: 0px !important; gap: 2px !important }
         .glass-datepicker-calendar { width: 160px !important; padding: 6px 6px 5px !important; }
