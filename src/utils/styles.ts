@@ -61,6 +61,11 @@ export const fullscreenExitButtonStyle: React.CSSProperties = {
     zIndex: 10000,
     background: '#d1000059',
     color: 'white',
+    
+    border: 'none',
+    outline: 'none',
+    WebkitAppearance: 'none',
+    
     padding: '4px',
     borderRadius: '3px',
     cursor: 'pointer',
@@ -76,6 +81,11 @@ export const fullscreenMinimapToggleButtonStyle: React.CSSProperties = {
     zIndex: 10000,
     background: 'rgba(0, 0, 0, 0.6)',
     color: 'white',
+    
+    border: 'none',
+    outline: 'none',
+    WebkitAppearance: 'none',
+    
     padding: '6px',
     borderRadius: '3px',
     cursor: 'pointer',
@@ -164,11 +174,15 @@ export const glassStyles = {
         alignItems: 'center',
         justifyContent: 'center',
         padding: 0,
+
+        border: 'none',
+        outline: 'none',
+        WebkitAppearance: 'none',
+        
         borderRadius: '8px',
         cursor: 'pointer',
         backdropFilter: 'blur(4px)',
         WebkitBackdropFilter: 'blur(4px)',
-        // Glow effect when the layer is turned on
         boxShadow: active 
             ? `0 0 10px ${baseColor.replace('0.9', '0.4')}, inset 0 0 10px rgba(255,255,255,0.1)` 
             : '0 2px 5px rgba(0,0,0,0.1)',
@@ -449,7 +463,7 @@ export const glassStyles = {
     splashOverlay: (filtersLoaded: boolean): React.CSSProperties => ({
         position:       "absolute",
         inset:          0,
-        zIndex:         9999,
+        zIndex:         999999999,
         display:        "flex",
         alignItems:     "center",
         justifyContent: "center",
@@ -1069,7 +1083,7 @@ export const overrideStyles = `
         justify-items: center;
         padding: clamp(2px, 1cqmin, 4px) !important;
         gap: clamp(2px, 1cqh, 6px) !important;
-        right: clamp(40px, 5cqw, 55px) !important;
+        right: clamp(40px, 7cqw, 55px) !important;
         bottom: clamp(20px, 5cqh, 27px) !important;
     }
 
