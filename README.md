@@ -4,7 +4,7 @@
 </h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-4.4.0-blue.svg" alt="Version"/>
+  <img src="https://img.shields.io/badge/version-4.4.1-blue.svg" alt="Version"/>
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License"/>
   <img src="https://img.shields.io/badge/ArcGIS%20Experience%20Builder-1.18%20%7C%201.19%20%7C%201.20-007AC2" alt="ArcGIS Experience Builder"/>
   <img src="https://img.shields.io/badge/React-18%20%7C%2019-61DAFB" alt="React 18 | 19"/>
