@@ -84,7 +84,8 @@ interface State {
     turboFilterEndDate?: string;   // ISO yyyy-mm-dd
     turboFilterIsPano?: boolean; // true = only panoramas, false = only non-panos, undefined/empty = no filter
     turboColorByDate?: boolean;
-    qualityViewActive?: boolean;
+    qualityViewActive?: boolean; // Which quality band the legend has isolated ("good"|"fair"|"poor"|"unscored"), or null/undefined = show all bands
+    selectedQualityBand?: 'good' | 'fair' | 'poor' | 'unscored' | null;
     turboYearLegend?: { year: string, color: string }[];
     zoomWarningMessage?: string;
     trafficSignsFilterValue: { value: string; label: string; iconUrl: string | null };
@@ -133,6 +134,12 @@ interface State {
     pointCloudWidth: number;
     pointCloudMaxWidth: number;
     pointCloudActualWidth: number;
+    /** Toggles the SVG drawing overlay on the Mapillary viewer */
+    isLassoMode: boolean;
+    /** Array of 2D screen coordinates representing the user's drawn polygon */
+    lassoPolygon: [number, number][];
+    /** Maps the selected points to ArcGIS FeatureLayer ObjectIDs for highlighting */
+    lassoSelectedObjectIds: number[];
     isSightMode: boolean;
     sightObserver: any | null;
     sightTargets: any[];
@@ -208,6 +215,8 @@ export default class Widget extends React.PureComponent<
     private _pointCloudViewerRenderer: any = null; 
     private _groundMode: boolean = false;
     private _ringGeneration: number = 0; // Incremented on every ring redraw to cancel stale async draws
+    private _lassoHighlightHandle: __esri.Handle | null = null; // Holds the ArcGIS highlight reference so we can clear it when redrawing
+    private measureLabelRef = React.createRef<HTMLDivElement>();
 
     // Measurement Renderer Variables
     private _measurementRendererActive: boolean = false;
@@ -225,6 +234,7 @@ export default class Widget extends React.PureComponent<
     private _cameraLat: number = 0;
     private _cameraLon: number = 0;
     private _currentPointCloudResult: PointCloudResult | null = null;
+    private _filteredPointCloudPoints: PointCloudPoint[] = [];
     private _measureLayer: __esri.GraphicsLayer | null = null;
     
     // UI elements
@@ -304,6 +314,7 @@ export default class Widget extends React.PureComponent<
         showTurboFilterBox: false,
         turboYearLegend: [],
         qualityViewActive: false,
+        selectedQualityBand: null,
         showTrafficSignsFilterBox: false,
         trafficSignsFilterValue: { value: DEFAULT_FILTER_LABELS.TRAFFIC_SIGNS, label: DEFAULT_FILTER_LABELS.TRAFFIC_SIGNS, iconUrl: null },
         trafficSignsOptions: [{ value: DEFAULT_FILTER_LABELS.TRAFFIC_SIGNS, label: DEFAULT_FILTER_LABELS.TRAFFIC_SIGNS, iconUrl: null }],
@@ -322,6 +333,9 @@ export default class Widget extends React.PureComponent<
         isFetchingAlternates: false,
         targetDetectionId: null,
         syncHeading: false,
+        isLassoMode: false,
+        lassoPolygon: [],
+        lassoSelectedObjectIds: [],
         isMeasureMode: false,
         measurePoints:[],
         showCalibrationPanel: false,
@@ -368,7 +382,8 @@ export default class Widget extends React.PureComponent<
                 turboFilterStartDate || undefined,
                 turboFilterEndDate   || undefined,
                 turboFilterIsPano,
-                this.state.qualityViewActive
+                this.state.qualityViewActive,
+                this.state.selectedQualityBand
             );
 
             if (this.state.turboModeActive) {
@@ -517,7 +532,19 @@ export default class Widget extends React.PureComponent<
                 !this._isFlyInActive && 
                 this.state.syncHeading) {
                 
-                view.goTo({ heading: event.bearing }, { animate: false });
+                // Fetch the current image coordinates
+                const activeImg = this.state.sequenceImages.find(s => s.id === this.state.imageId);
+                
+                // If we know where the car is, force the map to center on it while rotating.
+                // This prevents the green dot from swinging out of view!
+                if (activeImg) {
+                    view.goTo({ 
+                        center: [activeImg.lon, activeImg.lat],
+                        heading: event.bearing 
+                    }, { animate: false });
+                } else {
+                    view.goTo({ heading: event.bearing }, { animate: false });
+                }
             }
         });
 
@@ -1176,7 +1203,10 @@ export default class Widget extends React.PureComponent<
 
                 // Because we destroyed the viewer, we must re-attach the 3D layers!
                 if (this.state.pointCloudVisible && this._currentPointCloudResult) {
-                    this.addViewerPointCloudRenderer(this._currentPointCloudResult, startImageId);
+                    this.addViewerPointCloudRenderer(
+                        { ...this._currentPointCloudResult, points: this._filteredPointCloudPoints }, 
+                        startImageId
+                    );
                 }
                 if (this.state.isMeasureMode) {
                     this.updateViewerMeasurementRenderer();
@@ -2444,7 +2474,10 @@ export default class Widget extends React.PureComponent<
                 this.bindMapillaryEvents();
 
                 if (this.state.pointCloudVisible && this._currentPointCloudResult) {
-                    this.addViewerPointCloudRenderer(this._currentPointCloudResult, currentImageId);
+                    this.addViewerPointCloudRenderer(
+                        { ...this._currentPointCloudResult, points: this._filteredPointCloudPoints }, 
+                        currentImageId
+                    );
                 }
                 if (this.state.isMeasureMode) {
                     this.updateViewerMeasurementRenderer();
@@ -3070,7 +3103,8 @@ export default class Widget extends React.PureComponent<
         filterStartDate?: string,
         filterEndDate?: string,
         filterIsPano?: boolean | null,
-        qualityViewActive?: boolean
+        qualityViewActive?: boolean,
+        qualityBandFilter?: 'good' | 'fair' | 'poor' | 'unscored' | null
     ) {
         const { VectorTileLayer } = this.ArcGISModules;
         const vectorTileSourceUrl = `${TILE_URLS.COVERAGE}?access_token=${this.accessToken}`;
@@ -3150,36 +3184,21 @@ export default class Widget extends React.PureComponent<
                 };
             };
 
-            layers.push(seqBand(
-                STYLE_LAYER_IDS.SEQUENCE_GOOD,
-                [[">=", "quality_score", QUALITY_SCORE.GOOD]],
-                "#35AF6D"
-            ));
-            layers.push(seqBand(
-                STYLE_LAYER_IDS.SEQUENCE_FAIR,
-                [
-                    [">=", "quality_score", QUALITY_SCORE.FAIR],
-                    ["<",  "quality_score", QUALITY_SCORE.GOOD]
-                ],
-                "#F5A623"
-            ));
-            layers.push(seqBand(
-                STYLE_LAYER_IDS.SEQUENCE_POOR,
-                [
-                    [">",  "quality_score", QUALITY_SCORE.FLOOR],
-                    ["<",  "quality_score", QUALITY_SCORE.FAIR]
-                ],
-                "#D0021B"
-            ));
-            layers.push(seqBand(
-                STYLE_LAYER_IDS.SEQUENCE_UNSCORED,
-                [["any",
-                    ["!has", "quality_score"],
-                    ["==", "quality_score", 0]
-                ]],
-                "#A855F7", 
-                0.85
-            ));
+            const showBand = (band: 'good' | 'fair' | 'poor' | 'unscored') =>
+                !qualityBandFilter || qualityBandFilter === band;
+
+            if (showBand('good')) {
+                layers.push(seqBand(STYLE_LAYER_IDS.SEQUENCE_GOOD, [[">=", "quality_score", QUALITY_SCORE.GOOD]], "#35AF6D"));
+            }
+            if (showBand('fair')) {
+                layers.push(seqBand(STYLE_LAYER_IDS.SEQUENCE_FAIR, [[">=", "quality_score", QUALITY_SCORE.FAIR], ["<", "quality_score", QUALITY_SCORE.GOOD]], "#F5A623"));
+            }
+            if (showBand('poor')) {
+                layers.push(seqBand(STYLE_LAYER_IDS.SEQUENCE_POOR, [[">", "quality_score", QUALITY_SCORE.FLOOR], ["<", "quality_score", QUALITY_SCORE.FAIR]], "#D0021B"));
+            }
+            if (showBand('unscored')) {
+                layers.push(seqBand(STYLE_LAYER_IDS.SEQUENCE_UNSCORED, [["any", ["!has", "quality_score"], ["==", "quality_score", 0]]], "#A855F7", 0.85));
+            }
 
             if (!this.props.config.hideCoverageCircles) {
                 const imgBand = (id: string, qualityConditions: any[], color: string, opacity = 0.85) => {
@@ -3204,36 +3223,44 @@ export default class Widget extends React.PureComponent<
                     };
                 };
 
-                layers.push(imgBand(
-                    STYLE_LAYER_IDS.IMAGE_GOOD,
-                    [[">=", "quality_score", QUALITY_SCORE.GOOD]],
-                    "#35AF6D"
-                ));
-                layers.push(imgBand(
-                    STYLE_LAYER_IDS.IMAGE_FAIR,
-                    [
-                        [">=", "quality_score", QUALITY_SCORE.FAIR],
-                        ["<",  "quality_score", QUALITY_SCORE.GOOD]
-                    ],
-                    "#F5A623"
-                ));
-                layers.push(imgBand(
-                    STYLE_LAYER_IDS.IMAGE_POOR,
-                    [
-                        [">",  "quality_score", QUALITY_SCORE.FLOOR],
-                        ["<",  "quality_score", QUALITY_SCORE.FAIR]
-                    ],
-                    "#D0021B"
-                ));
-                layers.push(imgBand(
-                    STYLE_LAYER_IDS.IMAGE_UNSCORED,
-                    [["any",
-                        ["!has", "quality_score"],
-                        ["==", "quality_score", 0]
-                    ]],
-                    "#A855F7",
-                    0.85
-                ));
+                if (showBand('good')) {
+                    layers.push(imgBand(
+                        STYLE_LAYER_IDS.IMAGE_GOOD,
+                        [[">=", "quality_score", QUALITY_SCORE.GOOD]],
+                        "#35AF6D"
+                    ));
+                }
+                if (showBand('fair')) {
+                    layers.push(imgBand(
+                        STYLE_LAYER_IDS.IMAGE_FAIR,
+                        [
+                            [">=", "quality_score", QUALITY_SCORE.FAIR],
+                            ["<",  "quality_score", QUALITY_SCORE.GOOD]
+                        ],
+                        "#F5A623"
+                    ));
+                }
+                if (showBand('poor')) {
+                    layers.push(imgBand(
+                        STYLE_LAYER_IDS.IMAGE_POOR,
+                        [
+                            [">",  "quality_score", QUALITY_SCORE.FLOOR],
+                            ["<",  "quality_score", QUALITY_SCORE.FAIR]
+                        ],
+                        "#D0021B"
+                    ));
+                }
+                if (showBand('unscored')) {
+                    layers.push(imgBand(
+                        STYLE_LAYER_IDS.IMAGE_UNSCORED,
+                        [["any",
+                            ["!has", "quality_score"],
+                            ["==", "quality_score", 0]
+                        ]],
+                        "#A855F7",
+                        0.85
+                    ));
+                }
             }
 
         } else {
@@ -3304,14 +3331,15 @@ export default class Widget extends React.PureComponent<
         startDate?: string,
         endDate?: string,
         isPano?: boolean | null,
-        qualityViewActive?: boolean
+        qualityViewActive?: boolean,
+        qualityBandFilter?: 'good' | 'fair' | 'poor' | 'unscored' | null
     ) {
         if (!this.state.jimuMapView) return;
         const view = this.state.jimuMapView.view;
 
         this.log('[rebuildCoverageLayer] called with isPano:', isPano);
         
-        this.initMapillaryLayer(creatorId, startDate, endDate, isPano, qualityViewActive);
+        this.initMapillaryLayer(creatorId, startDate, endDate, isPano, qualityViewActive, qualityBandFilter);
 
         this.log('[rebuildCoverageLayer] tilesActive:', this.state.tilesActive);
 
@@ -3379,7 +3407,8 @@ export default class Widget extends React.PureComponent<
                 this.state.turboFilterStartDate  || undefined,
                 this.state.turboFilterEndDate    || undefined,
                 this.state.turboFilterIsPano,
-                this.state.qualityViewActive
+                this.state.qualityViewActive,
+                this.state.selectedQualityBand
             );
 
             jimuMapView.view.map.add(this.mapillaryVTLayer);
@@ -3429,7 +3458,7 @@ export default class Widget extends React.PureComponent<
                     type: "symbol",
                     layout: {
                         "icon-image": ["get", "value"],
-                        "icon-size": 0.8
+                        "icon-size": 0.4
                     }
                 }
             ]
@@ -3556,6 +3585,10 @@ export default class Widget extends React.PureComponent<
             await this.loadMapillaryTrafficSignsFromTilesBBox(true);
             if (this.mapillaryTrafficSignsFeatureLayer) {
                 jimuMapView.view.map.add(this.mapillaryTrafficSignsFeatureLayer);
+                // Hide VectorTileLayer so it doesn't draw a duplicate icon underneath!
+                if (this.mapillaryTrafficSignsLayer) {
+                    this.mapillaryTrafficSignsLayer.visible = false;
+                }
             }
         }
 
@@ -3582,7 +3615,11 @@ export default class Widget extends React.PureComponent<
             } else {
                 this._cancelTrafficSignsFetch = false;
                 // Optionally clear warning if they zoom back in
-                this.clearZoomWarning(); 
+                this.clearZoomWarning();
+                // Hide VectorTileLayer when zoomed in so only the clickable FeatureLayer shows
+                if (this.mapillaryTrafficSignsLayer && this.mapillaryTrafficSignsFeatureLayer) {
+                    this.mapillaryTrafficSignsLayer.visible = false;
+                }
             }
         });
         
@@ -3768,6 +3805,10 @@ export default class Widget extends React.PureComponent<
             await this.loadMapillaryObjectsFromTilesBBox(true);
             if (this.mapillaryObjectsFeatureLayer) {
                 jimuMapView.view.map.add(this.mapillaryObjectsFeatureLayer);
+                // Hide VectorTileLayer so it doesn't draw a duplicate icon underneath!
+                if (this.mapillaryObjectsLayer) {
+                    this.mapillaryObjectsLayer.visible = false;
+                }
             }
         }
 
@@ -3786,6 +3827,11 @@ export default class Widget extends React.PureComponent<
                 this._cancelObjectsFetch = true;
                 const specificLayer = jimuMapView.view.map.findLayerById(LAYER_IDS.OBJECTS_FL);
                 if (specificLayer) jimuMapView.view.map.remove(specificLayer);
+
+                // Show VectorTileLayer coverage when zoomed out
+                if (this.mapillaryObjectsLayer) {
+                    this.mapillaryObjectsLayer.visible = true; 
+                }
                 
                 // Reset options to full list when zoomed out
                 if (this._fullObjectsOptions.length > 0) {
@@ -3795,6 +3841,10 @@ export default class Widget extends React.PureComponent<
                 // Clear warning and allow fetching when zoomed in deep enough
                 this._cancelObjectsFetch = false;
                 this.clearZoomWarning();
+                // Hide VectorTileLayer when zoomed in so only the clickable FeatureLayer shows
+                if (this.mapillaryObjectsLayer && this.mapillaryObjectsFeatureLayer) {
+                    this.mapillaryObjectsLayer.visible = false;
+                }
             }
         });
 
@@ -4103,7 +4153,22 @@ export default class Widget extends React.PureComponent<
 
     private toggleQualityView = async () => {
         const newActive = !this.state.qualityViewActive;
-        this.setState({ qualityViewActive: newActive }, async () => {
+         this.setState({ qualityViewActive: newActive, selectedQualityBand: newActive ? this.state.selectedQualityBand : null }, async () => {
+            // Sequence-level quality_score exists from zoom 6, but the image
+            // layer (and therefore per-image band precision) only renders at
+            // ZOOM.TILE_FETCH (14). Below that, bands reflect sequence averages
+            // only, hint at this rather than claim a hard visual threshold,
+            // since ArcGIS VectorTileLayer has no queryRenderedFeatures to
+            // measure actual on-screen band diversity.
+            if (newActive && this.state.jimuMapView && this.state.jimuMapView.view.zoom < ZOOM.TILE_FETCH) {
+                this.showZoomWarning(
+                    "Quality bands are based on sequence-level averages until you zoom in further.",
+                    0
+                );
+            } else if (!newActive) {
+                this.clearZoomWarning();
+            }
+
             if (!this.state.tilesActive) return; // layer not on map, nothing to rebuild
 
             let creatorId: number | undefined;
@@ -4117,7 +4182,8 @@ export default class Widget extends React.PureComponent<
                 this.state.turboFilterStartDate || undefined,
                 this.state.turboFilterEndDate   || undefined,
                 this.state.turboFilterIsPano,
-                newActive
+                newActive,
+                newActive ? this.state.selectedQualityBand : null
             );
         });
     };
@@ -4887,6 +4953,33 @@ export default class Widget extends React.PureComponent<
         }
     }
 
+    // Toggles which quality band the Quality legend isolates on the coverage VTL.
+    // Unlike the year legend (a FeatureLayer definitionExpression), the quality
+    // bands are separate style layers baked into the VTL's style JSON, so
+    // isolating one means rebuilding the layer with only that band's
+    // sequence/image entries — see initMapillaryLayer's showBand() gate.
+    private handleQualityLegendClick = (band: 'good' | 'fair' | 'poor' | 'unscored') => {
+        const newBand = this.state.selectedQualityBand === band ? null : band;
+        this.setState({ selectedQualityBand: newBand }, async () => {
+            if (!this.state.tilesActive || !this.state.qualityViewActive) return;
+
+            let creatorId: number | undefined;
+            const username = this.state.turboFilterUsername?.trim() || this.props.config.turboCreator;
+            if (username) {
+                creatorId = await this.getUserIdFromUsername(username) || undefined;
+            }
+
+            this.rebuildCoverageLayer(
+                creatorId,
+                this.state.turboFilterStartDate || undefined,
+                this.state.turboFilterEndDate   || undefined,
+                this.state.turboFilterIsPano,
+                this.state.qualityViewActive,
+                newBand
+            );
+        });
+    }
+
     /**
         * Handles the Turbo Mode toggle button.
         * Turbo Mode loads Mapillary coverage points as feature graphics
@@ -4947,7 +5040,8 @@ export default class Widget extends React.PureComponent<
                     undefined,
                     undefined,
                     undefined,
-                    this.state.qualityViewActive
+                    this.state.qualityViewActive,
+                    this.state.selectedQualityBand
             );
             this.setState({
                 turboFilterUsername: "",
@@ -5395,6 +5489,8 @@ export default class Widget extends React.PureComponent<
                 return true;
             });
 
+            this._filteredPointCloudPoints = initialPoints;
+
             // Pass a shallow copy of result with filtered points for the viewer
             // _currentPointCloudResult still holds the full unfiltered cloud
             this.addViewerPointCloudRenderer(
@@ -5501,7 +5597,13 @@ export default class Widget extends React.PureComponent<
         let filteredIndex = 0;
 
         result.points.forEach((p, origIndex) => {
-            const distFromCamera = distanceMeters(this._cameraLat, this._cameraLon, p.lat, p.lon);
+            // Use pure SfM coordinates for perfect physical photogrammetric distance!
+            const distFromCamera = distanceMeters(
+                result.computedImageLocation.lat, 
+                result.computedImageLocation.lon, 
+                p.rawLat, 
+                p.rawLon
+            );
             
             // Calculate relative offset in meters BEFORE applying shift/nudge
             const dy = (p.lat - this._cameraLat) * 111320;
@@ -5629,7 +5731,10 @@ export default class Widget extends React.PureComponent<
                 title: "Point Cloud Node",
                 content: `
                     <div style="font-size: 13px; line-height: 1.5;">
-                        <b>Distance from Camera:</b> {distanceFromCamera} m<br/>
+                        <b>Horizontal Distance:</b> {distanceFromCamera} m<br/>
+                        <span style="font-size: 10px; color: #888; display: block; margin-top: -4px; margin-bottom: 4px;">
+                            (From camera GPS origin)
+                        </span>
                         <b>Height Above Road:</b> {relativeHeight} m<br/>
                         <b>Absolute Altitude:</b> {absoluteAltitude} m<br/>
                         <span style="display:none;">{originalIndex}</span>
@@ -5990,6 +6095,27 @@ export default class Widget extends React.PureComponent<
             _aPositionLoc: -1,
             _colorBuffer: null as WebGLBuffer | null,
             _aColorLoc: -1,
+            // [4.5.0 Update] Lasso Buffer & Matrix tracking
+            // We store the view matrices here during render() so our raycaster in widget.tsx can read them later.
+            _lastViewMatrix: null as Float32Array | null,
+            _lastProjMatrix: null as Float32Array | null,
+            _lassoBuffer: null as WebGLBuffer | null,
+            _aLassoLoc: -1,
+
+            /**
+                * [4.5.0 Update] Flushes the selection array to the GPU.
+                * 1.0 means selected (Cyan), 0.0 means unselected (RGB).
+            */
+            updateLasso(indices: number[]) {
+                const gl = this._gl;
+                if (!gl || !this._lassoBuffer) return;
+                const data = new Float32Array(this._vertexCount);
+                for (const idx of indices) {
+                    if (idx >= 0 && idx < this._vertexCount) data[idx] = 1.0;
+                }
+                gl.bindBuffer(gl.ARRAY_BUFFER, this._lassoBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+            },
 
             updateColors() {
                 const gl = this._gl;
@@ -6053,6 +6179,13 @@ export default class Widget extends React.PureComponent<
 
                 // Rebuild color buffer for the new subset
                 this.updateColors();
+
+                // [4.5.0 Update] Wipe the lasso buffer cleanly when slider crops the array
+                // Prevents index-out-of-bounds WebGL crashes
+                if (this._lassoBuffer) {
+                    gl.bindBuffer(gl.ARRAY_BUFFER, this._lassoBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._vertexCount), gl.DYNAMIC_DRAW);
+                }
             },
 
             setHighlight(index: number) {
@@ -6102,6 +6235,8 @@ export default class Widget extends React.PureComponent<
                 this._uIsHighlightDrawLoc = gl.getUniformLocation(program, 'uIsHighlightDraw');
                 this._aPositionLoc = gl.getAttribLocation(program, 'aPosition');
                 this._aColorLoc = gl.getAttribLocation(program, 'aColor');
+                // [4.5.0 Update] Bind the lasso attribute
+                this._aLassoLoc = gl.getAttribLocation(program, 'aLasso');
                 this._uPixelRatioLoc = gl.getUniformLocation(program, 'uPixelRatio');
                 this._pixelRatio = window.devicePixelRatio || 1;
 
@@ -6115,6 +6250,7 @@ export default class Widget extends React.PureComponent<
                 }
                 this._vertexCount = positions.length / 3;
 
+                // [4.5.0 Update] Setup empty lasso buffer
                 this._positionBuffer = gl.createBuffer()!;
                 gl.bindBuffer(gl.ARRAY_BUFFER, this._positionBuffer);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
@@ -6125,6 +6261,11 @@ export default class Widget extends React.PureComponent<
                 this._highlightBuffer = gl.createBuffer()!;
                 gl.bindBuffer(gl.ARRAY_BUFFER, this._highlightBuffer);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 0]), gl.DYNAMIC_DRAW);
+
+                this._lassoBuffer = gl.createBuffer()!;
+                gl.bindBuffer(gl.ARRAY_BUFFER, this._lassoBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._vertexCount), gl.DYNAMIC_DRAW);
+
             },
 
             onReference(viewer: any, reference: any) {
@@ -6157,6 +6298,9 @@ export default class Widget extends React.PureComponent<
             },
 
             render(context: WebGLRenderingContext, viewMatrix: Float32Array, projectionMatrix: Float32Array) {
+                // [4.5.0 Update] Intercept and cache matrices for the outside Raycaster
+                this._lastViewMatrix = new Float32Array(viewMatrix);
+                this._lastProjMatrix = new Float32Array(projectionMatrix);
                 const gl = context;
                 const program = this._program;
                 if (!program || !this._positionBuffer || this._vertexCount === 0) return;
@@ -6182,6 +6326,13 @@ export default class Widget extends React.PureComponent<
                     gl.vertexAttribPointer(this._aColorLoc, 4, gl.FLOAT, false, 0, 0); 
                 }
 
+                // [4.5.0 Update] Tell GPU how to read the Lasso selection flags
+                if (this._aLassoLoc >= 0 && this._lassoBuffer) {
+                    gl.enableVertexAttribArray(this._aLassoLoc);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, this._lassoBuffer);
+                    gl.vertexAttribPointer(this._aLassoLoc, 1, gl.FLOAT, false, 0, 0);
+                }
+
                 gl.enable(gl.DEPTH_TEST);
                 gl.depthMask(false);
                 gl.drawArrays(gl.POINTS, 0, this._vertexCount);
@@ -6200,6 +6351,8 @@ export default class Widget extends React.PureComponent<
 
                 gl.disableVertexAttribArray(this._aPositionLoc);
                 if (this._aColorLoc >= 0) gl.disableVertexAttribArray(this._aColorLoc);
+                // [4.5.0 Update] Cleanup
+                if (this._aLassoLoc >= 0) gl.disableVertexAttribArray(this._aLassoLoc);
             },
         };
 
@@ -6238,6 +6391,8 @@ export default class Widget extends React.PureComponent<
             this._pointCloudLayer = null;
         }
         this.removeViewerPointCloudRenderer();
+
+        this._filteredPointCloudPoints = [];
 
         // DEACTIVATE ALL POINT-CLOUD-DEPENDENT TOOLS
         // Measure mode
@@ -6285,6 +6440,12 @@ export default class Widget extends React.PureComponent<
                 pointCloudVisible:   false,
                 pointCloudAvailable: undefined,
             });
+        }
+
+        // [4.5.0 Update] Ensure Lasso clears out when the point cloud is deactivated
+        if (this.state.isLassoMode) {
+            this.clearLasso();
+            this.setState({ isLassoMode: false });
         }
     };
 
@@ -6473,6 +6634,184 @@ export default class Widget extends React.PureComponent<
         });
     };
 
+    // [4.5.0 Update] LASSO SELECTION LOGIC
+    private toggleLassoMode = () => {
+        this.setState(prev => {
+            const nextMode = !prev.isLassoMode;
+            const updates: any = {
+                isLassoMode: nextMode,
+                lassoPolygon: [],
+                lassoSelectedObjectIds: []
+            };
+
+            // Prevent clashes with other 3D tools. Auto-disable them if Lasso is activated.
+            if (nextMode) {
+                if (prev.isMeasureMode) { updates.isMeasureMode = false; updates.measurePoints = []; this.updateMeasurementGraphics(); }
+                if (prev.isSightMode) { updates.isSightMode = false; updates.sightObserver = null; updates.sightTargets = []; if (this._sightViewModel) this._sightViewModel.clear(); }
+                if (prev.isViewshedMode) { updates.isViewshedMode = false; this.clearViewshed(); }
+            }
+            return updates;
+        }, () => {
+            if (this.state.isLassoMode) {
+                this.showToast(
+                    <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        Lasso Mode Active: Draw on the image to select points.
+                    </span>, 4000
+                );
+            } else {
+                this.clearLasso();
+            }
+        });
+    };
+
+    private clearLasso = () => {
+        this.setState({ lassoPolygon: [], lassoSelectedObjectIds: [] });
+        // 1. Clear ArcGIS Scene highlight
+        if (this._lassoHighlightHandle) {
+            this._lassoHighlightHandle.remove();
+            this._lassoHighlightHandle = null;
+        }
+        if (this._pointCloudViewerRenderer) {
+            this._pointCloudViewerRenderer.updateLasso([]);
+            if (this.mapillaryViewer) this.mapillaryViewer.resize();
+        }
+    };
+
+    // Starts the SVG polygon path when the user clicks the viewer
+    private handleLassoStart = (e: React.PointerEvent<SVGSVGElement>) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        this.setState({ lassoPolygon: [[e.clientX - rect.left, e.clientY - rect.top]] });
+        // Lock pointer to SVG so dragging outside the div doesn't break the polygon
+        if (e.currentTarget.setPointerCapture) {
+            e.currentTarget.setPointerCapture(e.pointerId);
+        }
+    };
+
+    // Adds points to the polygon path as the mouse moves
+    private handleLassoMove = (e: React.PointerEvent<SVGSVGElement>) => {
+        if (e.buttons !== 1) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        this.setState(prev => ({ 
+            lassoPolygon: [...prev.lassoPolygon, [e.clientX - rect.left, e.clientY - rect.top]] 
+        }));
+    };
+
+    // Completes the polygon and triggers the 3D math calculation
+    private handleLassoEnd = (e: React.PointerEvent<SVGSVGElement>) => {
+        if (e.currentTarget.releasePointerCapture) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+        this.calculateLassoSelection();
+    };
+
+    // Applies the calculated ObjectIDs to the ArcGIS 3D Scene LayerView
+    private highlightLassoInArcGIS() {
+        if (!this.state.jimuMapView || !this._pointCloudLayer) return;
+
+        this.state.jimuMapView.view.whenLayerView(this._pointCloudLayer).then((layerView: __esri.FeatureLayerView) => {
+            if (this._lassoHighlightHandle) {
+                this._lassoHighlightHandle.remove();
+                this._lassoHighlightHandle = null;
+            }
+            if (this.state.lassoSelectedObjectIds.length > 0) {
+                this._lassoHighlightHandle = layerView.highlight(this.state.lassoSelectedObjectIds);
+            }
+        }).catch(() => {});
+    }
+
+    /**
+        * [4.5.0 Core Math]
+        * Projects every 3D coordinate from the Point Cloud back onto the 2D screen space
+        * using the current WebGL View and Projection matrices.
+        * It then uses a Ray-Casting algorithm to check if those 2D coordinates fall inside
+        * the user's drawn SVG polygon.
+    */
+    private calculateLassoSelection = () => {
+        const { lassoPolygon } = this.state;
+        if (lassoPolygon.length < 3) return; // Need at least a triangle
+        
+        const renderer = this._pointCloudViewerRenderer;
+
+        // We require the cached matrices from the last render frame
+        if (!renderer || !renderer._lastViewMatrix || !renderer._lastProjMatrix || !renderer._currentReference) return;
+
+        const canvas = this.viewerContainer.current?.querySelector('canvas');
+        if (!canvas) return;
+        const width = canvas.clientWidth;
+        const height = canvas.clientHeight;
+
+        const viewMat = renderer._lastViewMatrix;
+        const projMat = renderer._lastProjMatrix;
+        const ref = renderer._currentReference;
+
+        const selectedIndices: number[] = [];
+
+        // Manual 4x4 Matrix by 4x1 Vector multiplication (Required for WebGL coordinate projection)
+        const transform = (m: Float32Array, v: number[]) => {
+            return [
+                m[0]*v[0] + m[4]*v[1] + m[8]*v[2] + m[12]*v[3],
+                m[1]*v[0] + m[5]*v[1] + m[9]*v[2] + m[13]*v[3],
+                m[2]*v[0] + m[6]*v[1] + m[10]*v[2] + m[14]*v[3],
+                m[3]*v[0] + m[7]*v[1] + m[11]*v[2] + m[15]*v[3]
+            ];
+        };
+
+        // Ray-casting algorithm for Point in Polygon check
+        const pointInPolygon = (point: number[], vs: [number, number][]) => {
+            let x = point[0], y = point[1];
+            let inside = false;
+            for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+                let xi = vs[i][0], yi = vs[i][1];
+                let xj = vs[j][0], yj = vs[j][1];
+                let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        };
+
+        // Mathematically project all 3D map points back onto the 2D Screen
+        this._filteredPointCloudPoints.forEach((p, idx) => {
+            // 1. Convert WGS84 to local ENU (East-North-Up) relative to the camera
+            const enuCoords = geodeticToEnu(p.rawLon, p.rawLat, p.alt, ref.lng, ref.lat, ref.alt);
+            // 2. Project into camera view space
+            const vView = transform(viewMat, [enuCoords[0], enuCoords[1], enuCoords[2], 1.0]);
+            // 3. Project into clip space
+            const vClip = transform(projMat, vView);
+            
+            // If W (vClip[3]) is negative, the point is physically behind the camera's FOV
+            if (vClip[3] <= 0) return; // Point is behind camera
+
+            // 4. Perspective Divide to get Normalized Device Coordinates (NDC: -1.0 to 1.0)
+            const ndcX = vClip[0] / vClip[3];
+            const ndcY = vClip[1] / vClip[3];
+            
+            // Reject points way off screen (slight padding allowed for edge-drawing)
+            if (ndcX < -1.2 || ndcX > 1.2 || ndcY < -1.2 || ndcY > 1.2) return;
+
+            // 5. Convert NDC to actual screen pixels
+            const screenX = (ndcX + 1) * width / 2;
+            const screenY = (1 - ndcY) * height / 2; 
+
+            // 6. Test if screen pixel is inside the user's drawn shape
+            if (pointInPolygon([screenX, screenY], lassoPolygon)) {
+                selectedIndices.push(idx);
+            }
+        });
+
+        // The ArcGIS ObjectIDs are 1-based, while our array is 0-based.
+        const objectIds = selectedIndices.map(i => i + 1);
+
+        this.setState({ lassoSelectedObjectIds: objectIds }, () => {
+            if (this._pointCloudViewerRenderer) {
+                // Update the viewer instantly
+                this._pointCloudViewerRenderer.updateLasso(selectedIndices);
+                if (this.mapillaryViewer) this.mapillaryViewer.resize();
+            }
+            // Update the map asynchronously
+            this.highlightLassoInArcGIS();
+        });
+    };
+
     /**
         * Draws the dots, the line, and the text label on the ArcGIS 3D Map.
     */
@@ -6496,7 +6835,13 @@ export default class Widget extends React.PureComponent<
         this.updateViewerMeasurementRenderer();
 
         // Now if the points are cleared, it stops here safely.
-        if (pts.length === 0) return;
+        if (pts.length === 0) {
+            // FORCE the floating label to hide when cleared!
+            if (this.measureLabelRef.current) {
+                this.measureLabelRef.current.style.display = 'none';
+            }
+            return;
+        }
         
         const { Graphic } = this.ArcGISModules;
         
@@ -6546,18 +6891,26 @@ export default class Widget extends React.PureComponent<
             const hDist = distanceMeters(p1.rawLat, p1.rawLon, p2.rawLat, p2.rawLon);
             const vDist = Math.abs(p2.alt - p1.alt);
             const tDist = Math.sqrt(hDist * hDist + vDist * vDist); // Pythagorean theorem
+            const slopePct = hDist > 0 ? (vDist / hDist) * 100 : 0; // Slope Percentage!
+
+            const labelText = `${tDist.toFixed(2)}m\nSlope: ${slopePct.toFixed(1)}%`;
             
-            // Find the midpoint to place the label
+            // Update our floating HTML label text
+            if (this.measureLabelRef.current) {
+                this.measureLabelRef.current.innerText = labelText;
+            }
+
+            // Find the midpoint to place the label on the ArcGIS 3D Map
             const midLon = (p1.mapLon + p2.mapLon) / 2;
             const midLat = (p1.mapLat + p2.mapLat) / 2;
             const midZ = (p1.mapZ + p2.mapZ) / 2;
             
-            // Add floating 3D Text
+            // Add floating 3D Text to ArcGIS
             const text = new Graphic({
                 geometry: { type: "point", longitude: midLon, latitude: midLat, z: midZ + 0.5, hasZ: true, spatialReference: { wkid: 4326 } },
                 symbol: {
                     type: "text",
-                    text: `${tDist.toFixed(2)}m`,
+                    text: labelText,
                     color:[255, 255, 255, 1],
                     haloColor:[0, 0, 0, 0.8],
                     haloSize: 1.5,
@@ -6565,6 +6918,11 @@ export default class Widget extends React.PureComponent<
                 } as any
             });
             this._measureLayer.add(text);
+        } else {
+            // Hide the HTML label if they clear the measurement
+            if (this.measureLabelRef.current) {
+                this.measureLabelRef.current.style.display = 'none';
+            }
         }
         
         // Sync the 3D measurement to the Mapillary Panoramic Viewer!
@@ -6620,7 +6978,7 @@ export default class Widget extends React.PureComponent<
 
             void main(void) {
                 gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(aPosition, 1.0);
-                gl_PointSize = 16.0 * uPixelRatio; // Size of the anchor dots
+                gl_PointSize = 16.0 * uPixelRatio; 
                 vColor = aColor;
             }
         `;
@@ -6632,19 +6990,15 @@ export default class Widget extends React.PureComponent<
 
             void main(void) {
                 if (uIsPoint > 0.5) {
-                    // Turn gl_Point into a perfect circle
                     vec2 coord = gl_PointCoord - vec2(0.5);
                     float dist = length(coord);
                     if (dist > 0.5) discard;
-
-                    // Draw a crisp white border around the anchor points to make them pop
                     if (dist > 0.35) {
                         gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
                     } else {
                         gl_FragColor = vec4(vColor, 1.0); 
                     }
                 } else {
-                    // Solid yellow color for the connecting line
                     gl_FragColor = vec4(1.0, 1.0, 0.0, 1.0); 
                 }
             }
@@ -6654,7 +7008,9 @@ export default class Widget extends React.PureComponent<
 
         const renderer: any = {
             id: 'measurement-line-renderer',
-            renderPass: RenderPass.Opaque, // Draw over the image
+            // RenderPass: 3 is Transparent Mode. It forces this renderer to draw 
+            // LAST, directly on top of the Opaque Point Cloud (Pass 2) and Image (Pass 1).
+            renderPass: 3, 
             _gl: null,
             _program: null,
             _positionBuffer: null,
@@ -6694,11 +7050,9 @@ export default class Widget extends React.PureComponent<
                 this._positionBuffer = gl.createBuffer()!;
                 this._colorBuffer = gl.createBuffer()!;
                 
-                // Immediately pull state and populate the buffers
                 this.updatePositions(widget.state.measurePoints);
             },
 
-            // Mapillary fires this automatically if the user moves down the street to a new image
             onReference(viewer: any, reference: any) {
                 this._currentReference = reference;
                 this.updatePositions(widget.state.measurePoints);
@@ -6715,7 +7069,6 @@ export default class Widget extends React.PureComponent<
                 const colors = new Float32Array(pts.length * 3);
                 
                 pts.forEach((pt, i) => {
-                    // Convert Raw WGS84 back to Mapillary local ENU coordinates
                     const enu = geodeticToEnu(
                         pt.rawLon, pt.rawLat, pt.alt, 
                         this._currentReference.lng, this._currentReference.lat, this._currentReference.alt
@@ -6725,19 +7078,18 @@ export default class Widget extends React.PureComponent<
                     positions[i*3+2] = enu[2];
 
                     if (i === 0) {
-                        // Point 1: Cyan
                         colors[i*3] = 0.0; colors[i*3+1] = 1.0; colors[i*3+2] = 1.0; 
                     } else {
-                        // Point 2: Magenta
                         colors[i*3] = 1.0; colors[i*3+1] = 0.0; colors[i*3+2] = 1.0; 
                     }
                 });
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, this._positionBuffer);
-                gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+                // Switch to DYNAMIC_DRAW to stop graphics drivers from failing during fast updates
+                gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, this._colorBuffer);
-                gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+                gl.bufferData(gl.ARRAY_BUFFER, colors, gl.DYNAMIC_DRAW);
             },
 
             onRemove(viewer: any, context: WebGLRenderingContext) {
@@ -6768,10 +7120,18 @@ export default class Widget extends React.PureComponent<
                 gl.bindBuffer(gl.ARRAY_BUFFER, this._colorBuffer);
                 gl.vertexAttribPointer(this._aColorLoc, 3, gl.FLOAT, false, 0, 0);
 
+                // --- ROBUST RENDERING STATE ---
+                // Disable depth testing completely so it draws ON TOP of the imagery and point cloud
+                gl.disable(gl.DEPTH_TEST);
+                
+                // Enable Blending for crisp anti-aliased points
+                gl.enable(gl.BLEND);
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
                 // 1. Draw the connecting yellow line (Only if 2 points exist)
                 if (this._vertexCount === 2) {
                     gl.uniform1f(this._uIsPointLoc, 0.0);
-                    gl.lineWidth(4.0); 
+                    gl.lineWidth(3.0); 
                     gl.drawArrays(gl.LINES, 0, 2);
                 }
 
@@ -6779,8 +7139,62 @@ export default class Widget extends React.PureComponent<
                 gl.uniform1f(this._uIsPointLoc, 1.0);
                 gl.drawArrays(gl.POINTS, 0, this._vertexCount);
 
+                // --- RESTORE RENDERING STATE ---
+                // Protects Mapillary JS from breaking after our draw cycle
+                gl.disable(gl.BLEND);
+                gl.enable(gl.DEPTH_TEST);
+                
                 gl.disableVertexAttribArray(this._aPositionLoc);
                 gl.disableVertexAttribArray(this._aColorLoc);
+
+                // --- DYNAMIC HTML TEXT TRACKING ---
+                if (this._vertexCount === 2 && widget.measureLabelRef.current) {
+                    const pts = widget.state.measurePoints;
+                    const p1 = pts[0];
+                    const p2 = pts[1];
+                    
+                    if (this._currentReference && p1 && p2) {
+                        const transform = (m: Float32Array, v: number[]) => [
+                            m[0]*v[0] + m[4]*v[1] + m[8]*v[2] + m[12]*v[3],
+                            m[1]*v[0] + m[5]*v[1] + m[9]*v[2] + m[13]*v[3],
+                            m[2]*v[0] + m[6]*v[1] + m[10]*v[2] + m[14]*v[3],
+                            m[3]*v[0] + m[7]*v[1] + m[11]*v[2] + m[15]*v[3]
+                        ];
+
+                        const enu1 = geodeticToEnu(p1.rawLon, p1.rawLat, p1.alt, this._currentReference.lng, this._currentReference.lat, this._currentReference.alt);
+                        const enu2 = geodeticToEnu(p2.rawLon, p2.rawLat, p2.alt, this._currentReference.lng, this._currentReference.lat, this._currentReference.alt);
+                        
+                        const midX = (enu1[0] + enu2[0]) / 2;
+                        const midY = (enu1[1] + enu2[1]) / 2;
+                        const midZ = (enu1[2] + enu2[2]) / 2;
+
+                        const vView = transform(viewMatrix, [midX, midY, midZ, 1.0]);
+                        const vClip = transform(projectionMatrix, vView);
+                        
+                        if (vClip[3] > 0) {
+                            const ndcX = vClip[0] / vClip[3];
+                            const ndcY = vClip[1] / vClip[3];
+                            
+                            if (ndcX >= -1 && ndcX <= 1 && ndcY >= -1 && ndcY <= 1) {
+                                const canvas = widget.viewerContainer.current?.querySelector('canvas');
+                                if (canvas) {
+                                    const screenX = (ndcX + 1) * canvas.clientWidth / 2;
+                                    const screenY = (1 - ndcY) * canvas.clientHeight / 2;
+                                    
+                                    widget.measureLabelRef.current.style.left = `${screenX}px`;
+                                    widget.measureLabelRef.current.style.top = `${screenY}px`;
+                                    widget.measureLabelRef.current.style.display = 'block';
+                                }
+                            } else {
+                                widget.measureLabelRef.current.style.display = 'none';
+                            }
+                        } else {
+                            widget.measureLabelRef.current.style.display = 'none';
+                        }
+                    }
+                } else if (widget.measureLabelRef.current) {
+                    widget.measureLabelRef.current.style.display = 'none';
+                }
             }
         };
 
@@ -6788,7 +7202,7 @@ export default class Widget extends React.PureComponent<
             this.mapillaryViewer.addCustomRenderer(renderer);
             this._measurementRendererActive = true;
             this._measurementViewerRenderer = renderer;
-            this.mapillaryViewer.resize(); // Force redraw immediately
+            this.mapillaryViewer.resize();
         } catch (e) {
             console.warn("Could not attach measurement renderer:", e);
         }
@@ -6980,6 +7394,8 @@ export default class Widget extends React.PureComponent<
                     return true;
                 });
 
+                this._filteredPointCloudPoints = filteredPoints;
+
                 this._pointCloudViewerRenderer.updatePoints(filteredPoints);
                 if (this.mapillaryViewer) this.mapillaryViewer.resize();
             }
@@ -7027,6 +7443,8 @@ export default class Widget extends React.PureComponent<
                     }
                     return true;
                 });
+
+                this._filteredPointCloudPoints = filteredPoints;
 
                 this._pointCloudViewerRenderer.updatePoints(filteredPoints);
                 if (this.mapillaryViewer) this.mapillaryViewer.resize();
@@ -7484,7 +7902,8 @@ export default class Widget extends React.PureComponent<
                         this.state.turboFilterStartDate || undefined,
                         this.state.turboFilterEndDate   || undefined,
                         this.state.turboFilterIsPano,
-                        this.state.qualityViewActive
+                        this.state.qualityViewActive,
+                        this.state.selectedQualityBand
                     );
                     proceedWithWidgetInitialization();
                 };
@@ -7605,7 +8024,8 @@ export default class Widget extends React.PureComponent<
                     this.state.turboFilterStartDate || undefined,
                     this.state.turboFilterEndDate   || undefined,
                     this.state.turboFilterIsPano,
-                    this.state.qualityViewActive
+                    this.state.qualityViewActive,
+                    this.state.selectedQualityBand
                 );
                 
                 // If it's currently showing on the map, swap it out instantly
@@ -7737,10 +8157,24 @@ export default class Widget extends React.PureComponent<
         }
 
         // ZOOM WATCHER 
-        if (this.zoomDisplayHandle) {
-            this.zoomDisplayHandle.remove();
-            this.zoomDisplayHandle = null;
-        }
+        this.zoomDisplayHandle = jmv.view.watch("zoom", (newZoom: number) => {
+            this.setState({ currentZoom: newZoom });
+            this._debouncedZoomUrlUpdate();
+
+            // Keep the quality-bands hint in sync as the user zooms in/out
+            // while Quality View is active (see toggleQualityView for why
+            // this is a soft hint rather than a hard "zoom to X" warning).
+            if (this.state.qualityViewActive) {
+                if (newZoom < ZOOM.TILE_FETCH) {
+                    this.showZoomWarning(
+                        "Quality bands are based on sequence-level averages until you zoom in further.",
+                        0
+                    );
+                } else {
+                    this.clearZoomWarning();
+                }
+            }
+        });
         
         this.setState({ currentZoom: jmv.view.zoom });
 
@@ -9668,6 +10102,60 @@ export default class Widget extends React.PureComponent<
                     style={{width: "100%", height: "100%", position: "relative"}}
                 />
 
+                {/* [4.5.0 Update] LASSO SVG OVERLAY */}
+                {/* Renders the dashed cyan line while dragging. */}
+                {this.state.isLassoMode && (
+                    <svg
+                        style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            height: '100%',
+                            zIndex: 1000,
+                            cursor: 'crosshair',
+                            pointerEvents: 'auto' 
+                        }}
+                        onPointerDown={this.handleLassoStart}
+                        onPointerMove={this.handleLassoMove}
+                        onPointerUp={this.handleLassoEnd}
+                        onPointerLeave={this.handleLassoEnd}
+                    >
+                        {this.state.lassoPolygon.length > 0 && (
+                            <polygon
+                                points={this.state.lassoPolygon.map(p => `${p[0]},${p[1]}`).join(' ')}
+                                fill="rgba(0, 255, 255, 0.2)"
+                                stroke="cyan"
+                                strokeWidth="2"
+                                strokeDasharray="4 2"
+                            />
+                        )}
+                    </svg>
+                )}
+
+                {/* MEASUREMENT FLOATING TEXT OVERLAY */}
+                <div 
+                    ref={this.measureLabelRef}
+                    style={{
+                        position: 'absolute',
+                        display: 'none',
+                        transform: 'translate(-50%, -50%)',
+                        background: 'rgba(20, 20, 20, 0.75)',
+                        backdropFilter: 'blur(4px)',
+                        border: '1px solid rgba(255, 255, 0, 0.6)',
+                        color: 'white',
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        fontSize: '11px',
+                        fontWeight: 'bold',
+                        pointerEvents: 'none',
+                        zIndex: 1000,
+                        textAlign: 'center',
+                        whiteSpace: 'pre-wrap',
+                        boxShadow: '0 4px 10px rgba(0,0,0,0.5)'
+                    }}
+                ></div>
+
                 {/* LEGEND REGION */}
                 {this.state.imageId && !this.props.config.hideLegend && !this.state.isFullscreen && (
                     <Legend
@@ -10083,6 +10571,9 @@ export default class Widget extends React.PureComponent<
                     measurePoints={this.state.measurePoints}
                     onToggleMeasureMode={this.toggleMeasureMode}
                     onClearMeasurement={this.clearMeasurement}
+                    isLassoMode={this.state.isLassoMode}
+                    onToggleLassoMode={this.toggleLassoMode}
+                    onClearLasso={this.clearLasso}
                     showCalibrationPanel={this.state.showCalibrationPanel}
                     pointCloudColorMode={this.state.pointCloudColorMode}
                     nudgeStep={this.state.nudgeStep}
@@ -10110,6 +10601,8 @@ export default class Widget extends React.PureComponent<
                     enableQualityView={this.props.config.enableQualityView}
                     qualityViewActive={this.state.qualityViewActive}
                     onToggleQualityView={this.toggleQualityView}
+                    selectedQualityBand={this.state.selectedQualityBand}
+                    onQualityLegendClick={this.handleQualityLegendClick}
                     nearbyCount={this.state.nearbyImages?.length ?? 0}
                     nearbyLoading={!!this.state.nearbyLoading}
                     nearbyStripOpen={!!this.state.nearbyStripOpen}
@@ -10155,7 +10648,8 @@ export default class Widget extends React.PureComponent<
                                     this.state.turboFilterStartDate || undefined,
                                     this.state.turboFilterEndDate   || undefined,
                                     newVal,
-                                    this.state.qualityViewActive
+                                    this.state.qualityViewActive,
+                                    this.state.selectedQualityBand
                                 );
                                 if (this.state.turboModeActive) await this.enableTurboCoverageLayer();
                             };

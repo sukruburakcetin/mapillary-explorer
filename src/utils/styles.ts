@@ -149,7 +149,7 @@ export const glassStyles = {
         flexDirection: 'column',
         gap: '6px',
         alignItems: 'center', // Centers the buttons horizontally in the strip
-        padding: '2px 0px 0px 2px', 
+        padding: '3px 3.5px 3px 3px', 
         // Glass Effect logic
         background: 'rgba(20, 20, 20, 0.4)',
         backdropFilter: 'blur(1px)',
@@ -203,7 +203,6 @@ export const glassStyles = {
         border: active ? '1px solid rgba(255, 255, 255, 0.24)' : '1px solid transparent',
         transition: 'all 0.3s ease',
         alignItems: 'center',
-        padding: '2px' // Added a little padding so buttons aren't touching the border
     }),
 
     // Overlay style for when a user clicks the map but no imagery exists at that location.
@@ -1049,41 +1048,75 @@ export const overrideStyles = `
         max-height: calc(100% - 10px) !important;
         overflow-y: auto !important;
         scrollbar-width: none;
-        gap: 3px !important;
+        gap: 4px !important;
     }
     .glass-control-panel::-webkit-scrollbar { display: none; }
     .glass-control-panel .unified-control-buttons,
-    .glass-control-panel .unified-control-buttons-mapped {
-        width: clamp(22px, 8cqh, 30px) !important;
-        height: clamp(22px, 8cqh, 30px) !important;
-        flex-shrink: 0 !important;
-    }
+    .glass-control-panel .unified-control-buttons-mapped,
     .glass-control-panel .unified-control-buttons-filters {
-        width: clamp(18px, 6cqh, 24px) !important;
-        height: clamp(18px, 6cqh, 24px) !important;
-        flex-shrink: 0 !important;
+        transition: transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1),
+                    background 0.2s ease,
+                    box-shadow 0.2s ease !important;
+        transform-origin: center center;
+    }
+    .glass-control-panel .unified-control-buttons { margin-bottom: 2px}
+    @media (hover: hover) and (pointer: fine) {
+        .glass-control-panel .unified-control-buttons:hover,
+        .glass-control-panel .unified-control-buttons-mapped:hover {
+            transform: scale(1.10) !important;
+            background: rgba(255, 255, 255, 0.16) !important;
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35),
+                        0 4px 14px rgba(0, 0, 0, 0.35) !important;
+            filter: brightness(1.25);
+        }
+        .glass-control-panel .unified-control-buttons.is-active:hover,
+        .glass-control-panel .unified-control-buttons-mapped.is-active:hover {
+            transform: scale(1.10) !important;
+        }
+        .glass-control-panel .unified-control-buttons-filters.is-hoverable:hover {
+            transform: scale(1.10) !important;
+            background: rgba(255, 255, 255, 0.14) !important;
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3) !important;
+            filter: brightness(1.2);
+        }
+    }
+    
+    /* Same treatment for the utility panel buttons if you applied the
+    earlier utility-panel-fix.css — wrap that :hover block the same way: */
+    
+    @media (hover: hover) and (pointer: fine) {
+        .glass-image-utility-panel .utility-button:hover {
+            transform: scale(1.15) !important;
+            background: rgba(255, 255, 255, 0.16) !important;
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35),
+                        0 4px 14px rgba(0, 0, 0, 0.35) !important;
+            filter: brightness(1.25);
+            z-index: 2;
+            position: relative;
+        }
     }
     .glass-control-panel svg {
-        width: clamp(12px, 70%, 22px) !important;
-        height: clamp(12px, 60%, 22px) !important;
+        width: clamp(10px, 60%, 20px) !important;
+        height: auto !important;
+        aspect-ratio: 1 / 1 !important;
         display: block;
-        transition: all 0.2s ease;
+        flex-shrink: 0;
     }
     .glass-control-panel .unified-control-buttons-filters svg {
         width: clamp(10px, 60%, 16px) !important;
-        height: clamp(10px, 60%, 16px) !important;
+        height: auto !important;
+        aspect-ratio: 1 / 1 !important;
     }
-    .glass-control-panel > div { gap: 2px !important; display: flex !important; flex-direction: column !important; }
-    .unified-control-buttons, .unified-control-buttons-mapped { margin-left: 0 !important; }
+    .glass-control-panel > div { display: flex !important; flex-direction: column !important; }
 
     /* GLASS UTILITY PANEL */
     .glass-image-utility-panel {
         display: grid !important;
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, 1fr) !important; /* Changed to always be 2 columns */
         justify-items: center;
-        padding: clamp(2px, 1cqmin, 4px) !important;
-        gap: clamp(2px, 1cqh, 6px) !important;
-        right: clamp(40px, 7cqw, 55px) !important;
+        padding: clamp(4px, 1cqmin, 6px) !important; /* Slightly increased padding to balance 2 cols */
+        gap: clamp(3px, 1cqh, 6px) !important;
+        right: clamp(44px, 8cqw, 66px) !important;
         bottom: clamp(20px, 5cqh, 27px) !important;
     }
 
@@ -1328,7 +1361,6 @@ export const overrideStyles = `
         .show-color-by-date-filter::after { content: "CBD:"; font-size: 9px !important; }
         .info-box { font-size: 8px !important; max-width: 110px !important; }
         .legend-container { display: none !important; }
-        .glass-image-utility-panel { grid-template-columns: repeat(2, 1fr) !important;}
         .esri-popup__main-container { width: 250px !important;}
         .esri-widget__heading { font-size: 10px !important; }
         .esri-feature-content { font-size: 10px !important; }

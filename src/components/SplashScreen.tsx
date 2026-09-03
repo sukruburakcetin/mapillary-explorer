@@ -3,6 +3,7 @@ import { React, jsx } from "jimu-core";
 import { SplashScreenProps } from "./types";
 import * as Icons from '../components/Icons';
 import { glassStyles } from '../utils/styles';
+import { MAPILLARY_IMAGE } from "../utils/mapillary-image-base64";
 
 export const SplashScreen: React.FC<SplashScreenProps> = ({ showIntro, filtersLoaded }) => {
     const canvasRef = React.useRef<HTMLCanvasElement>(null);
@@ -113,7 +114,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ showIntro, filtersLo
                     {/* Camera pin */}
                     <div style={glassStyles.splashCameraPin}>
                         <img
-                            src="https://images2.imgbox.com/8c/de/6JZumb4i_o.jpg"
+                            src={MAPILLARY_IMAGE}
                             alt="Mapillary"
                             style={{ width: "100%", height: "100%", objectFit: "cover" }}
                         />
@@ -129,7 +130,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ showIntro, filtersLo
                 {/* Tagline */}
                 <div style={glassStyles.splashTagline}>
                     Street-level intelligence at planetary scale
-                    <div style={{ fontSize: "8px" }}>Version 4.4.1</div>
+                    <div style={{ fontSize: "8px" }}>Version 4.5.0</div>
                 </div>
 
                 {/* Progress track */}
