@@ -18,7 +18,6 @@ interface InfoBoxState {
     *  - Status / coordinates / address card
     *  - Turbo year-legend with click-to-filter
     *  - Coverage Analysis
-    *  - StreetGap community link (route planning / gap finding)
     *  - Feature export button (when traffic signs or objects active)
     *  - AI Overlay toggle button
     *  - AI tag show/hide toggle
@@ -92,12 +91,14 @@ export class InfoBox extends React.PureComponent<InfoBoxProps, InfoBoxState> {
             hideCoverageAnalysis, pointCloudVisible,
             isMeasureMode, measurePoints,
             onToggleMeasureMode, onClearMeasurement,
+            isLassoMode, onToggleLassoMode, onClearLasso,
             isSightMode, sightObserver, sightTargets,
             onToggleSightMode, onClearSight,
             isViewshedMode, onToggleViewshedMode, onClearViewshed,
             showCalibrationPanel, nudgeStep, onToggleCalibrationPanel,
             onJoystickNudge, onResetCalibration, onSetNudgeStep,
             pointCloudColorMode, onDownloadPointCloud, qualityViewActive, onToggleQualityView,
+            selectedQualityBand, onQualityLegendClick,
             nearbyCount, nearbyLoading, nearbyStripOpen, onToggleNearbyStrip,
         } = this.props;
 
@@ -209,7 +210,7 @@ export class InfoBox extends React.PureComponent<InfoBoxProps, InfoBoxState> {
                                 </div>
                             )}
 
-                            {/* Street Coverage Analysis button + StreetGap link */}
+                            {/* Street Coverage Analysis button */}
                             {turboModeActive && !hideCoverageAnalysis && (() => {
                                 const zoom    = currentZoom ?? jimuMapViewZoom ?? 0;
                                 const belowZoom = zoom < turboMinZoom;
@@ -295,62 +296,6 @@ export class InfoBox extends React.PureComponent<InfoBoxProps, InfoBoxState> {
                                                 }
                                             </button>
                                         </div>
-
-                                        {/* StreetGap community tool */}
-                                        <div style={{
-                                            marginTop: "4px",
-                                            borderTop: "1px solid rgba(255,255,255,0.06)",
-                                            paddingTop: "4px",
-                                        }}>
-                                            <a
-                                                href="https://loprz.github.io/streetgap-web/"
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                title="StreetGap is a community tool to plan routes and find detailed coverage gaps. Created by Ryan Lopez"
-                                                style={{
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    justifyContent: "center",
-                                                    gap: "4px",
-                                                    width: "100%",
-                                                    padding: "3px 0",
-                                                    borderRadius: "4px",
-                                                    border: "1px solid rgba(55,213,130,0.2)",
-                                                    background: "rgba(55,213,130,0.07)",
-                                                    color: "rgba(55,213,130,0.85)",
-                                                    fontSize: "8px",
-                                                    fontWeight: 600,
-                                                    letterSpacing: "0.3px",
-                                                    textDecoration: "none",
-                                                    cursor: "pointer",
-                                                    transition: "background 0.2s, border-color 0.2s",
-                                                    whiteSpace: "nowrap",
-                                                    boxSizing: "border-box",
-                                                }}
-                                                onMouseEnter={e => {
-                                                    (e.currentTarget as HTMLAnchorElement).style.background = "rgba(55,213,130,0.15)";
-                                                    (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(55,213,130,0.4)";
-                                                }}
-                                                onMouseLeave={e => {
-                                                    (e.currentTarget as HTMLAnchorElement).style.background = "rgba(55,213,130,0.07)";
-                                                    (e.currentTarget as HTMLAnchorElement).style.borderColor = "rgba(55,213,130,0.2)";
-                                                }}
-                                            >
-                                                <span style={{ fontWeight: 700 }}>
-                                                <span
-                                                    style={{
-                                                        background: "linear-gradient(to right, #ec4899, #ed6cad)",
-                                                        WebkitBackgroundClip: "text",
-                                                        WebkitTextFillColor: "transparent",
-                                                        backgroundClip: "text",
-                                                    }}
-                                                >
-                                                    STREET
-                                                </span>
-                                                <span style={{ color: "#fff" }}>GAP</span>
-                                                </span>
-                                            </a>
-                                        </div>
                                     </React.Fragment>
                                 );
                             })()}
@@ -407,17 +352,31 @@ export class InfoBox extends React.PureComponent<InfoBoxProps, InfoBoxState> {
                                     {qualityViewActive && (
                                         <div style={{ marginTop: "4px", display: "flex", flexDirection: "column", gap: "2px" }}>
                                             {([
-                                                ["#35AF6D", "Good",     "≥0.70"],
-                                                ["#F5A623", "Fair",     "0.45–0.70"],
-                                                ["#D0021B", "Poor",     "0.10–0.45"],
-                                                ["#A855F7", "Unscored", "N/A"],
-                                            ] as [string, string, string][]).map(([color, label, range]) => (
-                                                <div key={label} style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "7px" }}>
-                                                    <div style={{ width: "8px", height: "3px", borderRadius: "2px", background: color, flexShrink: 0 }} />
-                                                    <span style={{ color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>{label}</span>
-                                                    {range && <span style={{ color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>{range}</span>}
-                                                </div>
-                                            ))}
+                                                ["#35AF6D", "Good",     "≥0.70",     "good"],
+                                                ["#F5A623", "Fair",     "0.45–0.70", "fair"],
+                                                ["#D0021B", "Poor",     "0.10–0.45", "poor"],
+                                                ["#A855F7", "Unscored", "N/A",       "unscored"],
+                                            ] as [string, string, string, 'good' | 'fair' | 'poor' | 'unscored'][]).map(([color, label, range, band]) => {
+                                                const isSelected = selectedQualityBand === band;
+                                                const isAnySelected = !!selectedQualityBand;
+                                                return (
+                                                    <div
+                                                        key={label}
+                                                        onClick={() => onQualityLegendClick(band)}
+                                                        title={isSelected ? "Click to show all quality bands" : `Show only ${label} captures`}
+                                                        style={{
+                                                            display: "flex", alignItems: "center", gap: "4px", fontSize: "7px",
+                                                            cursor: "pointer",
+                                                            opacity: isAnySelected && !isSelected ? 0.3 : 1,
+                                                            transition: "opacity 0.2s ease"
+                                                        }}
+                                                    >
+                                                        <div style={{ width: "8px", height: "3px", borderRadius: "2px", background: color, flexShrink: 0 }} />
+                                                        <span style={{ color: "rgba(255,255,255,0.85)", fontWeight: isSelected ? 700 : 500 }}>{label}</span>
+                                                        {range && <span style={{ color: "rgba(255,255,255,0.4)", marginLeft: "auto" }}>{range}</span>}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     )}
                                 </div>
@@ -596,6 +555,71 @@ export class InfoBox extends React.PureComponent<InfoBoxProps, InfoBoxState> {
                                             CLEAR
                                         </button>
                                     )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* 3D LASSO SELECTION */}
+                    {/* This panel allows users to draw a 2D shape over the panoramic image to select 3D points */}
+                    {pointCloudVisible && (
+                        <div style={{
+                            marginTop: "4px",
+                            background: isLassoMode ? "rgba(25, 25, 25, 0.85)" : "rgba(20, 20, 20, 0.6)",
+                            backdropFilter: "blur(10px)",
+                            borderRadius: "6px",
+                            padding: "5px",
+                            width: "80px",
+                            border: isLassoMode ? "1px solid rgba(0, 255, 255, 0.5)" : "1px solid rgba(255, 255, 255, 0.15)",
+                            boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+                            display: "flex",
+                            flexDirection: "column",
+                            pointerEvents: "auto",
+                            boxSizing: "border-box"
+                        }}>
+                            <button
+                                onClick={onToggleLassoMode}
+                                title="Toggle Lasso Point Selection"
+                                style={{
+                                    background: "none", border: "none", padding: 0, margin: 0,
+                                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                                    width: "100%", cursor: "pointer", color: "white"
+                                }}
+                            >
+                                <span style={{ fontSize: "7px", fontWeight: 600, color: isLassoMode ? "#00ffff" : "rgba(255,255,255,0.7)" }}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: "2px", verticalAlign: "bottom" }}>
+                                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM12 22c-5.52 0-10-4.48-10-10S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10z"/>
+                                        <circle cx="12" cy="12" r="3" fill="currentColor" />
+                                    </svg>
+                                    LASSO
+                                </span>
+                                <div style={{
+                                    width: "16px", height: "8px", borderRadius: "4px",
+                                    background: isLassoMode ? "#00ffff" : "rgba(255,255,255,0.3)",
+                                    position: "relative"
+                                }}>
+                                    <div style={{
+                                        position: "absolute", top: "1px", left: isLassoMode ? "9px" : "1px",
+                                        width: "6px", height: "6px", borderRadius: "50%", background: "white",
+                                        transition: "left 0.2s"
+                                    }} />
+                                </div>
+                            </button>
+
+                            {isLassoMode && (
+                                <div style={{ marginTop: "4px", fontSize: "7.5px", color: "#ccc", textAlign: "left" }}>
+                                    Draw on image to select.
+                                    <button
+                                        onClick={onClearLasso}
+                                        style={{
+                                            marginTop: "5px", width: "100%",
+                                            background: "rgba(255,0,0,0.2)", border: "1px solid rgba(255,0,0,0.4)",
+                                            color: "#ffcccc", borderRadius: "3px", padding: "2px 0",
+                                            fontSize: "7.5px", cursor: "pointer", fontWeight: 600
+                                        }}
+                                    >
+                                        CLEAR
+                                    </button>
                                 </div>
                             )}
                         </div>

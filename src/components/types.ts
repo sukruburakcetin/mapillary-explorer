@@ -88,6 +88,13 @@ export interface InfoBoxProps {
     measurePoints?: Array<any>;
     onToggleMeasureMode?: () => void;
     onClearMeasurement?: () => void;
+    // [4.5.0 Update] Lasso Selection Tool
+    /** Indicates if the user is currently drawing a selection polygon */
+    isLassoMode?: boolean;
+    /** Triggers the activation/deactivation of the lasso drawing state */
+    onToggleLassoMode?: () => void;
+    /** Clears the current lasso polygon and removes highlights from the 3D scene */
+    onClearLasso?: () => void;
     showCalibrationPanel?: boolean;
     nudgeStep?: number;
     onToggleCalibrationPanel?: () => void;

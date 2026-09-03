@@ -66,6 +66,7 @@ export interface PointCloudResult {
     sfmClusterUrl:  string;           // primary cluster URL (for reference)
     clusterCount:   number;           // how many sfm_cluster files were merged
     duplicatesRemoved: number;
+    computedImageLocation: { lon: number; lat: number };
 }
 
 // Internal: one parsed OpenSfM reconstruction
@@ -196,11 +197,11 @@ export async function fetchPointCloudMeta(
     let refLla = data.reference_lla;
     if (!refLla || typeof refLla.latitude !== 'number') refLla = null;
 
-    return {
+return {
         sfmClusterUrl:  data.sfm_cluster.url,
         referenceLla:   refLla,
         imageLocation:  { lon: compGeom[0], lat: compGeom[1] },
-        alignmentShift: { lon: compGeom[0] - rawGeom[0], lat: compGeom[1] - rawGeom[1] },
+        alignmentShift: { lon: rawGeom[0] - compGeom[0], lat: rawGeom[1] - compGeom[1] },
         imageKey:       String(imageId),
         mergeCC:        data.merge_cc ?? null,
     };
@@ -634,6 +635,7 @@ export async function loadPointCloud(
         imageId,
         sfmClusterUrl: meta.sfmClusterUrl,
         clusterCount: total,
-        duplicatesRemoved
+        duplicatesRemoved,
+        computedImageLocation: meta.imageLocation
     };
 }

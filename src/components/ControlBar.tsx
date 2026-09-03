@@ -70,13 +70,11 @@ export const ControlBar: React.FC<ControlBarProps> = ({
             {/* SINGLE ICON BUTTONS */}
             {singleButtons.map((btn, i) => (
                 <button
-                    className="unified-control-buttons-mapped"
+                    className={`unified-control-buttons-mapped${btn.active ? " is-active" : ""}`}
                     key={i}
                     title={btn.title}
                     onClick={btn.onClick}
                     style={glassStyles.getButtonStyle(btn.active, btn.bg)}
-                    onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.15)")}
-                    onMouseLeave={e => (e.currentTarget.style.transform = btn.active ? "scale(1.1)" : "scale(1)")}
                 >
                     {btn.content}
                 </button>
@@ -88,12 +86,10 @@ export const ControlBar: React.FC<ControlBarProps> = ({
                     {/* Main Turbo button */}
                     {!turboModeOnly && (
                         <button
-                            className="unified-control-buttons"
+                            className={`unified-control-buttons${turboModeActive ? " is-active" : ""}`}
                             title="Toggle Turbo Mode"
                             onClick={onToggleTurboMode}
                             style={glassStyles.getButtonStyle(turboModeActive, "rgba(95, 92, 53, 0.30)")}
-                            onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.15)")}
-                            onMouseLeave={e => (e.currentTarget.style.transform = turboModeActive ? "scale(1.1)" : "scale(1)")}
                         >
                             <Icons.Turbo size={20}
                                 style={{ filter: turboModeActive ? "drop-shadow(0 0 1.2px grey)" : "none" }}
@@ -103,11 +99,9 @@ export const ControlBar: React.FC<ControlBarProps> = ({
                     {/* Turbo filter toggle */}
                     {!hideTurboFilter && (
                         <button
-                            className="unified-control-buttons-filters"
+                            className={`unified-control-buttons-filters${turboModeActive ? " is-hoverable" : ""}`}
                             title="Filter Turbo Mode Coverage"
                             onClick={onToggleTurboFilter}
-                            onMouseEnter={e => { if (turboModeActive) e.currentTarget.style.transform = "scale(1.1)"; }}
-                            onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; }}
                             style={{
                                 ...glassStyles.getButtonStyle(showTurboFilterBox, "rgba(255, 215, 0, 0.5)", true),
                                 opacity: turboModeActive ? 1 : 0.6,
@@ -124,23 +118,19 @@ export const ControlBar: React.FC<ControlBarProps> = ({
             {enableTrafficSigns !== false && (
                 <div style={glassStyles.groupContainer(trafficSignsActive)}>
                     <button
-                        className="unified-control-buttons"
+                        className={`unified-control-buttons${trafficSignsActive ? " is-active" : ""}`}
                         title="Toggle Mapillary Traffic Signs Layer"
                         onClick={onToggleTrafficSigns}
                         style={glassStyles.getButtonStyle(trafficSignsActive, "rgba(147, 102, 19, 0.3)")}
-                        onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.15)")}
-                        onMouseLeave={e => (e.currentTarget.style.transform = trafficSignsActive ? "scale(1.1)" : "scale(1)")}
                     >
                         <Icons.AllMapillaryTrafficSigns size={16}
                             style={{ filter: trafficSignsActive ? "drop-shadow(0 0 1.2px grey)" : "none" }}
                         />
                     </button>
                     <button
-                        className="unified-control-buttons-filters"
+                        className={`unified-control-buttons-filters${trafficSignsActive ? " is-hoverable" : ""}`}
                         title="Filter Traffic Signs"
                         onClick={onToggleTrafficSignsFilter}
-                        onMouseEnter={e => { if (trafficSignsActive) e.currentTarget.style.transform = "scale(1.1)"; }}
-                        onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; }}
                         style={{
                             ...glassStyles.getButtonStyle(showTrafficSignsFilterBox, "rgba(255, 165, 0, 0.5)", true),
                             opacity: trafficSignsActive ? 1 : 0.6,
@@ -156,23 +146,19 @@ export const ControlBar: React.FC<ControlBarProps> = ({
             {enableMapillaryObjects !== false && (
                 <div style={glassStyles.groupContainer(objectsActive)}>
                     <button
-                        className="unified-control-buttons"
+                        className={`unified-control-buttons${objectsActive ? " is-active" : ""}`}
                         title="Toggle Mapillary Objects Layer"
                         onClick={onToggleObjects}
                         style={glassStyles.getButtonStyle(objectsActive, "rgba(155, 55, 55, 0.3)")}
-                        onMouseEnter={e => (e.currentTarget.style.transform = "scale(1.15)")}
-                        onMouseLeave={e => (e.currentTarget.style.transform = objectsActive ? "scale(1.1)" : "scale(1)")}
                     >
                         <Icons.AllMapillaryObjects size={16}
                             style={{ filter: objectsActive ? "drop-shadow(0 0 0.2px grey)" : "none" }}
                         />
                     </button>
                     <button
-                        className="unified-control-buttons-filters"
+                        className={`unified-control-buttons-filters${objectsActive ? " is-hoverable" : ""}`}
                         title="Filter Objects"
                         onClick={onToggleObjectsFilter}
-                        onMouseEnter={e => { if (objectsActive) e.currentTarget.style.transform = "scale(1.1)"; }}
-                        onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; }}
                         style={{
                             ...glassStyles.getButtonStyle(showObjectsFilterBox, "rgba(255, 60, 60, 0.5)", true),
                             opacity: objectsActive ? 1 : 0.6,
