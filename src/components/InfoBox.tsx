@@ -112,7 +112,7 @@ export class InfoBox extends React.PureComponent<InfoBoxProps, InfoBoxState> {
                 top: "2px",
                 right: isOverflowing ? "0" : "4px",
                 zIndex: 10002,
-                maxHeight: "calc(100% - 120px)",
+                maxHeight: "calc(100% - 170px)",
                 display: "flex",
                 flexDirection: "column",
                 pointerEvents: "none"

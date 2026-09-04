@@ -216,6 +216,7 @@ export default class Widget extends React.PureComponent<
     private _groundMode: boolean = false;
     private _ringGeneration: number = 0; // Incremented on every ring redraw to cancel stale async draws
     private _lassoHighlightHandle: __esri.Handle | null = null; // Holds the ArcGIS highlight reference so we can clear it when redrawing
+    private _isDrawingLasso: boolean = false;
     private measureLabelRef = React.createRef<HTMLDivElement>();
 
     // Measurement Renderer Variables
@@ -6677,29 +6678,47 @@ export default class Widget extends React.PureComponent<
         }
     };
 
-    // Starts the SVG polygon path when the user clicks the viewer
+    // Starts the SVG polygon path when the user clicks or touches the viewer
     private handleLassoStart = (e: React.PointerEvent<SVGSVGElement>) => {
+        e.preventDefault();
+        this._isDrawingLasso = true;
         const rect = e.currentTarget.getBoundingClientRect();
-        this.setState({ lassoPolygon: [[e.clientX - rect.left, e.clientY - rect.top]] });
-        // Lock pointer to SVG so dragging outside the div doesn't break the polygon
+        this.setState({ 
+            lassoPolygon: [[e.clientX - rect.left, e.clientY - rect.top]] 
+        });
+        
         if (e.currentTarget.setPointerCapture) {
-            e.currentTarget.setPointerCapture(e.pointerId);
+            try {
+                e.currentTarget.setPointerCapture(e.pointerId);
+            } catch (err) {}
         }
     };
 
-    // Adds points to the polygon path as the mouse moves
+    // Adds points to the polygon path as the finger/mouse moves
     private handleLassoMove = (e: React.PointerEvent<SVGSVGElement>) => {
-        if (e.buttons !== 1) return;
+        // Fix: Use internal boolean flag instead of checking `e.buttons !== 1` 
+        // (e.buttons is 0 on many mobile touch browsers)
+        if (!this._isDrawingLasso) return;
+        e.preventDefault();
+
         const rect = e.currentTarget.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
         this.setState(prev => ({ 
-            lassoPolygon: [...prev.lassoPolygon, [e.clientX - rect.left, e.clientY - rect.top]] 
+            lassoPolygon: [...prev.lassoPolygon, [x, y]] 
         }));
     };
 
     // Completes the polygon and triggers the 3D math calculation
     private handleLassoEnd = (e: React.PointerEvent<SVGSVGElement>) => {
-        if (e.currentTarget.releasePointerCapture) {
-            e.currentTarget.releasePointerCapture(e.pointerId);
+        if (!this._isDrawingLasso) return;
+        this._isDrawingLasso = false;
+
+        if (e.currentTarget.hasPointerCapture && e.currentTarget.hasPointerCapture(e.pointerId)) {
+            try {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+            } catch (err) {}
         }
         this.calculateLassoSelection();
     };
@@ -10114,7 +10133,10 @@ export default class Widget extends React.PureComponent<
                             height: '100%',
                             zIndex: 1000,
                             cursor: 'crosshair',
-                            pointerEvents: 'auto' 
+                            pointerEvents: 'auto',
+                            touchAction: 'none',     
+                            userSelect: 'none',
+                            WebkitUserSelect: 'none'
                         }}
                         onPointerDown={this.handleLassoStart}
                         onPointerMove={this.handleLassoMove}
