@@ -3613,6 +3613,11 @@ export default class Widget extends React.PureComponent<
                 if (this._fullTrafficSignsOptions.length > 0) {
                     this.setState({ trafficSignsOptions: this._fullTrafficSignsOptions });
                 }
+                
+                // Show VectorTileLayer coverage when zoomed out
+                if (this.mapillaryTrafficSignsLayer) {
+                    this.mapillaryTrafficSignsLayer.visible = true;
+                }
             } else {
                 this._cancelTrafficSignsFetch = false;
                 // Optionally clear warning if they zoom back in
@@ -3828,15 +3833,15 @@ export default class Widget extends React.PureComponent<
                 this._cancelObjectsFetch = true;
                 const specificLayer = jimuMapView.view.map.findLayerById(LAYER_IDS.OBJECTS_FL);
                 if (specificLayer) jimuMapView.view.map.remove(specificLayer);
-
-                // Show VectorTileLayer coverage when zoomed out
-                if (this.mapillaryObjectsLayer) {
-                    this.mapillaryObjectsLayer.visible = true; 
-                }
                 
                 // Reset options to full list when zoomed out
                 if (this._fullObjectsOptions.length > 0) {
                     this.setState({ objectsOptions: this._fullObjectsOptions });
+                }
+
+                // Show VectorTileLayer coverage when zoomed out
+                if (this.mapillaryObjectsLayer) {
+                    this.mapillaryObjectsLayer.visible = true; 
                 }
             } else {
                 // Clear warning and allow fetching when zoomed in deep enough
@@ -8271,9 +8276,19 @@ export default class Widget extends React.PureComponent<
                     if (this._fullTrafficSignsOptions.length > 0) {
                         this.setState({ trafficSignsOptions: this._fullTrafficSignsOptions });
                     }
+
+                    // Show VectorTileLayer coverage when zoomed out
+                    if (this.mapillaryTrafficSignsLayer) {
+                        this.mapillaryTrafficSignsLayer.visible = true;
+                    }
                 } else {
                     this._cancelTrafficSignsFetch = false;
                     this.clearZoomWarning();
+
+                    // Hide VectorTileLayer when zoomed in so only the clickable FeatureLayer shows
+                    if (this.mapillaryTrafficSignsLayer && this.mapillaryTrafficSignsFeatureLayer) {
+                        this.mapillaryTrafficSignsLayer.visible = false;
+                    }
                 }
             });
 
@@ -8325,16 +8340,28 @@ export default class Widget extends React.PureComponent<
                 } else if (currentZoom < 16) {
                     this.showZoomWarning("Zoom in closer (≥ 16) to view clickable object features.");
                     this._cancelObjectsFetch = true;
+                    
                     if (this.state.jimuMapView) {
                         const specificLayer = this.state.jimuMapView.view.map.findLayerById(LAYER_IDS.OBJECTS_FL);
                         if (specificLayer) this.state.jimuMapView.view.map.remove(specificLayer);
                     }
+
                     if (this._fullObjectsOptions.length > 0) {
                         this.setState({ objectsOptions: this._fullObjectsOptions });
+                    }
+
+                    // Show VectorTileLayer coverage when zoomed out
+                    if (this.mapillaryObjectsLayer) {
+                        this.mapillaryObjectsLayer.visible = true;
                     }
                 } else {
                     this._cancelObjectsFetch = false;
                     this.clearZoomWarning();
+
+                    // Hide VectorTileLayer when zoomed in so only the clickable FeatureLayer shows
+                    if (this.mapillaryObjectsLayer && this.mapillaryObjectsFeatureLayer) {
+                        this.mapillaryObjectsLayer.visible = false;
+                    }
                 }
             });
 
