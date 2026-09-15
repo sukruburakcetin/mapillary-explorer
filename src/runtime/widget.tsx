@@ -25,7 +25,7 @@ import {
     POINT_CLOUD_LENGTH_DEFAULT, POINT_CLOUD_LENGTH_MAX, 
     POINT_CLOUD_WIDTH_DEFAULT, POINT_CLOUD_WIDTH_MAX,
     POINT_CLOUD_FETCH_LENGTH, POINT_CLOUD_FETCH_WIDTH,
-    QUALITY_SCORE
+    QUALITY_SCORE, FIELD_NOTE_VIEWER_MAX_DIST_M
 } from "../utils/constants";
 import {
     distanceMeters, calculateBearing,
@@ -41,7 +41,7 @@ import { createYearBasedRenderer, YEAR_COLOR_PALETTE } from "../utils/mapillaryR
 import {
     loadImage, cropSpriteImage, processInChunks
 } from "../utils/spriteUtils";
-import { Viewer, OutlineTag, PolygonGeometry, geodeticToEnu, RenderPass } from 'mapillary-js';
+import { Viewer, OutlineTag, PolygonGeometry, geodeticToEnu, RenderPass, SimpleMarker } from 'mapillary-js';
 import 'mapillary-js/dist/mapillary.css';
 import SequencePicker from '../components/SequencePicker'
 import { Legend } from '../components/Legend';
@@ -51,6 +51,8 @@ import { SplashScreen } from '../components/SplashScreen';
 import { ControlBar } from '../components/ControlBar';
 import { ImageUtilityGroup } from '../components/ImageUtilityGroup';
 import type { FilterOption, NearbyImage } from '../components/types';
+import { FieldNote, FIELD_NOTE_CATEGORIES } from '../components/types';
+import { FieldNotesPanel } from '../components/FieldNotesPanel';
 
 // React component state
 // Holds current map view, image/sequence data, viewer state,
@@ -147,6 +149,12 @@ interface State {
     nearbyImages?: NearbyImage[];
     nearbyLoading?: boolean;
     nearbyStripOpen?: boolean;
+    isAnnotationMode: boolean;
+    fieldNotes: FieldNote[];
+    pendingFieldNote: { lon: number; lat: number; imageId: string | null } | null;
+    fieldNotesListOpen: boolean;
+    isGeneratingRoute?: boolean;
+    routeData?: { distance: number; duration: number; geojson: any } | null;
 }
 
 export default class Widget extends React.PureComponent<
@@ -164,6 +172,11 @@ export default class Widget extends React.PureComponent<
     private clickedLocationGraphic: __esri.Graphic | null = null;
     private _directionHoverGraphic: __esri.Graphic | null = null;
     private _nearbyPinGraphic: __esri.Graphic | null = null;
+
+    // Field notes
+    private _fieldNotesLayer: __esri.GraphicsLayer | null = null;
+    private _pendingNoteGraphic: __esri.Graphic | null = null;
+    private _pendingNoteInterval: any = null;
     
     // Observers and handles
     private resizeObserver: ResizeObserver | null = null;
@@ -338,7 +351,7 @@ export default class Widget extends React.PureComponent<
         lassoPolygon: [],
         lassoSelectedObjectIds: [],
         isMeasureMode: false,
-        measurePoints:[],
+        measurePoints: [],
         showCalibrationPanel: false,
         nudgeStep: 0.5, // Default movement step is half a meter
         pointCloudLoading: false,
@@ -353,8 +366,14 @@ export default class Widget extends React.PureComponent<
         pointCloudColorMode: 'rgb',
         isSightMode: false,
         sightObserver: null,
-        sightTargets:[],
+        sightTargets: [],
         isViewshedMode: false,
+        isAnnotationMode: false,
+        fieldNotes: [],
+        pendingFieldNote: null,
+        fieldNotesListOpen: false,
+        isGeneratingRoute: false,
+        routeData: null,
     };
 
     constructor(props: AllWidgetProps<any>) {
@@ -747,7 +766,7 @@ export default class Widget extends React.PureComponent<
             if (this.state.detectionsActive) {
                 this.loadDetections(event.image.id);
             }
-
+            this.updateViewerFieldNoteMarkers();
             // Reverse geocode
             this.fetchReverseGeocode(newImg.lat, newImg.lon);
             // Update minimap tracking
@@ -1193,6 +1212,7 @@ export default class Widget extends React.PureComponent<
                         },   
                         cover: false,
                         tag: true,
+                        marker: true,
                         sequence: {
                             minWidth: 50,
                             maxWidth: 117
@@ -1962,6 +1982,8 @@ export default class Widget extends React.PureComponent<
                 }
             }
         }
+
+        this.drawFieldNoteGraphics();
     }
 
     // #region MINIMAP
@@ -2440,7 +2462,8 @@ export default class Widget extends React.PureComponent<
                     component: {
                         zoom: true,         
                         direction: true,  
-                        cover: false
+                        cover: false,
+                        marker: true
                     }
                 });
                 
@@ -2565,6 +2588,12 @@ export default class Widget extends React.PureComponent<
             const tagComponent = this.mapillaryViewer.getComponent("tag");
             if (!tagComponent || !data.data) return;
 
+            // PREVENT MEMORY LEAKS: Clean up previous hover listeners and flash intervals
+            if ((tagComponent as any)._detectionHoverCleanup) {
+                (tagComponent as any)._detectionHoverCleanup();
+                delete (tagComponent as any)._detectionHoverCleanup;
+            }
+
             tagComponent.removeAll(); 
 
             const tags: OutlineTag[] = [];
@@ -2604,10 +2633,10 @@ export default class Widget extends React.PureComponent<
                             { 
                                 text: this.state.showAiTags ? labelFull : "",
                                 textColor: isTarget ? 0xffff00 : 0xffffff,
-                                lineColor: isTarget ? 0xffffff : color,
+                                lineColor: isTarget ? 0xffff00 : color,
                                 lineWidth: isTarget ? 4 : 2,
-                                fillColor:  isTarget ? 0xffff00 : color,
-                                fillOpacity: isTarget ? 0.9 : 0.3
+                                fillColor: color,
+                                fillOpacity: isTarget ? 0.0 : 0.3 // Empty (transparent) fill for target
                             }
                         );
                         tags.push(tag);
@@ -2654,8 +2683,13 @@ export default class Widget extends React.PureComponent<
         let currentHoveredId: string | null = null;
         let updateTimeout: any = null;
         
-        const updateTags = (hoveredId: string | null) => {
-            if (currentHoveredId === hoveredId) return;
+        // Flashing State Variables
+        let flashState = true;
+        let flashInterval: any = null;
+        
+        const updateTags = (hoveredId: string | null, isFlashUpdate: boolean = false) => {
+            // Only skip update if nothing changed and it wasn't triggered by the flash interval
+            if (currentHoveredId === hoveredId && !isFlashUpdate) return;
             currentHoveredId = hoveredId;
             
             tagComponent.removeAll();
@@ -2665,16 +2699,28 @@ export default class Widget extends React.PureComponent<
                 const config = tagConfigs.get(tag.id);
                 if (!config) return;
                 
-                // Check both hover AND target states**
                 const isHovered = tag.id === hoveredId;
                 const isTarget = tag.id === this.state.targetDetectionId;
                 
-                // Target takes priority over hover
                 const shouldShowText = this.state.showAiTags && (isHovered || isTarget);
-                const lineColor = isTarget ? 0xFF0000 : config.color;
-                const fillColor = isTarget ? 0xffff00 : config.color;
-                const fillOpacity = isTarget ? 0.9 : 0.3;
-                const lineWidth = isTarget ? 4 : 2;
+                
+                // Defaults
+                let lineColor = config.color;
+                let fillColor = config.color;
+                let fillOpacity = 0.3;
+                let lineWidth = 2;
+
+                // 1. Target Priority (Flashing Empty Box)
+                if (isTarget) {
+                    lineColor = flashState ? 0xffff00 : 0xff3333; // Flash Yellow <-> Bright Red
+                    fillOpacity = 0.0; // Completely empty inside
+                    lineWidth = 4;     // Thick border to show vertices clearly
+                } 
+                // 2. Hover State (More solid fill)
+                else if (isHovered) {
+                    fillOpacity = 0.6;
+                    lineWidth = 3;
+                }
                 
                 try {
                     const geometry = new PolygonGeometry((tag.geometry as PolygonGeometry).polygon);
@@ -2700,8 +2746,16 @@ export default class Widget extends React.PureComponent<
                 tagComponent.add(updatedTags);
             }
         };
+
+        // If a target exists, start the flashing animation loop
+        if (this.state.targetDetectionId) {
+            flashInterval = setInterval(() => {
+                flashState = !flashState; // Toggle flash color
+                updateTags(currentHoveredId, true); // Force update tags
+            }, 500); // Flashes every half second
+        }
         
-        // Mouse move handler with corrected coordinate transformation
+        // Mouse move handler
         const handleMouseMove = async (event: MouseEvent) => {
             if (!this.mapillaryViewer) return;
             
@@ -2715,35 +2769,26 @@ export default class Widget extends React.PureComponent<
                     event.clientY - rect.top
                 ];
                 
-                // Using Mapillary's built-in hit testing API
                 const tagIds = await tagComponent.getTagIdsAt(pixelPoint);
                 const hoveredTagId = tagIds.length > 0 ? tagIds[0] : null;
                 
-                // Debounce the update
-                if (updateTimeout) {
-                    clearTimeout(updateTimeout);
-                }
+                if (updateTimeout) clearTimeout(updateTimeout);
                 
                 updateTimeout = setTimeout(() => {
-                    updateTags(hoveredTagId);
+                    updateTags(hoveredTagId, false);
                 }, 50);
                 
             } catch (err) {
-                console.warn("Error in hover detection:", err);
                 if (updateTimeout) clearTimeout(updateTimeout);
-                updateTimeout = setTimeout(() => updateTags(null), 50);
+                updateTimeout = setTimeout(() => updateTags(null, false), 50);
             }
         };
 
         // Mouse leave handler
         const handleMouseLeave = () => {
             if (!this.state.showAiTags) return;
-            
-            if (updateTimeout) {
-                clearTimeout(updateTimeout);
-            }
-            
-            updateTags(null);
+            if (updateTimeout) clearTimeout(updateTimeout);
+            updateTags(null, false);
         };
 
         // Attach listeners
@@ -2752,9 +2797,8 @@ export default class Widget extends React.PureComponent<
 
         // Store cleanup function
         (tagComponent as any)._detectionHoverCleanup = () => {
-            if (updateTimeout) {
-                clearTimeout(updateTimeout);
-            }
+            if (updateTimeout) clearTimeout(updateTimeout);
+            if (flashInterval) clearInterval(flashInterval); // Kill the flashing interval
             container.removeEventListener('mousemove', handleMouseMove);
             container.removeEventListener('mouseleave', handleMouseLeave);
             tagConfigs.clear();
@@ -2860,49 +2904,82 @@ export default class Widget extends React.PureComponent<
     }) => {
         try {
             this.setState({ targetDetectionId: img.detectionId, detectionsActive: true });
+            
             const resp = await fetch(`${GRAPH_API.BASE}/${img.id}?fields=sequence`, {
                 headers: { Authorization: `OAuth ${this.accessToken}` }
             });
             const data = await resp.json();
+            
             if (data.sequence) {
                 if (this.state.selectedSequenceId && this.state.selectedSequenceId !== data.sequence) {
                     this.clearSequenceGraphics();
                 }
+                
+                // 1. Load the sequence and instantiate the Viewer
                 await this.loadSequenceById(data.sequence, img.id);
-                setTimeout(async () => {
-                    if (this.mapillaryViewer && this.state.selectedFeatureLocation) {
-                        try {
+                
+                // 2. Prevent the widget's default camera angle from overwriting our target bearing
+                this._isInitialImageLoad = false;
+
+                if (this.mapillaryViewer && this.state.selectedFeatureLocation) {
+                    try {
+                        // 3. AWAIT the image to fully download and render in WebGL 
+                        // (Replaces the unreliable 1000ms setTimeout)
+                        const currentImage = await this.mapillaryViewer.getImage();
+                        
+                        // 4. Calculate bearing FROM the car TO the traffic sign
+                        const targetBearing = calculateBearing(
+                            img.geometry.coordinates[1], img.geometry.coordinates[0],
+                            this.state.selectedFeatureLocation.lat, this.state.selectedFeatureLocation.lon
+                        );
+                        
+                        // 5. Calculate angle difference
+                        const imageBearing = currentImage.compassAngle || 0;
+                        const diff = targetBearing - imageBearing;
+                        
+                        // 6. Mathematically normalize negative angles to wrap around the panorama (0.0 to 1.0)
+                        const newX = ((0.5 + (diff / 360)) % 1 + 1) % 1;
+                        
+                        // 7. Lock the camera onto the object
+                        this.mapillaryViewer.setCenter([newX, 0.5]);
+                        this.loadDetections(img.id);
+                        
+                    } catch (err) {
+                        console.warn("Could not set bearing:", err);
+                        this.loadDetections(img.id);
+                    }
+                    
+                    // 8. Move the ArcGIS map to match
+                    if (this.state.jimuMapView) {
+                        const view = this.state.jimuMapView.view;
+                        
+                        if (view.type === "3d") {
+                            // In 3D, point the ArcGIS camera at the object too!
                             const targetBearing = calculateBearing(
                                 img.geometry.coordinates[1], img.geometry.coordinates[0],
                                 this.state.selectedFeatureLocation.lat, this.state.selectedFeatureLocation.lon
                             );
-                            if (this.mapillaryViewer) {
-                                const currentImage = await this.mapillaryViewer.getImage();
-                                const imageBearing = currentImage.compassAngle;
-                                const diff = targetBearing - imageBearing;
-                                const newX = 0.5 + (diff / 360);
-                                this.mapillaryViewer.setCenter([newX, 0.5]);
-                                this.loadDetections(img.id);
-                            }
-                            if (this.state.jimuMapView) {
-                                const view = this.state.jimuMapView.view;
-                                if (view.type === "3d") {
-                                    view.goTo({ center: [img.geometry.coordinates[0], img.geometry.coordinates[1]], heading: targetBearing, tilt: 60, scale: 500 }, { animate: true, duration: 1500 });
-                                } else {
-                                    view.goTo({ center: [img.geometry.coordinates[0], img.geometry.coordinates[1]], zoom: 20 }, { animate: true, duration: 1000 });
-                                }
-                            }
-                        } catch (err) {
-                            console.warn("Could not set bearing:", err);
-                            this.loadDetections(img.id);
+                            
+                            view.goTo({ 
+                                center: [img.geometry.coordinates[0], img.geometry.coordinates[1]], 
+                                heading: targetBearing, 
+                                tilt: 60, scale: 500 
+                            }, { animate: true, duration: 1500 });
+                        } else {
+                            view.goTo({ 
+                                center: [img.geometry.coordinates[0], img.geometry.coordinates[1]], 
+                                zoom: 20 
+                            }, { animate: true, duration: 1000 });
                         }
-                    } else {
-                        if (this.mapillaryViewer) this.loadDetections(img.id);
                     }
-                    this._isFlyInActive = false;
-                }, 1000);
+                } else {
+                    if (this.mapillaryViewer) this.loadDetections(img.id);
+                }
+                this._isFlyInActive = false;
             }
-        } catch (e) { console.error(e); }
+        } catch (e) { 
+            console.error(e); 
+        }
     }
     // #endregion AI DETECTIONS
 
@@ -3459,7 +3536,9 @@ export default class Widget extends React.PureComponent<
                     type: "symbol",
                     layout: {
                         "icon-image": ["get", "value"],
-                        "icon-size": 0.4
+                        "icon-size": 0.4,
+                        "icon-allow-overlap": true,
+                        "icon-ignore-placement": true
                     }
                 }
             ]
@@ -3685,7 +3764,9 @@ export default class Widget extends React.PureComponent<
                     type: "symbol",
                     layout: {
                         "icon-image": ["get", "value"],
-                        "icon-size": 0.8
+                        "icon-size": 0.4,
+                        "icon-allow-overlap": true,
+                        "icon-ignore-placement": true
                     }
                 }
             ]
@@ -4963,7 +5044,7 @@ export default class Widget extends React.PureComponent<
     // Unlike the year legend (a FeatureLayer definitionExpression), the quality
     // bands are separate style layers baked into the VTL's style JSON, so
     // isolating one means rebuilding the layer with only that band's
-    // sequence/image entries — see initMapillaryLayer's showBand() gate.
+    // sequence/image entries, see initMapillaryLayer's showBand() gate.
     private handleQualityLegendClick = (band: 'good' | 'fair' | 'poor' | 'unscored') => {
         const newBand = this.state.selectedQualityBand === band ? null : band;
         this.setState({ selectedQualityBand: newBand }, async () => {
@@ -5061,7 +5142,9 @@ export default class Widget extends React.PureComponent<
         }
     }
 
-     // #region STREET COVERAGE ANALYSIS
+    // #endregion TURBO MODE
+
+    // #region STREET COVERAGE ANALYSIS
 
     /**
         * Runs street coverage analysis for the current map view.
@@ -5257,6 +5340,10 @@ export default class Widget extends React.PureComponent<
             jimuMapView?.view.map.remove(this._coverageSegmentsLayer);
             this._coverageSegmentsLayer = null;
         }
+
+        // Clear the purple driving route if it exists
+        this.clearCaptureRoute();
+
         // Only wipe tiers when the analysis result is being fully discarded
         // (e.g. user pans away). When called from drawCoverageSegments to
         // replace an existing layer, tiers must survive to colour the new graphics.
@@ -5333,6 +5420,191 @@ export default class Widget extends React.PureComponent<
         } else {
             this.drawCoverageSegments();
         }
+    };
+
+    /**
+        * Generates an optimized driving route to capture unmapped/stale streets
+        * using the free OSRM Trip API.
+    */
+    private generateCaptureRoute = async () => {
+        const { jimuMapView } = this.state;
+        if (!this._coverageSegments || this._coverageSegments.length === 0 || !jimuMapView) return;
+
+        this.setState({ isGeneratingRoute: true, routeData: null });
+
+        try {
+            const centerLon = jimuMapView.view.center.longitude;
+            const centerLat = jimuMapView.view.center.latitude;
+
+            // 1. Only send roads that a car can legally drive on to the OSRM "driving" profile.
+            // This strictly prevents the router from crashing when asked to drive on a footway or train track.
+            const drivableTypes = [
+                'motorway', 'motorway_link', 'trunk', 'trunk_link', 
+                'primary', 'primary_link', 'secondary', 'secondary_link', 
+                'tertiary', 'tertiary_link', 'unclassified', 'residential', 
+                'living_street', 'service'
+            ];
+
+            const targetSegments = this._coverageSegments
+                .map((seg, idx) => {
+                    const midLon = (seg.start[0] + seg.end[0]) / 2;
+                    const midLat = (seg.start[1] + seg.end[1]) / 2;
+                    const distFromCenter = distanceMeters(midLat, midLon, centerLat, centerLon);
+                    return { 
+                        seg, 
+                        tier: this._coverageSegmentTiers[idx], 
+                        midpoint: [midLon, midLat],
+                        distFromCenter
+                    };
+                })
+                .filter(item => 
+                    (item.tier === 'none' || item.tier === 'stale') && 
+                    drivableTypes.includes(item.seg.highwayType) // CRITICAL: Must be drivable!
+                )
+                .sort((a, b) => a.distFromCenter - b.distFromCenter);
+
+            if (targetSegments.length === 0) {
+                this.showToast("No missing drivable streets found near the center.");
+                this.setState({ isGeneratingRoute: false });
+                return;
+            }
+
+            // 2. Cap at 50. This creates a highly realistic, localized driving session 
+            // and prevents the free OSRM server from timing out on complex industrial grids.
+            const waypoints = targetSegments.slice(0, 50).map(item => item.midpoint);
+
+            const coordsString = waypoints.map(p => `${p[0]},${p[1]}`).join(';');
+            
+            // 3. source=first guarantees the route starts at the street closest to your screen center.
+            const url = `https://router.project-osrm.org/trip/v1/driving/${coordsString}?geometries=geojson&overview=full&roundtrip=false&source=first&annotations=false`;
+            
+            console.log("Requesting optimized route for", waypoints.length, "drivable streets...");
+
+            const response = await fetch(url);
+            if (!response.ok) {
+                const errText = await response.text();
+                console.error("OSRM Error:", errText);
+                throw new Error("Routing server is busy or limits exceeded.");
+            }
+            
+            const data = await response.json();
+            
+            if (data.code !== 'Ok' || !data.trips || data.trips.length === 0) {
+                throw new Error("OSRM could not find a legal driving path connecting these streets.");
+            }
+
+            const trip = data.trips[0];
+            
+            // 4. Draw it on the ArcGIS Map
+            this.drawCaptureRoute(trip.geometry);
+
+            this.setState({ 
+                routeData: { 
+                    distance: trip.distance, // in meters
+                    duration: trip.duration, // in seconds
+                    geojson: trip.geometry
+                } 
+            });
+
+            this.showToast(
+                <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Icons.Check size={14} color="#37d582" /> 
+                    Route generated: {(trip.distance / 1000).toFixed(1)} km
+                </span>, 4000
+            );
+
+        } catch (err) {
+            console.error("Route generation failed:", err);
+            this.showToast("Route generation failed. Try zooming in to a smaller area.");
+        } finally {
+            this.setState({ isGeneratingRoute: false });
+        }
+    };
+
+    /**
+        * Draws the OSRM generated route as a glowing purple line on the map
+    */
+    private _routeGraphicLayer: __esri.GraphicsLayer | null = null;
+    
+    private async drawCaptureRoute(geojsonGeom: any) {
+        const { jimuMapView } = this.state;
+        if (!jimuMapView || !this.ArcGISModules) return;
+
+        if (!this._routeGraphicLayer) {
+            const [GraphicsLayer] = await loadArcGISJSAPIModules(["esri/layers/GraphicsLayer"]);
+            this._routeGraphicLayer = new GraphicsLayer({ id: "capture-route-layer" });
+            jimuMapView.view.map.add(this._routeGraphicLayer);
+        }
+
+        this._routeGraphicLayer.removeAll();
+
+        const { Graphic } = this.ArcGISModules;
+
+        // Draw glowing background line
+        this._routeGraphicLayer.add(new Graphic({
+            geometry: {
+                type: "polyline",
+                paths: geojsonGeom.coordinates,
+                spatialReference: { wkid: 4326 }
+            },
+            symbol: {
+                type: "simple-line",
+                color: [168, 85, 247, 0.4], // Purple Glow
+                width: 8
+            } as any
+        }));
+
+        // Draw solid center line
+        this._routeGraphicLayer.add(new Graphic({
+            geometry: {
+                type: "polyline",
+                paths: geojsonGeom.coordinates,
+                spatialReference: { wkid: 4326 }
+            },
+            symbol: {
+                type: "simple-line",
+                color: [168, 85, 247, 1], // Solid Purple
+                width: 3,
+                style: "short-dash"
+            } as any
+        }));
+    }
+
+    private clearCaptureRoute = () => {
+        if (this._routeGraphicLayer) {
+            this._routeGraphicLayer.removeAll();
+        }
+        this.setState({ routeData: null });
+    };
+
+    /**
+     * Exports the generated route as a GPX file so users can drive it using OsmAnd/Google Maps
+     */
+    private downloadRouteGPX = () => {
+        const routeData = this.state.routeData;
+        if (!routeData) return;
+
+        const coords = routeData.geojson.coordinates;
+        
+        let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+        gpx += `<gpx version="1.1" creator="MapillaryExplorer">\n`;
+        gpx += `  <trk>\n    <name>Mapillary Capture Route</name>\n    <trkseg>\n`;
+        
+        coords.forEach((coord: [number, number]) => {
+            gpx += `      <trkpt lat="${coord[1]}" lon="${coord[0]}"></trkpt>\n`;
+        });
+        
+        gpx += `    </trkseg>\n  </trk>\n</gpx>`;
+
+        const blob = new Blob([gpx], { type: "application/gpx+xml" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `Mapillary_Route_${Date.now()}.gpx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
     };
 
     // #endregion STREET COVERAGE ANALYSIS
@@ -7701,7 +7973,695 @@ export default class Widget extends React.PureComponent<
 
     // #endregion POINT CLOUD
 
-    // #endregion TURBO MODE
+    // #region FIELD NOTES
+
+    private readonly FIELD_NOTES_STORAGE_KEY = "mly_field_notes_v1";
+
+    /**
+        * Loads persisted field notes from browser LocalStorage into the component state.
+        * Triggers map graphic redraws and Mapillary viewer renderer updates upon load.
+    */
+    private loadFieldNotesFromStorage() {
+        try {
+            const raw = localStorage.getItem(this.FIELD_NOTES_STORAGE_KEY);
+            if (raw) {
+                const notes: FieldNote[] = JSON.parse(raw);
+                this.setState({ fieldNotes: notes }, () => {
+                    this.drawFieldNoteGraphics();
+                    this.updateViewerFieldNoteMarkers();
+                });
+            }
+        } catch (err) {
+            console.warn("Failed to load field notes", err);
+        }
+    }
+
+    /**
+        * Persists the current array of field notes to browser LocalStorage.
+        * @param notes Array of field note objects to be serialized.
+    */
+    private saveFieldNotesToStorage(notes: FieldNote[]) {
+        try {
+            localStorage.setItem(this.FIELD_NOTES_STORAGE_KEY, JSON.stringify(notes));
+        } catch (err) {
+            console.warn("Failed to save field notes", err);
+        }
+    }
+
+    /**
+        * Toggles annotation mode on/off.
+        * When active, clicks on the map are intercepted to create new field notes.
+    */
+    private toggleAnnotationMode = () => {
+        this.setState(prev => ({
+            isAnnotationMode: !prev.isAnnotationMode,
+            pendingFieldNote: null,
+            fieldNotesListOpen: false,
+            nearbyStripOpen: false
+        }), () => {
+            const isActive = this.state.isAnnotationMode;
+            this.showToast(
+                <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Icons.Notes size={14} />
+                    {isActive ? "Field notes enabled" : "Field notes disabled"}
+                </span>,
+                2000
+            );
+        });
+    };
+
+    /**
+        * Draws a temporary blinking marker at the selected map location
+        * while the field note form is open.
+        * The marker uses an orange/amber color and continuously pulses
+        * between two sizes to indicate the pending note location.
+        * Supports both 2D and 3D map views. In 3D mode, the marker can
+        * optionally be placed at the specified altitude.
+        * @param lon - Longitude of the selected location
+        * @param lat - Latitude of the selected location
+        * @param alt - Optional altitude/elevation for 3D views
+    */
+    private drawPendingNoteGraphic(lon: number, lat: number, alt?: number) {
+        const view = this.state.jimuMapView?.view;
+        if (!view || !this.ArcGISModules) return;
+
+        this.clearPendingNoteGraphic();
+
+        const { Graphic } = this.ArcGISModules;
+        const is3D = view.type === "3d";
+
+        const geom: any = {
+            type: "point",
+            longitude: lon,
+            latitude: lat,
+            spatialReference: { wkid: 4326 }
+        };
+        if (is3D && alt !== undefined) {
+            geom.z = alt;
+            geom.hasZ = true;
+        }
+
+        let size = 14;
+        let growing = true;
+
+        const getSymbol = (s: number) => {
+            if (is3D) {
+                return {
+                    type: "point-3d",
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    symbolLayers: [{
+                        type: "icon",
+                        resource: { primitive: "circle" },
+                        material: { color: [245, 166, 35, 1] },
+                        size: s,
+                        outline: { color: [255, 255, 255, 1], size: 2.5 }
+                    }]
+                };
+            }
+            return {
+                type: "simple-marker",
+                style: "diamond",
+                color: [245, 166, 35, 1],
+                size: s,
+                outline: { color: [255, 255, 255, 1], width: 2.5 }
+            };
+        };
+
+        const graphic = new Graphic({
+            geometry: geom,
+            symbol: getSymbol(size) as any
+        });
+
+        (graphic as any).__isPendingFieldNote = true;
+        view.graphics.add(graphic);
+        this._pendingNoteGraphic = graphic;
+
+        this._pendingNoteInterval = setInterval(() => {
+            if (!this._pendingNoteGraphic) {
+                clearInterval(this._pendingNoteInterval);
+                return;
+            }
+            size += growing ? 0.6 : -0.6;
+            if (size >= 19) growing = false;
+            if (size <= 13) growing = true;
+            this._pendingNoteGraphic.symbol = getSymbol(size) as any;
+        }, 50);
+    }
+
+    private clearPendingNoteGraphic() {
+        if (this._pendingNoteInterval) {
+            clearInterval(this._pendingNoteInterval);
+            this._pendingNoteInterval = null;
+        }
+        if (this._pendingNoteGraphic) {
+            const view = this.state.jimuMapView?.view;
+            if (view) view.graphics.remove(this._pendingNoteGraphic);
+            this._pendingNoteGraphic = null;
+        }
+    }
+
+    /**
+        * Handles map clicks while in annotation mode.
+        * Triggers ripple feedback, drops temporary pin, and opens note modal.
+        * @param lon Longitude of the clicked point (WGS84).
+        * @param lat Latitude of the clicked point (WGS84).
+        * @param alt Optional altitude in meters (from 3D point cloud or terrain).
+    */
+    private handleAnnotationMapClick = (lon: number, lat: number, alt?: number) => {
+        // 1. Show an orange/amber ripple effect at the clicked location
+        this.drawClickRipple(lon, lat, [245, 166, 35], 0.7, 2);
+
+        // 2. Add a temporary blinking marker on the map while the form remains open
+        this.drawPendingNoteGraphic(lon, lat, alt);
+
+        // 3. Open the note input modal
+        this.setState({
+            pendingFieldNote: { lon, lat, alt, imageId: this.state.imageId }
+        });
+    };
+
+    /**
+        * Submits and saves a pending field note to state, LocalStorage, and 2D/3D renderers.
+        * @param category Selected category for the note.
+        * @param note Optional description or comment text.
+    */
+    private submitFieldNote = (category: string, note: string) => {
+        const { pendingFieldNote } = this.state;
+        if (!pendingFieldNote) return;
+
+        this.clearPendingNoteGraphic();
+
+        const newNote: FieldNote = {
+            id: `note_${Date.now()}_${Math.round(Math.random() * 1000)}`,
+            source: 'manual',
+            category,
+            note,
+            lon: pendingFieldNote.lon,
+            lat: pendingFieldNote.lat,
+            alt: pendingFieldNote.alt, 
+            imageId: pendingFieldNote.imageId,
+            createdAt: Date.now()
+        };
+
+        const updated = [...this.state.fieldNotes, newNote];
+        this.setState({ fieldNotes: updated, pendingFieldNote: null }, () => {
+            this.saveFieldNotesToStorage(updated);
+            this.drawFieldNoteGraphics();
+            this.updateViewerFieldNoteMarkers();
+            this.showToast(
+                <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Icons.Check size={14} color="#37d582" /> Object saved as note
+                </span>, 2000
+            );
+        });
+    };
+
+    /**
+        * Cancels the currently pending field note creation and closes the entry modal.
+    */
+    private cancelPendingFieldNote = () => {
+        this.clearPendingNoteGraphic();
+        this.setState({ pendingFieldNote: null });
+    };
+
+
+    /**
+        * Deletes a field note by its unique identifier and synchronizes state, storage, and graphics.
+        * @param id Unique identifier of the note to remove.
+    */
+    private deleteFieldNote = (id: string) => {
+        const updated = this.state.fieldNotes.filter(n => n.id !== id);
+        this.setState({ fieldNotes: updated }, () => {
+            this.saveFieldNotesToStorage(updated);
+            this.drawFieldNoteGraphics();
+            this.updateViewerFieldNoteMarkers();
+        });
+    };
+
+    /**
+        * Clears all field notes, removes them from LocalStorage,
+        * and clears the 2D map graphics & 3D viewer markers.
+    */
+    private clearAllFieldNotes = () => {
+        if (!this.state.fieldNotes.length) return;
+
+        // the button handles confirmation
+        this.setState({ fieldNotes: [] }, () => {
+            this.saveFieldNotesToStorage([]);
+            this.drawFieldNoteGraphics();
+            this.updateViewerFieldNoteMarkers();
+            this.showToast(
+                <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <Icons.Check size={14} color="#37d582" /> All field notes cleared
+                </span>,
+                2000
+            );
+        });
+    };
+    /**
+        * Centers the ArcGIS map on the selected field note and navigates
+        * the Mapillary viewer to the associated image if one exists.
+        * @param note The target field note to focus.
+    */
+    private focusFieldNote = (note: FieldNote) => {
+        const view = this.state.jimuMapView?.view;
+        if (!view) return;
+        view.goTo({ center: [note.lon, note.lat], zoom: Math.max(view.zoom, 18) }, { animate: true, duration: 600 });
+
+        // If the note has an associated image, jump the viewer there too
+        if (note.imageId && note.imageId !== this.state.imageId) {
+            const img = this.state.sequenceImages.find(s => s.id === note.imageId);
+            if (img && this.mapillaryViewer) {
+                this.mapillaryViewer.moveTo(note.imageId).catch(() => {});
+            }
+        }
+    };
+
+    /**
+        * Renders all stored field notes as diamond-shaped graphic markers on the ArcGIS map view.
+        * Orange diamonds denote manual entries, while green diamonds indicate AI detections.
+    */
+    private async drawFieldNoteGraphics() {
+        const { jimuMapView } = this.state;
+        if (!jimuMapView || !this.ArcGISModules) return;
+
+        const is3D = jimuMapView.view.type === "3d";
+
+        if (!this._fieldNotesLayer) {
+            const [GraphicsLayer] = await loadArcGISJSAPIModules(["esri/layers/GraphicsLayer"]);
+            this._fieldNotesLayer = new GraphicsLayer({ id: "field-notes-layer", title: "Field Notes" });
+        }
+
+        // 1. Ensure layer is on the map and explicitly pushed to the absolute TOP
+        const map = jimuMapView.view.map;
+        if (!map.layers.includes(this._fieldNotesLayer)) {
+            map.add(this._fieldNotesLayer);
+        }
+        map.reorder(this._fieldNotesLayer, map.layers.length);
+
+        this._fieldNotesLayer.removeAll();
+        const { Graphic } = this.ArcGISModules;
+
+        this.state.fieldNotes.forEach(n => {
+            const color = n.source === 'manual' ? [245, 166, 35, 1] : [53, 175, 109, 1];
+            
+            const symbol = {
+                type: "simple-marker",
+                style: "diamond",
+                color,
+                size: 13,
+                outline: { color: "white", width: 1.5 }
+            };
+
+            const g = new Graphic({
+                geometry: {
+                    type: "point",
+                    longitude: n.lon,
+                    latitude: n.lat,
+                    z: n.alt, // Ensure Z is passed for 3D
+                    hasZ: is3D && n.alt !== undefined,
+                    spatialReference: { wkid: 4326 }
+                },
+                symbol: symbol as any,
+                attributes: { id: n.id, category: n.category, note: n.note },
+                popupTemplate: {
+                    title: "{category}",
+                    content: n.note ? n.note : "(No description)"
+                }
+            });
+            this._fieldNotesLayer!.add(g);
+        });
+    }
+
+    /**
+        * Synchronizes and renders field notes in the Mapillary panoramic/perspective viewer.
+        * Uses a custom WebGL renderer (field-notes-renderer) instead of DOM SimpleMarkers
+        * to ensure proper 3D positioning, distance scaling, and alignment with Point Cloud data.
+    */
+    private updateViewerFieldNoteMarkers = () => {
+        if (!this.mapillaryViewer) return;
+
+        // Cleanup: Disable Mapillary's built-in MarkerComponent to prevent conflicts
+        try {
+            const markerComponent = this.mapillaryViewer.getComponent("marker");
+            if (markerComponent) markerComponent.removeAll();
+        } catch (e) {}
+
+        const activeImg = this.state.sequenceImages.find(s => s.id === this.state.imageId);
+        const relevant = activeImg 
+            ? this.state.fieldNotes.filter(n => distanceMeters(n.lat, n.lon, activeImg.lat, activeImg.lon) <= FIELD_NOTE_VIEWER_MAX_DIST_M)
+            : [];
+
+        if (relevant.length === 0) {
+            if ((this as any)._fieldNotesRendererActive) {
+                try { this.mapillaryViewer.removeCustomRenderer('field-notes-renderer'); } catch(e) {}
+                (this as any)._fieldNotesRendererActive = false;
+                (this as any)._fieldNotesViewerRenderer = null;
+                this.mapillaryViewer.resize();
+            }
+            return;
+        }
+
+        if (!(this as any)._fieldNotesRendererActive) {
+            this.addFieldNotesViewerRenderer(relevant);
+        } else if ((this as any)._fieldNotesViewerRenderer) {
+            (this as any)._fieldNotesViewerRenderer.updatePositions(relevant);
+            this.mapillaryViewer.resize();
+        }
+    };
+
+    /**
+        * Attaches a custom MapillaryJS WebGL renderer that draws 3D diamond-shaped field note markers.
+        * Employs Manhattan-distance fragment shaping, perspective size scaling, and geodetic-to-ENU projection.
+        * @param relevantNotes Array of field notes within the viewing threshold.
+    */
+    private addFieldNotesViewerRenderer(relevantNotes: any[]) {
+        if (!this.mapillaryViewer) return;
+
+        const vsSource = `
+            attribute vec3 aPosition;
+            attribute vec3 aColor;
+            varying vec3 vColor;
+            uniform mat4 uViewMatrix;
+            uniform mat4 uProjectionMatrix;
+            uniform mat4 uModelMatrix;
+            uniform float uPixelRatio;
+
+            void main(void) {
+                vec4 pos = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(aPosition, 1.0);
+                gl_Position = pos;
+                
+                // Perspective scaling: shrinks marker as distance from camera increases
+                // pos.w represents camera-space depth (distance in meters)
+                float distance = max(pos.w, 2.0); // Guard against division by zero
+                float baseSize = 350.0 * uPixelRatio; // Reference point size at ~10 meters
+                
+                // Scale point size inversely with distance, clamped between 8px and 60px
+                gl_PointSize = clamp(baseSize / distance, 8.0 * uPixelRatio, 60.0 * uPixelRatio); 
+                
+                vColor = aColor;
+            }
+        `;
+        const fsSource = `
+            precision mediump float;
+            varying vec3 vColor;
+
+            void main(void) {
+                // Center texture coordinates around (0.0, 0.0)
+                vec2 coord = gl_PointCoord - vec2(0.5);
+                
+                // Use Manhattan distance (abs(x) + abs(y)) to rasterize a diamond shape
+                float manhattanDist = abs(coord.x) + abs(coord.y);
+                
+                // Discard fragments outside the diamond boundary
+                if (manhattanDist > 0.5) discard;
+                
+                // Draw white border along the outer rim (between 0.38 and 0.5)
+                if (manhattanDist > 0.38) {
+                    gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0); // White border
+                } else {
+                    gl_FragColor = vec4(vColor, 0.95); // Inner color (orange or green fill)
+                }
+            }
+        `;
+
+        const widget = this;
+
+        const renderer: any = {
+            id: 'field-notes-renderer',
+            renderPass: 3, // Transparent pass: renders on top of opaque imagery and point cloud
+            _gl: null,
+            _program: null,
+            _positionBuffer: null,
+            _colorBuffer: null,
+            _modelMatrix: new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
+            _currentReference: null,
+            _vertexCount: 0,
+
+            onAdd(viewer: any, reference: any, context: WebGLRenderingContext) {
+                const gl = context;
+                this._gl = gl;
+                this._currentReference = reference;
+
+                const compile = (type: number, src: string) => {
+                    const s = gl.createShader(type)!;
+                    gl.shaderSource(s, src);
+                    gl.compileShader(s);
+                    return s;
+                };
+
+                const vs = compile(gl.VERTEX_SHADER, vsSource);
+                const fs = compile(gl.FRAGMENT_SHADER, fsSource);
+                const program = gl.createProgram()!;
+                gl.attachShader(program, vs);
+                gl.attachShader(program, fs);
+                gl.linkProgram(program);
+                this._program = program;
+
+                this._uViewMatrixLoc = gl.getUniformLocation(program, 'uViewMatrix');
+                this._uProjectionMatrixLoc = gl.getUniformLocation(program, 'uProjectionMatrix');
+                this._uModelMatrixLoc = gl.getUniformLocation(program, 'uModelMatrix');
+                this._uPixelRatioLoc = gl.getUniformLocation(program, 'uPixelRatio');
+                this._aPositionLoc = gl.getAttribLocation(program, 'aPosition');
+                this._aColorLoc = gl.getAttribLocation(program, 'aColor');
+
+                this._positionBuffer = gl.createBuffer()!;
+                this._colorBuffer = gl.createBuffer()!;
+                
+                this.updatePositions(relevantNotes);
+            },
+
+            onReference(viewer: any, reference: any) {
+                this._currentReference = reference;
+                // Recalculate 3D ENU positions when camera geographic reference updates
+                const activeImg = widget.state.sequenceImages.find(s => s.id === widget.state.imageId);
+                if (activeImg) {
+                    const relevant = widget.state.fieldNotes.filter(n => distanceMeters(n.lat, n.lon, activeImg.lat, activeImg.lon) <= 60);
+                    this.updatePositions(relevant);
+                }
+            },
+
+             updatePositions(notes: any[]) {
+                const gl = this._gl;
+                if (!gl || !this._positionBuffer || !this._colorBuffer || !this._currentReference) return;
+
+                this._vertexCount = notes.length;
+                if (notes.length === 0) return;
+
+                const positions = new Float32Array(notes.length * 3);
+                const colors = new Float32Array(notes.length * 3);
+                
+                notes.forEach((n, i) => {
+                    const refAlt = this._currentReference.alt || 0;
+                    
+                     // Fallback to 1.0m below camera (hood level) to prevent occlusion under uphill terrain
+                    let fallbackAlt = refAlt - 1.0; 
+                    
+                    if (widget.state.pointCloudVisible && widget._baseAlt !== 0) {
+                        fallbackAlt = widget._baseAlt;
+                    }
+
+                    const finalAlt = (n.alt !== undefined && n.alt !== null) ? n.alt : fallbackAlt;
+
+                    const enu = geodeticToEnu(
+                        n.lon, n.lat, finalAlt, 
+                        this._currentReference.lng, this._currentReference.lat, refAlt
+                    );
+                        
+                    positions[i*3] = enu[0];
+                    positions[i*3+1] = enu[1];
+                    positions[i*3+2] = enu[2];
+
+                    if (n.source === 'manual') {
+                        colors[i*3] = 245/255; colors[i*3+1] = 166/255; colors[i*3+2] = 35/255; 
+                    } else {
+                        colors[i*3] = 53/255; colors[i*3+1] = 175/255; colors[i*3+2] = 109/255; 
+                    }
+                });
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, this._positionBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, this._colorBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, colors, gl.DYNAMIC_DRAW);
+            },
+
+            onRemove(viewer: any, context: WebGLRenderingContext) {
+                const gl = context;
+                if (this._program) gl.deleteProgram(this._program);
+                if (this._positionBuffer) gl.deleteBuffer(this._positionBuffer);
+                if (this._colorBuffer) gl.deleteBuffer(this._colorBuffer);
+                this._gl = null;
+            },
+
+            render(context: WebGLRenderingContext, viewMatrix: Float32Array, projectionMatrix: Float32Array) {
+                const gl = context;
+                const program = this._program;
+                if (!program || !this._positionBuffer || this._vertexCount === 0) return;
+
+                gl.useProgram(program);
+
+                gl.uniformMatrix4fv(this._uViewMatrixLoc, false, viewMatrix);
+                gl.uniformMatrix4fv(this._uProjectionMatrixLoc, false, projectionMatrix);
+                gl.uniformMatrix4fv(this._uModelMatrixLoc, false, this._modelMatrix);
+                gl.uniform1f(this._uPixelRatioLoc, window.devicePixelRatio || 1);
+
+                gl.enableVertexAttribArray(this._aPositionLoc);
+                gl.bindBuffer(gl.ARRAY_BUFFER, this._positionBuffer);
+                gl.vertexAttribPointer(this._aPositionLoc, 3, gl.FLOAT, false, 0, 0);
+
+                gl.enableVertexAttribArray(this._aColorLoc);
+                gl.bindBuffer(gl.ARRAY_BUFFER, this._colorBuffer);
+                gl.vertexAttribPointer(this._aColorLoc, 3, gl.FLOAT, false, 0, 0);
+
+               // Disable depth testing so markers remain visible and are not occluded by geometry
+                gl.disable(gl.DEPTH_TEST);
+                gl.enable(gl.BLEND);
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+                gl.drawArrays(gl.POINTS, 0, this._vertexCount);
+
+                // Restore WebGL state to prevent interfering with other Mapillary components
+                gl.disable(gl.BLEND);
+                gl.enable(gl.DEPTH_TEST);
+                
+                gl.disableVertexAttribArray(this._aPositionLoc);
+                gl.disableVertexAttribArray(this._aColorLoc);
+            }
+        };
+
+        try {
+            this.mapillaryViewer.addCustomRenderer(renderer);
+            (this as any)._fieldNotesRendererActive = true;
+            (this as any)._fieldNotesViewerRenderer = renderer;
+            this.mapillaryViewer.resize();
+        } catch (e) {
+            console.warn("Could not attach field notes renderer:", e);
+        }
+    }
+
+    /**
+        * Exports all recorded field notes as a 3D GeoJSON FeatureCollection file.
+        * Preserves longitude, latitude, and altitude [lon, lat, alt] coordinates.
+    */
+    private exportFieldNotes = () => {
+        const { fieldNotes } = this.state;
+        if (!fieldNotes.length) {
+            this.showToast("Dışa aktarılacak not bulunamadı.");
+            return;
+        }
+
+        const featureCollection = {
+            type: "FeatureCollection",
+            features: fieldNotes.map(n => ({
+                type: "Feature",
+                // Store altitude as the 3rd coordinate if present: [lon, lat, alt]
+                geometry: { 
+                    type: "Point", 
+                    coordinates: n.alt !== undefined ? [n.lon, n.lat, n.alt] : [n.lon, n.lat] 
+                },
+                properties: {
+                    id: n.id,
+                    source: n.source,
+                    category: n.category,
+                    note: n.note,
+                    imageId: n.imageId,
+                    detectionId: n.detectionId ?? null,
+                    alt: n.alt, // Backup altitude property
+                    createdAt: new Date(n.createdAt).toISOString()
+                }
+            }))
+        };
+
+        try {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(featureCollection, null, 2));
+            const a = document.createElement('a');
+            a.setAttribute("href", dataStr);
+            a.setAttribute("download", `field_notes_${Date.now()}.json`);
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        } catch (err) {
+            console.error("Field notes export failed", err);
+        }
+    };
+
+    /**
+        * Imports field notes from an external GeoJSON file.
+        * Parses 3D coordinates (coordinates[2]) or properties.alt, skips duplicates by ID,
+        * and updates application state, storage, and renderers.
+        * @param file The GeoJSON file selected by the user.
+    */
+    private importFieldNotesFile = (file: File) => {
+        const reader = new FileReader();
+
+        reader.onload = (e) => {
+            try {
+                const raw = e.target?.result as string;
+                const geojson = JSON.parse(raw);
+
+                if (!geojson.features || !Array.isArray(geojson.features)) {
+                    throw new Error("Geçersiz format: 'features' dizisi bulunamadı");
+                }
+
+                const imported: FieldNote[] = geojson.features
+                    .filter((f: any) => f?.geometry?.coordinates && f?.properties)
+                    .map((f: any) => ({
+                        id: f.properties.id ?? `note_${Date.now()}_${Math.round(Math.random() * 100000)}`,
+                        source: f.properties.source === 'mapillary-detection' ? 'mapillary-detection' : 'manual',
+                        category: f.properties.category ?? 'Diğer',
+                        note: f.properties.note ?? '',
+                        lon: f.geometry.coordinates[0],
+                        lat: f.geometry.coordinates[1],
+                          // Extract altitude from coordinates[2] or fallback to properties.alt
+                        alt: f.geometry.coordinates[2] !== undefined ? f.geometry.coordinates[2] : f.properties.alt,
+                        imageId: f.properties.imageId ?? null,
+                        detectionId: f.properties.detectionId ?? undefined,
+                        createdAt: f.properties.createdAt
+                            ? new Date(f.properties.createdAt).getTime()
+                            : Date.now()
+                    }));
+
+                if (!imported.length) {
+                    this.showToast("Dosyada geçerli not bulunamadı.");
+                    return;
+                }
+                
+                // Deduplicate incoming notes against existing IDs
+                const existingIds = new Set(this.state.fieldNotes.map(n => n.id));
+                const newOnes = imported.filter(n => !existingIds.has(n.id));
+                const skipped = imported.length - newOnes.length;
+
+                const merged = [...this.state.fieldNotes, ...newOnes];
+
+                this.setState({ fieldNotes: merged }, () => {
+                    this.saveFieldNotesToStorage(merged);
+                    this.drawFieldNoteGraphics();
+                    this.updateViewerFieldNoteMarkers();
+
+                    this.showToast(
+                        <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <Icons.Check size={14} color="#37d582" />
+                            {newOnes.length} not içe aktarıldı{skipped > 0 ? ` (${skipped} yinelenen atlandı)` : ''}
+                        </span>, 3000
+                    );
+                });
+            } catch (err) {
+                console.error("Field notes import failed:", err);
+                this.showToast("Dosya okunamadı — geçerli bir Field Notes GeoJSON dosyası olmalı.");
+            }
+        };
+
+        reader.onerror = () => {
+            this.showToast("Dosya okunamadı.");
+        };
+
+        reader.readAsText(file);
+    };
+
+    // #endregion FIELD NOTES
+
+
 
     // Initial setup lifecycle
     // - Loads ArcGIS API modules dynamically (Graphic, Point, etc.),
@@ -7766,6 +8726,7 @@ export default class Widget extends React.PureComponent<
 
         // Restore any cached sequence from previous session
         this.restoreSequenceCache();
+        this.loadFieldNotesFromStorage();
 
         this.resizeObserver = new ResizeObserver(() => {
             if (this.mapillaryViewer?.resize) {
@@ -8163,6 +9124,17 @@ export default class Widget extends React.PureComponent<
             this._sequenceHighlightLayer = null;
         }
         this._hoveredSequenceId = null;
+        // Destroy the field notes layer so it safely rebuilds on the new 2D/3D map
+        if (this._fieldNotesLayer) {
+            try {
+                const map = jmv.view.map;
+                if (map && map.layers.includes(this._fieldNotesLayer)) {
+                    map.remove(this._fieldNotesLayer);
+                }
+                this._fieldNotesLayer.destroy();
+            } catch (e) {}
+            this._fieldNotesLayer = null;
+        }
 
         // Use a callback to restore graphics AFTER state is set
         this.setState({ jimuMapView: jmv }, () => {
@@ -8471,6 +9443,74 @@ export default class Widget extends React.PureComponent<
             if (this.props.state === 'CLOSED') return;
 
             const point = jmv.view.toMap(evt) as __esri.Point;
+
+            // FIELD NOTES: annotation mode intercepts the click before anything else
+            // FIELD NOTES: annotation mode intercepts the click before anything else
+        if (this.state.isAnnotationMode) {
+            try {
+                // 1. Önce Point Cloud (Nokta Bulutu) 3B grafiklerine mi tıklandı kontrol et
+                const response = await jmv.view.hitTest(evt);
+                const pointCloudHit = response.results.find((r: any) => {
+                    const layer = r.layer || (r.graphic && r.graphic.layer);
+                    return layer && layer.id === "point-cloud-layer";
+                });
+
+                if (pointCloudHit && (pointCloudHit as any).graphic) {
+                    const attrs = (pointCloudHit as any).graphic.attributes || {};
+                    const rawOriginal = attrs.originalIndex ?? attrs.originalindex;
+                    const rawObjectId = attrs.ObjectID ?? attrs.objectid;
+                    const originalIdx = rawOriginal !== undefined ? rawOriginal : ((rawObjectId || 1) - 1);
+                    
+                    const p = this._currentPointCloudResult?.points[originalIdx];
+                    
+                    if (p) {
+                        const exactLon = (p as any).rawLon || p.lon;
+                        const exactLat = (p as any).rawLat || p.lat;
+                        const exactAlt = p.alt;
+                        
+                        this.handleAnnotationMapClick(exactLon, exactLat, exactAlt);
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn("HitTest failed for Point Cloud", e);
+            }
+
+            // 2. Point Cloud'a tam isabet etmediyse (Veya 2B Kuş Bakışı haritadan tıklandıysa)
+            // Zekice Çözüm: Point Cloud datasını kullanarak tıkladığımız yerin yokuş/zemin yüksekliğini hesapla!
+            let estimatedAlt: number | undefined = undefined;
+
+            if (this.state.pointCloudVisible && this._currentPointCloudResult) {
+                const clickLat = point.latitude;
+                const clickLon = point.longitude;
+                const localAltitudes: number[] = [];
+
+                // Tıklanan koordinatın 3 metre çevresindeki tüm Point Cloud noktalarını bul
+                for (const p of this._currentPointCloudResult.points) {
+                    // Hızlı bounding-box filtresi (Performans için)
+                    if (Math.abs(p.lat - clickLat) < 0.00005 && Math.abs(p.lon - clickLon) < 0.00005) {
+                        const dist = distanceMeters(clickLat, clickLon, p.lat, p.lon);
+                        if (dist < 3.0) {
+                            localAltitudes.push(p.alt);
+                        }
+                    }
+                }
+
+                if (localAltitudes.length > 0) {
+                    // Yükseklikleri küçükten büyüğe sırala
+                    localAltitudes.sort((a, b) => a - b);
+                    
+                    // Ağaç tepelerini ve gürültüyü elemek için en alttaki (zemindeki) %10'luk dilimi al
+                    const groundIndex = Math.floor(localAltitudes.length * 0.10);
+                    estimatedAlt = localAltitudes[groundIndex];
+                }
+            }
+
+            // Hesaplanan yokuş/zemin yüksekliğini (bulamadıysa undefined) gönder
+            this.handleAnnotationMapClick(point.longitude, point.latitude, estimatedAlt);
+            return;
+        }
+
             this.setState({ clickLon: point.longitude, clickLat: point.latitude });
 
             try {
@@ -8712,7 +9752,7 @@ export default class Widget extends React.PureComponent<
                     }
                     
                     // Clicked empty space
-                    this.drawWarningRipple(point.longitude, point.latitude);
+                    this.drawClickRipple(point.longitude, point.latitude, [255, 140, 0], 0.6, 2);
                     this.showZoomWarning("Turbo Mode: Please click directly on a brown coverage point.", 3000);
                     return;
                 }
@@ -8991,17 +10031,27 @@ export default class Widget extends React.PureComponent<
     }
 
     /**
-        * Draws a temporary red ripple animation at the given coordinates
-        * to provide visual click feedback, then removes it when faded.
+        * Unified ripple animation for clicks, warnings, and annotations.
+        * @param lon Longitude (WGS84)
+        * @param lat Latitude (WGS84)
+        * @param rgb RGB array [R, G, B]: defaults to red [255, 0, 0]
+        * @param initialAlpha Starting opacity:defaults to 0.5
+        * @param outlineWidth Outline border width: defaults to 1
     */
-    private drawClickRipple(lon: number, lat: number) {
+    private drawClickRipple(
+        lon: number, 
+        lat: number, 
+        rgb: [number, number, number] = [255, 0, 0], 
+        initialAlpha = 0.5, 
+        outlineWidth = 1
+    ) {
         const { jimuMapView } = this.state;
         if (!jimuMapView || !this.ArcGISModules) return;
 
         const { Graphic } = this.ArcGISModules;
 
-        let size = 0; // Start small
-        let alpha = 0.4;
+        let size = 0;
+        let alpha = initialAlpha;
 
         const rippleGraphic = new Graphic({
             geometry: {
@@ -9013,78 +10063,26 @@ export default class Widget extends React.PureComponent<
             symbol: {
                 type: "simple-marker",
                 style: "circle",
-                color: [255, 0, 0, alpha], // red with opacity
+                color: [...rgb, alpha],
                 size: size,
-                outline: { color: [255, 0, 0, alpha], width: 1 }
+                outline: { color: [...rgb, alpha], width: outlineWidth }
             }
         });
 
         jimuMapView.view.graphics.add(rippleGraphic);
 
         const rippleInterval = setInterval(() => {
-            size += 2; // grow
-            alpha -= 0.03; // fade out
+            size += 2.5;
+            alpha -= 0.035;
 
             rippleGraphic.symbol = {
                 type: "simple-marker",
                 style: "circle",
-                color: [255, 0, 0, Math.max(alpha, 0)],
+                color: [...rgb, Math.max(alpha, 0)],
                 size: size,
-                outline: { color: [255, 0, 0, Math.max(alpha, 0)], width: 1 }
-            };
+                outline: { color: [...rgb, Math.max(alpha, 0)], width: outlineWidth }
+            } as any;
 
-            // When invisible, cleanup
-            if (alpha <= 0) {
-                clearInterval(rippleInterval);
-                jimuMapView.view.graphics.remove(rippleGraphic);
-            }
-        }, 30);
-    }
-
-    /**
-        * Draws an orange warning ripple animation at the given coordinates
-        * to indicate an invalid click action in Turbo Mode.
-    */
-    private drawWarningRipple(lon: number, lat: number) {
-        const { jimuMapView } = this.state;
-        if (!jimuMapView || !this.ArcGISModules) return;
-
-        const { Graphic } = this.ArcGISModules;
-
-        let size = 0; // Start small
-        let alpha = 0.6; // Start more opaque than normal ripple
-
-        const rippleGraphic = new Graphic({
-            geometry: {
-                type: "point",
-                longitude: lon,
-                latitude: lat,
-                spatialReference: { wkid: 4326 }
-            },
-            symbol: {
-                type: "simple-marker",
-                style: "circle",
-                color: [255, 140, 0, alpha], // Orange color for warning
-                size: size,
-                outline: { color: [255, 140, 0, alpha], width: 2 }
-            }
-        });
-
-        jimuMapView.view.graphics.add(rippleGraphic);
-
-        const rippleInterval = setInterval(() => {
-            size += 3; // Grow faster for more noticeable effect
-            alpha -= 0.04; // Fade out
-
-            rippleGraphic.symbol = {
-                type: "simple-marker",
-                style: "circle",
-                color: [255, 140, 0, Math.max(alpha, 0)], // Orange
-                size: size,
-                outline: { color: [255, 140, 0, Math.max(alpha, 0)], width: 2 }
-            };
-
-            // When invisible, cleanup
             if (alpha <= 0) {
                 clearInterval(rippleInterval);
                 jimuMapView.view.graphics.remove(rippleGraphic);
@@ -9130,8 +10128,7 @@ export default class Widget extends React.PureComponent<
     }
 
     /**
-        * Draws a red point at the given coordinates with a pop effect
-        * (starts larger then shrinks) and tags it for Turbo/sequence cleanup.
+        * Draws a black point at the given coordinates to point clicked area on map
     */
     private drawPoint(lon: number, lat: number) {
         const { jimuMapView } = this.state;
@@ -9156,7 +10153,7 @@ export default class Widget extends React.PureComponent<
                 type: "simple-marker",
                 style: "circle",
                 color: "black",
-                size: 7, 
+                size: 5, 
                 outline: { color: "white", width: 2 },
             },
             attributes: { isClickedLocation: true }
@@ -10210,6 +11207,7 @@ export default class Widget extends React.PureComponent<
                     <Legend
                         turboModeActive={!!this.state.turboModeActive}
                         onClearCache={this.clearSequenceCache}
+                        hasFieldNotes={this.state.fieldNotes.length > 0 || !!this.state.pendingFieldNote} // <-- EKLENDİ
                     />
                 )}
 
@@ -10576,6 +11574,22 @@ export default class Widget extends React.PureComponent<
                         this.loadSequenceById(sequenceId, closestImageId);
                     }}
                 />
+
+                <FieldNotesPanel
+                    isAnnotationMode={this.state.isAnnotationMode}
+                    pendingNote={this.state.pendingFieldNote}
+                    notes={this.state.fieldNotes}
+                    listOpen={this.state.fieldNotesListOpen}
+                    categories={this.props.config.fieldNoteCategories ? Array.from(this.props.config.fieldNoteCategories) : undefined}
+                    onSubmitNote={this.submitFieldNote}
+                    onCancelPending={this.cancelPendingFieldNote}
+                    onDeleteNote={this.deleteFieldNote}
+                    onClearAll={this.clearAllFieldNotes}
+                    onExport={this.exportFieldNotes}
+                    onImportFile={this.importFieldNotesFile}
+                    onFocusNote={this.focusFieldNote}
+                    onCloseList={() => this.setState({ fieldNotesListOpen: false })}
+                />
                 
                 {/* INFO BOX */}
                 <InfoBox
@@ -10655,7 +11669,17 @@ export default class Widget extends React.PureComponent<
                     nearbyCount={this.state.nearbyImages?.length ?? 0}
                     nearbyLoading={!!this.state.nearbyLoading}
                     nearbyStripOpen={!!this.state.nearbyStripOpen}
-                    onToggleNearbyStrip={() => this.setState(prev => ({ nearbyStripOpen: !prev.nearbyStripOpen }))}
+                    onToggleNearbyStrip={() => this.setState(prev => ({ nearbyStripOpen: !prev.nearbyStripOpen, fieldNotesListOpen: false }))}
+                    fieldNotesCount={this.state.fieldNotes.length}
+                    isAnnotationMode={this.state.isAnnotationMode}
+                    fieldNotesListOpen={this.state.fieldNotesListOpen}
+                    onToggleAnnotationMode={this.toggleAnnotationMode}
+                    onToggleFieldNotesList={() => this.setState(prev => ({ fieldNotesListOpen: !prev.fieldNotesListOpen, nearbyStripOpen: false }))}
+                    isGeneratingRoute={this.state.isGeneratingRoute}
+                    routeData={this.state.routeData}
+                    onGenerateRoute={this.generateCaptureRoute}
+                    onClearRoute={this.clearCaptureRoute}
+                    onDownloadRouteGPX={this.downloadRouteGPX}
                 />
                 
                 {/* UNIFIED FILTER BAR */}

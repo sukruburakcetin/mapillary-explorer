@@ -130,7 +130,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ showIntro, filtersLo
                 {/* Tagline */}
                 <div style={glassStyles.splashTagline}>
                     Street-level intelligence at planetary scale
-                    <div style={{ fontSize: "8px" }}>Version 4.5.0</div>
+                    <div style={{ fontSize: "8px" }}>Version 4.6.0</div>
                 </div>
 
                 {/* Progress track */}

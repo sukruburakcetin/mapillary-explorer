@@ -22,6 +22,7 @@ export interface AlternateImage {
 export interface LegendProps {
     turboModeActive: boolean;
     onClearCache: () => void;
+    hasFieldNotes?: boolean;
 }
 
 export interface NearbyImage {
@@ -32,6 +33,31 @@ export interface NearbyImage {
   geometry: { type: 'Point'; coordinates: [number, number] };
   creator?: { username: string };
 }
+
+export interface FieldNote {
+    id: string;
+    source: 'mapillary-detection' | 'manual';
+    category: string;
+    note: string;
+    lon: number;
+    lat: number;
+    alt?: number;
+    imageId: string | null;
+    detectionId?: string;
+    createdAt: number;
+}
+
+export const DEFAULT_FIELD_NOTE_CATEGORIES = [
+    "Missing Sign",
+    "Damaged Sign",
+    "Damaged Sidewalk",
+    "Pothole / Road Damage",
+    "Streetlight Failure",
+    "Illegal Encroachment",
+    "Other"
+] as const;
+
+export const FIELD_NOTE_CATEGORIES = DEFAULT_FIELD_NOTE_CATEGORIES;
 
 // InfoBox props
 export interface InfoBoxProps {
@@ -122,6 +148,16 @@ export interface InfoBoxProps {
     nearbyCount?: number;
     nearbyStripOpen?: boolean;
     onToggleNearbyStrip?: () => void;
+    fieldNotesCount?: number;
+    isAnnotationMode?: boolean;
+    fieldNotesListOpen?: boolean;
+    onToggleAnnotationMode?: () => void;
+    onToggleFieldNotesList?: () => void;
+    isGeneratingRoute?: boolean;
+    routeData?: { distance: number; duration: number } | null;
+    onGenerateRoute?: () => void;
+    onClearRoute?: () => void;
+    onDownloadRouteGPX?: () => void;
 }
 
 // FilterBar props
