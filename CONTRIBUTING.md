@@ -134,33 +134,39 @@ Enter your portal URL (for example `https://myorg.maps.arcgis.com`) and your reg
 ## Project Structure for Contributors
 
 ```
-src/
-├── runtime/
-│   └── widget.tsx               # Main widget class, organized with #region comment blocks
-├── setting/
-│   └── setting.tsx              # ArcGIS EB settings panel
-├── components/
-│   ├── ControlBar.tsx           # Top toolbar
-│   ├── FilterBar.tsx            # Turbo filter inputs
-│   ├── GlassDatePicker.tsx      # Built-in date picker (no external dependency)
-│   ├── GlassSelect.tsx          # Built-in dropdown (no external dependency)
-│   ├── Icons.tsx                # All SVG icon components
-│   ├── ImageUtilityGroup.tsx    # Floating action buttons
-│   ├── InfoBox.tsx              # Live image metadata panel
-│   ├── Legend.tsx               # Coverage color legend overlay
-│   ├── SequencePicker.tsx       # Sequence carousel selector
-│   ├── SplashScreen.tsx         # Initial loading overlay
-│   └── types.ts                 # Shared TypeScript prop interfaces
-├── utils/
-│   ├── constants.ts             # Layer IDs, API URLs, zoom thresholds, detection filter lists
-│   ├── filterBuilder.ts         # Mapillary VTL filter expression builder
-│   ├── geoUtils.ts              # Pure geo math utilities
-│   ├── mapillaryDetections.ts   # Pure detection geometry and color functions
-│   ├── mapillaryObjectNameMap.ts # Human-readable object label map
-│   ├── mapillaryRenderers.ts    # Pure ArcGIS renderer factory functions
-│   ├── spriteUtils.ts           # Sprite sheet utilities
-│   └── styles.ts                # All inline styles and global CSS string
-└── config.ts                    # Widget config TypeScript interface
+mapillary-explorer/
+└── src/
+    ├── runtime/
+    │   └── widget.tsx               # Main widget (organized with #region blocks)
+    ├── setting/
+    │   └── setting.tsx              # ArcGIS EB settings panel
+    ├── components/
+    │   ├── ControlBar.tsx           # Top toolbar (turbo, tiles, fullscreen, filter toggles)
+    │   ├── FilterBar.tsx            # Turbo filter inputs (username, dates, pano, color-by-date)
+    │   ├── GlassDatePicker.tsx      # Built-in date picker (replaces react-datepicker)
+    │   ├── GlassSelect.tsx          # Built-in dropdown (replaces react-select)
+    │   ├── Icons.tsx                # All SVG icon components
+    │   ├── ImageUtilityGroup.tsx    # Floating action buttons (share, download, center, sync)
+    │   ├── InfoBox.tsx              # Live image metadata panel
+    │   ├── Legend.tsx               # Coverage color legend overlay
+    │   ├── SequencePicker.tsx       # Sequence carousel selector
+    │   ├── FieldNotesPanel.tsx      # UI panel for creating, managing, and displaying field notes
+    │   ├── SplashScreen.tsx         # Initial loading overlay
+    │   ├── NearbyCarousel.tsx       # Nearby captures carousel
+    │   └── types.ts                 # Shared TypeScript prop interfaces for all components
+    ├── utils/
+    │   ├── constants.ts             # Layer IDs, API URLs, zoom thresholds, detection filter lists
+    │   ├── filterBuilder.ts         # Mapillary VTL filter expression builder
+    │   ├── geoUtils.ts              # Pure geo math: distance, bearing, tile math, cone, debounce...
+    │   ├── mapillary-image-base64.ts  # Base64-encoded Mapillary image icon to avoid dependence
+    │   ├── mapillaryDetections.ts   # Pure functions: decodeAndNormalizeGeometry, getDetectionColor
+    │   ├── mapillaryObjectNameMap.ts # Human-readable Mapillary object label map
+    │   ├── mapillaryRenderers.ts    # Pure functions: createYearBasedRenderer, YEAR_COLOR_PALETTE
+    │   ├── spriteUtils.ts           # Sprite sheet cropping and icon loading utilities
+    │   ├── useNearbyImages.ts       # Fetches and tracks Mapillary images near
+    │   ├── pointCloudUtils.ts       # Point cloud utilities
+    │   └── styles.ts                # All glassStyles objects and mobileOverrideStyles CSS string
+    └── config.ts                    # Widget config TypeScript interface
 ```
 
 ### Where to make changes
