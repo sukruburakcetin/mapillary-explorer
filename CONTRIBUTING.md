@@ -21,17 +21,14 @@ You can freely customize your local version of the application to suit your need
 
 ## Prerequisites
 
-### ArcGIS Experience Builder Developer Edition 1.19
-
+### ArcGIS Experience Builder Developer Edition
 Install both the server and client services following [Esri's official install guide](https://developers.arcgis.com/experience-builder/guide/install-guide/).
 
 > **ArcGIS Enterprise users:** If you are building for an Enterprise deployment, the bundled ExB version in Enterprise lags behind the Developer Edition. Read [COMPATIBILITY.md](COMPATIBILITY.md) before choosing which Developer Edition version to install.
 
 ### Node.js
 
-Both ExB 1.18 and 1.19 require **Node.js 22**. Using an older version will cause build failures.
-For ExB 1.20, Esri recommends Node.js 24. However, during development and testing of this project, Node.js 24 resulted in dependency compatibility issues (including ESM/CommonJS conflicts such as ERR_REQUIRE_ESM with uuid).
-For the most reliable development experience, use Node.js 20.19.0 when working with ExB 1.20.
+Both ExB 1.18 and 1.19 require **Node.js 22**. Using an older version will cause build failures. For ExB 1.20 and ExB 1.21, Esri recommends Node.js 24. However, during development and testing of this project, Node.js 24 resulted in dependency compatibility issues (including ESM/CommonJS conflicts such as ERR_REQUIRE_ESM with uuid). For the most reliable development experience, use Node.js 20.19.0 when working with ExB 1.20 or ExB 1.21. https://developers.arcgis.com/experience-builder/guide/release-versions/
 
 Note: While other Node.js versions may work, all builds and testing for this project are performed using Node.js 20.19.0.
 ```bash
