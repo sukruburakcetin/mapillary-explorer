@@ -411,3 +411,14 @@ export const POINT_CLOUD_FETCH_LENGTH = 200;
   * Same reasoning as POINT_CLOUD_FETCH_LENGTH.
 */
 export const POINT_CLOUD_FETCH_WIDTH = 150;
+
+// Field Notes
+ 
+/**
+  * Maximum distance in metres between the active image and a field note
+  * for that note's marker to be rendered inside the Mapillary viewer.
+  * Keeps the marker component from being asked to project notes that are
+  * geometrically too far from the current camera to resolve meaningfully,
+  * and caps how many markers get pushed into the scene at once.
+*/
+export const FIELD_NOTE_VIEWER_MAX_DIST_M = 60;

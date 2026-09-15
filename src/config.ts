@@ -187,6 +187,12 @@ export interface Config {
   */
   debugMode?: boolean;
 
+  /**
+    * Custom categories for field notes.
+    * If not configured or empty, defaults to FIELD_NOTE_CATEGORIES.
+  */
+  fieldNoteCategories?: string[];
+
 }
 
 export type IMConfig = ImmutableObject<Config>;

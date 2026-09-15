@@ -100,6 +100,8 @@ export class InfoBox extends React.PureComponent<InfoBoxProps, InfoBoxState> {
             pointCloudColorMode, onDownloadPointCloud, qualityViewActive, onToggleQualityView,
             selectedQualityBand, onQualityLegendClick,
             nearbyCount, nearbyLoading, nearbyStripOpen, onToggleNearbyStrip,
+            fieldNotesCount, isAnnotationMode, fieldNotesListOpen, onToggleAnnotationMode, 
+            onToggleFieldNotesList
         } = this.props;
 
         const currentImg = (imageId && sequenceImages.length > 0)
@@ -424,6 +426,60 @@ export class InfoBox extends React.PureComponent<InfoBoxProps, InfoBoxState> {
                                     </button>
                                 </div>
                             )}
+                            {/* FIELD NOTES TRIGGER ROW */}
+                            <div style={{
+                                marginTop: "5px",
+                                borderTop: "1px solid rgba(255,255,255,0.08)",
+                                paddingTop: "4px",
+                            }}>
+                                <button
+                                    onClick={onToggleAnnotationMode}
+                                    title={isAnnotationMode ? "Disable note mode" : "Add field note"}
+                                    style={{
+                                        background: "none", border: "none", padding: 0, margin: 0,
+                                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                                        width: "100%", cursor: "pointer", color: "white", marginBottom: "3px"
+                                    }}
+                                >
+                                    <span style={{
+                                        fontSize: "7.5px", lineHeight: 1, fontWeight: 600,
+                                        color: isAnnotationMode ? "#f5a623" : "rgba(255,255,255,0.7)",
+                                        display: "flex", alignItems: "center", gap: "4px"
+                                    }}>
+                                        <Icons.Notes size={10} />
+                                        {isAnnotationMode ? "NOTE MODE ON" : "ADD NOTE"}
+                                    </span>
+                                </button>
+
+                                {(
+                                    <button
+                                        onClick={onToggleFieldNotesList}
+                                        title="Show field notes"
+                                        style={{
+                                            background: "none", border: "none", padding: 0, margin: 0,
+                                            display: "flex", justifyContent: "space-between", alignItems: "center",
+                                            width: "100%", cursor: "pointer", color: "white"
+                                        }}
+                                    >
+                                        <span style={{
+                                            fontSize: "7.5px", lineHeight: 1, fontWeight: 600,
+                                            color: fieldNotesListOpen ? "#f5a623" : "rgba(255,255,255,0.7)",
+                                            display: "flex", alignItems: "center", gap: "4px"
+                                            }}>
+                                            NOTES
+                                            {(fieldNotesCount ?? 0) > 0 && (
+                                                <span style={{ background: "#f5a623", color: "#000", borderRadius: "8px", padding: "1px 4px 0px", fontSize: "6.5px", fontWeight: 700 }}>
+                                                    {fieldNotesCount}
+                                                </span>
+                                            )}
+                                        </span>
+                                        <svg width="8" height="8" viewBox="0 0 10 10" fill="white"
+                                            style={{ transform: fieldNotesListOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", opacity: 0.6 }}>
+                                            <path d="M1 3l4 4 4-4" />
+                                        </svg>
+                                    </button>
+                                )}
+                            </div>
 
                             {/* Turbo year legend */}
                             {turboModeActive && turboColorByDate && turboYearLegend && turboYearLegend.length > 0 && (
@@ -1341,11 +1397,58 @@ export class InfoBox extends React.PureComponent<InfoBoxProps, InfoBoxState> {
                                         >
                                             {coverageSegmentsVisible ? "HIDE MAP" : "SHOW MAP"}
                                         </button>
+
+                                        {/* ROUTE GENERATOR */}
+                                        {coverageSegmentsVisible && (
+                                        <div style={{ marginTop: "4px", borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: "4px" }}>
+                                            
+                                            {!this.props.routeData ? (
+                                                <button
+                                                    onClick={this.props.onGenerateRoute}
+                                                    disabled={this.props.isGeneratingRoute}
+                                                    style={{
+                                                        width: "100%", borderRadius: "3px", border: "1px solid rgba(168, 85, 247, 0.5)",
+                                                        background: "rgba(168, 85, 247, 0.2)", color: "white", fontSize: "7px", 
+                                                        fontWeight: 600, cursor: this.props.isGeneratingRoute ? "wait" : "pointer", 
+                                                        padding: "3px 0", display: "flex", justifyContent: "center", gap: "3px"
+                                                    }}
+                                                >
+                                                    {this.props.isGeneratingRoute ? "Routing..." : "🚗 Generate Driving Route"}
+                                                </button>
+                                            ) : (
+                                                <div style={{ background: "rgba(168, 85, 247, 0.15)", borderRadius: "4px", padding: "4px", border: "1px solid rgba(168, 85, 247, 0.3)" }}>
+                                                    <div style={{ fontSize: "7px", color: "#a855f7", fontWeight: 700, marginBottom: "2px" }}>
+                                                        ROUTE READY
+                                                    </div>
+                                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "7px", color: "white", marginBottom: "4px" }}>
+                                                        <span>{(this.props.routeData.distance / 1000).toFixed(1)} km</span>
+                                                        <span>{Math.round(this.props.routeData.duration / 60)} mins</span>
+                                                    </div>
+                                                    <div style={{ display: "flex", gap: "3px" }}>
+                                                        <button
+                                                            onClick={this.props.onDownloadRouteGPX}
+                                                            style={{ flex: 1, background: "#a855f7", color: "white", border: "none", borderRadius: "2px", fontSize: "7px", fontWeight: "bold", cursor: "pointer", padding: "2px 0" }}
+                                                        >
+                                                            ⬇️ GPX
+                                                        </button>
+                                                        <button
+                                                            onClick={this.props.onClearRoute}
+                                                            style={{ background: "rgba(255,0,0,0.3)", color: "white", border: "none", borderRadius: "2px", fontSize: "7px", cursor: "pointer", padding: "2px 6px" }}
+                                                        >
+                                                            ✕
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                     </React.Fragment>
                                 );
                             })()}
                         </div>
                     )}
+
+                   
                 </div>
 
                 {/* Scroll up indicator */}

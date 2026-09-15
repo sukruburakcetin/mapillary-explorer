@@ -488,3 +488,23 @@ export const WireframeGlobe = ({
             opacity="0.5" />
     </svg>
 );
+
+// 31. Notes (Document / Sticky Note)
+export const Notes = ({ size = 16, color = "currentColor", ...props }: IconProps) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke={color}
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    {...props}
+  >
+    <path d="M4 4h11l5 5v11H4z" />
+    <path d="M15 4v5h5" />
+    <line x1="8" y1="13" x2="16" y2="13" />
+    <line x1="8" y1="17" x2="14" y2="17" />
+  </svg>
+);

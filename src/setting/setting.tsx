@@ -5,8 +5,13 @@ import { SettingSection, SettingRow } from 'jimu-ui/advanced/setting-components'
 import { MapWidgetSelector } from 'jimu-ui/advanced/setting-components';
 import { Switch, TextInput, NumericInput, Select, Option } from 'jimu-ui';
 import { IMConfig } from '../config';
+import { FIELD_NOTE_CATEGORIES } from '../components/types';
 
 export default class Setting extends React.PureComponent<AllWidgetSettingProps<IMConfig>, any> {
+
+  state = {
+    newCategoryText: ''
+  };
 
   onMapWidgetSelected = (useMapWidgetIds: string[]) => {
     this.props.onSettingChange({
@@ -206,6 +211,53 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
     this.props.onSettingChange({
       id: this.props.id,
       config: this.props.config.set('debugMode', evt.target.checked)
+    });
+  }
+
+  getFieldNoteCategories = (): string[] => {
+    const custom = this.props.config.fieldNoteCategories;
+    if (custom && custom.length > 0) {
+      return Array.from(custom);
+    }
+    return Array.from(FIELD_NOTE_CATEGORIES);
+  }
+
+  onAddCategory = () => {
+    const text = (this.state.newCategoryText || '').trim();
+    if (!text) return;
+    const current = this.getFieldNoteCategories();
+    if (!current.includes(text)) {
+      const updated = [...current, text];
+      this.props.onSettingChange({
+        id: this.props.id,
+        config: this.props.config.set('fieldNoteCategories', updated)
+      });
+    }
+    this.setState({ newCategoryText: '' });
+  }
+
+  onRemoveCategory = (index: number) => {
+    const current = this.getFieldNoteCategories();
+    const updated = current.filter((_, i) => i !== index);
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('fieldNoteCategories', updated)
+    });
+  }
+
+  onCategoryChange = (index: number, val: string) => {
+    const current = [...this.getFieldNoteCategories()];
+    current[index] = val;
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('fieldNoteCategories', current)
+    });
+  }
+
+  onResetCategories = () => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('fieldNoteCategories', Array.from(FIELD_NOTE_CATEGORIES))
     });
   }
 
@@ -663,6 +715,99 @@ export default class Setting extends React.PureComponent<AllWidgetSettingProps<I
                   Enables developer logging in the browser console (F12).
                 </span>
             </SettingRow>
+        </SettingSection>
+
+        <SettingSection title="Field Notes Settings">
+          <SettingRow flow="wrap">
+            <div style={{ width: '100%' }}>
+              <div style={{ marginBottom: '6px', fontWeight: 500 }}>Field Note Categories</div>
+              <div style={{ fontSize: '11px', fontStyle: 'italic', opacity: 0.5, marginBottom: '8px' }}>
+                Customize the options shown when users add a field note.
+              </div>
+
+              {/* Category Items List */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '8px' }}>
+                {this.getFieldNoteCategories().map((cat, idx) => (
+                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <TextInput
+                      size="sm"
+                      value={cat}
+                      onChange={(e) => this.onCategoryChange(idx, e.target.value)}
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => this.onRemoveCategory(idx)}
+                      title="Remove category"
+                      style={{
+                        width: '24px',
+                        height: '24px',
+                        background: 'rgba(255, 0, 0, 0.1)',
+                        border: '1px solid rgba(255, 0, 0, 0.3)',
+                        borderRadius: '4px',
+                        color: 'var(--danger-color, #f44)',
+                        cursor: 'pointer',
+                        padding: 0,
+                        lineHeight: 1
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add New Category Row */}
+              <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
+                <TextInput
+                  size="sm"
+                  placeholder="New category..."
+                  value={this.state.newCategoryText}
+                  onChange={(e) => this.setState({ newCategoryText: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      this.onAddCategory();
+                    }
+                  }}
+                  style={{ flex: 1 }}
+                />
+                <button
+                  type="button"
+                  onClick={this.onAddCategory}
+                  style={{
+                    padding: '4px 10px',
+                    background: 'var(--primary-color, #05a056)',
+                    border: 'none',
+                    borderRadius: '4px',
+                    color: '#fff',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  + Add
+                </button>
+              </div>
+
+              {/* Reset to Default Button */}
+              <button
+                type="button"
+                onClick={this.onResetCategories}
+                style={{
+                  fontSize: '11px',
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--primary-color, #05a056)',
+                  cursor: 'pointer',
+                  padding: 0,
+                  textDecoration: 'underline'
+                }}
+              >
+                Reset to default categories
+              </button>
+            </div>
+          </SettingRow>
         </SettingSection>
       </div>
     );
